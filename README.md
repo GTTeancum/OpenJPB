@@ -13,6 +13,16 @@ intended to sit alongside that install as a replacement executable/engine,
 loading the user's local retail data while making the game easier to preserve,
 debug, and mod.
 
+## Screenshots
+
+Current replacement-engine level select:
+
+![OpenJPB level select](docs/assets/openjpb-level-select.png)
+
+Current replacement-engine gameplay HUD:
+
+![OpenJPB gameplay HUD](docs/assets/openjpb-hud.png)
+
 ## Status
 
 The repository currently contains:
