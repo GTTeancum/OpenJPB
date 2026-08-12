@@ -23,7 +23,7 @@ Current replacement-engine level select:
 
 ![OpenJPB level select](docs/assets/openjpb-level-select.png)
 
-Current replacement-engine gameplay HUD:
+Current replacement-engine continue-pips gameplay HUD:
 
 ![OpenJPB gameplay HUD](docs/assets/openjpb-hud.png)
 
