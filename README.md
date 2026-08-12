@@ -15,6 +15,10 @@ debug, and mod.
 
 ## Screenshots
 
+Current replacement-engine main menu:
+
+![OpenJPB main menu](docs/assets/openjpb-main-menu.png)
+
 Current replacement-engine level select:
 
 ![OpenJPB level select](docs/assets/openjpb-level-select.png)
