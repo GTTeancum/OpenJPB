@@ -1,0 +1,26 @@
+{
+  "matches": true,
+  "exe": {
+    "path": "C:\\Games\\Star Wars Jedi Power Battles\\game.exe",
+    "sha256": "88932504124D58315030C4CE8D03B5B6AC02AB57E90BB84A8BC7D1F0CE1AE05F",
+    "machine": "0x8664",
+    "image_base": "0x140000000",
+    "codeview": {
+      "guid": "3D5CB182-3147-4A9D-8299-5DA9C7FD2D67",
+      "age": 2,
+      "pdb_path": "W:\\SWJediPowerBattles\\winver\\bin\\x64\\Steam_Release\\game.pdb"
+    }
+  },
+  "pdb": {
+    "path": "C:\\Games\\Star Wars Jedi Power Battles\\game.pdb",
+    "sha256": "DDD43A52EA4EB20723940478D4E4303934A363BD916EA3F4904E3321B562246F",
+    "guid": "3D5CB182-3147-4A9D-8299-5DA9C7FD2D67",
+    "age": 2,
+    "has_debug_info": true,
+    "has_types": true,
+    "has_ids": true,
+    "has_globals": true,
+    "has_publics": true,
+    "is_stripped": false
+  }
+}

@@ -1,0 +1,1675 @@
+{
+  "schema_version": 1,
+  "reference": {
+    "pdb_guid": "3D5CB182-3147-4A9D-8299-5DA9C7FD2D67",
+    "pdb_age": 2,
+    "pdb_sha256": "DDD43A52EA4EB20723940478D4E4303934A363BD916EA3F4904E3321B562246F",
+    "tool": "llvm-pdbutil dump --type-index=<index> --dependents game.pdb"
+  },
+  "types": [
+    {
+      "name": "Node",
+      "type_index": "0x10C5",
+      "reference_size": 8,
+      "pointer_width": 8,
+      "fields": [
+        {
+          "name": "next",
+          "type": "Node*",
+          "type_index": "0x10BC",
+          "offset": 0
+        }
+      ],
+      "implementation": "include/jpb/list.h",
+      "status": "reviewed"
+    },
+    {
+      "name": "List",
+      "type_index": "0x112C",
+      "reference_size": 16,
+      "pointer_width": 8,
+      "fields": [
+        {
+          "name": "head",
+          "type": "Node*",
+          "type_index": "0x10BC",
+          "offset": 0
+        },
+        {
+          "name": "tail",
+          "type": "Node*",
+          "type_index": "0x10BC",
+          "offset": 8
+        }
+      ],
+      "implementation": "include/jpb/list.h",
+      "status": "reviewed",
+      "port_note": "Native pointers yield the required 8-byte Xbox layout."
+    },
+    {
+      "name": "_graph_entry",
+      "type_index": "0x9A1F",
+      "reference_size": 16,
+      "fields": [
+        {
+          "name": "amount",
+          "type": "unsigned long",
+          "type_index": "0x0022",
+          "offset": 0
+        },
+        {
+          "name": "maxamount",
+          "type": "long",
+          "type_index": "0x0012",
+          "offset": 4
+        },
+        {
+          "name": "hangtime",
+          "type": "long",
+          "type_index": "0x0012",
+          "offset": 8
+        },
+        {
+          "name": "color",
+          "type": "unsigned long",
+          "type_index": "0x0022",
+          "offset": 12
+        }
+      ],
+      "implementation": "include/jpb/timer.h",
+      "status": "reviewed",
+      "port_note": "Fixed-width 32-bit fields preserve Microsoft long layout."
+    },
+    {
+      "name": "MemoryPool",
+      "type_index": "0x115C",
+      "reference_size": 24,
+      "pointer_width": 8,
+      "fields": [
+        {
+          "name": "pMemPool",
+          "type": "char*",
+          "type_index": "0x0670",
+          "offset": 0
+        },
+        {
+          "name": "memSize",
+          "type": "unsigned long",
+          "type_index": "0x0022",
+          "offset": 8
+        },
+        {
+          "name": "memFree",
+          "type": "unsigned long",
+          "type_index": "0x0022",
+          "offset": 12
+        },
+        {
+          "name": "memUsed",
+          "type": "unsigned long",
+          "type_index": "0x0022",
+          "offset": 16
+        },
+        {
+          "name": "memFlags",
+          "type": "unsigned long",
+          "type_index": "0x0022",
+          "offset": 20
+        }
+      ],
+      "implementation": "include/jpb/memory.h",
+      "status": "reviewed",
+      "port_note": "The pointer shrinks on Xbox; fixed-width fields yield a 20-byte target layout."
+    },
+    {
+      "name": "VECTOR",
+      "type_index": "0x1071",
+      "reference_size": 16,
+      "fields": [
+        {
+          "name": "vx",
+          "type": "long",
+          "type_index": "0x0012",
+          "offset": 0
+        },
+        {
+          "name": "vy",
+          "type": "long",
+          "type_index": "0x0012",
+          "offset": 4
+        },
+        {
+          "name": "vz",
+          "type": "long",
+          "type_index": "0x0012",
+          "offset": 8
+        },
+        {
+          "name": "pad",
+          "type": "long",
+          "type_index": "0x0012",
+          "offset": 12
+        }
+      ],
+      "implementation": "include/jpb/fmath.h",
+      "status": "reviewed",
+      "port_note": "Fixed-width 32-bit fields preserve Microsoft long layout."
+    },
+    {
+      "name": "_svector",
+      "type_index": "0x10A4",
+      "reference_size": 8,
+      "fields": [
+        {
+          "name": "vx",
+          "type": "short",
+          "type_index": "0x0011",
+          "offset": 0
+        },
+        {
+          "name": "vy",
+          "type": "short",
+          "type_index": "0x0011",
+          "offset": 2
+        },
+        {
+          "name": "vz",
+          "type": "short",
+          "type_index": "0x0011",
+          "offset": 4
+        },
+        {
+          "name": "pad",
+          "type": "short",
+          "type_index": "0x0011",
+          "offset": 6
+        }
+      ],
+      "implementation": "include/jpb/fmath.h",
+      "status": "reviewed"
+    },
+    {
+      "name": "_sfvector",
+      "type_index": "0x1150",
+      "reference_size": 16,
+      "fields": [
+        {
+          "name": "vx",
+          "type": "float",
+          "type_index": "0x0040",
+          "offset": 0
+        },
+        {
+          "name": "vy",
+          "type": "float",
+          "type_index": "0x0040",
+          "offset": 4
+        },
+        {
+          "name": "vz",
+          "type": "float",
+          "type_index": "0x0040",
+          "offset": 8
+        },
+        {
+          "name": "pad",
+          "type": "short",
+          "type_index": "0x0011",
+          "offset": 12
+        }
+      ],
+      "implementation": "include/jpb/fmath.h",
+      "status": "reviewed",
+      "port_note": "Natural float alignment preserves the two trailing padding bytes."
+    },
+    {
+      "name": "MATRIX",
+      "type_index": "0x1177",
+      "reference_size": 48,
+      "fields": [
+        {
+          "name": "m",
+          "type": "float[3][3]",
+          "type_index": "0x1085",
+          "offset": 0
+        },
+        {
+          "name": "t",
+          "type": "long[3]",
+          "type_index": "0x1169",
+          "offset": 36
+        }
+      ],
+      "implementation": "include/jpb/fmath.h",
+      "status": "reviewed",
+      "port_note": "Fixed-width translation fields preserve Microsoft long layout."
+    },
+    {
+      "name": "FVECTOR",
+      "type_index": "0x11CE",
+      "reference_size": 12,
+      "fields": [
+        {
+          "name": "vx",
+          "type": "float",
+          "type_index": "0x0040",
+          "offset": 0
+        },
+        {
+          "name": "vy",
+          "type": "float",
+          "type_index": "0x0040",
+          "offset": 4
+        },
+        {
+          "name": "vz",
+          "type": "float",
+          "type_index": "0x0040",
+          "offset": 8
+        }
+      ],
+      "implementation": "include/jpb/fmath.h",
+      "status": "reviewed"
+    },
+    {
+      "name": "FVECTOR4",
+      "type_index": "0x1238",
+      "reference_size": 16,
+      "fields": [
+        {"name": "vx", "type": "float", "type_index": "0x0040", "offset": 0},
+        {"name": "vy", "type": "float", "type_index": "0x0040", "offset": 4},
+        {"name": "vz", "type": "float", "type_index": "0x0040", "offset": 8},
+        {"name": "vw", "type": "float", "type_index": "0x0040", "offset": 12}
+      ],
+      "implementation": "include/jpb/fmath.h",
+      "status": "reviewed"
+    },
+    {
+      "name": "CollisionData",
+      "type_index": "0x1174",
+      "reference_size": 4,
+      "fields": [
+        {"name": "radius1", "type": "short", "type_index": "0x0011", "offset": 0},
+        {"name": "id", "type": "char", "type_index": "0x0010", "offset": 2},
+        {"name": "parentid", "type": "char", "type_index": "0x0010", "offset": 3}
+      ],
+      "implementation": "include/jpb/player.h",
+      "status": "reviewed"
+    },
+    {
+      "name": "Camera",
+      "type_index": "0x121A",
+      "reference_size": 76,
+      "fields": [
+        {"name": "viewType", "type": "int", "type_index": "0x0074", "offset": 0},
+        {"name": "campos", "type": "VECTOR", "type_index": "0x1071", "offset": 4},
+        {"name": "angle", "type": "VECTOR", "type_index": "0x1071", "offset": 20},
+        {"name": "focus", "type": "_svector", "type_index": "0x10A4", "offset": 36},
+        {"name": "angleDest", "type": "VECTOR", "type_index": "0x1071", "offset": 44},
+        {"name": "focusDest", "type": "_svector", "type_index": "0x10A4", "offset": 60},
+        {"name": "cameraTimer", "type": "unsigned", "type_index": "0x0075", "offset": 68},
+        {"name": "userData", "type": "unsigned", "type_index": "0x0075", "offset": 72}
+      ],
+      "implementation": "include/jpb/camera.h",
+      "status": "reviewed",
+      "port_note": "The pointer-free fixed-width record is 76 bytes on both PC and Xbox."
+    },
+    {
+      "name": "sceneGeometryEnv",
+      "type_index": "0x125B",
+      "reference_size": 176,
+      "fields": [
+        {"name": "angle", "type": "_svector", "type_index": "0x1080", "offset": 0},
+        {"name": "pos", "type": "_svector", "type_index": "0x1080", "offset": 8},
+        {"name": "matrix", "type": "MATRIX", "type_index": "0x123D", "offset": 16},
+        {"name": "angleDest", "type": "_svector", "type_index": "0x1080", "offset": 64},
+        {"name": "posDest", "type": "_svector", "type_index": "0x1080", "offset": 72},
+        {"name": "matrixDest", "type": "MATRIX", "type_index": "0x123D", "offset": 80},
+        {"name": "matrixRaw", "type": "MATRIX", "type_index": "0x123D", "offset": 128}
+      ],
+      "implementation": "include/jpb/scene.h",
+      "status": "reviewed",
+      "port_note": "All members are fixed-width math records; the layout is 176 bytes on PC and Xbox."
+    },
+    {
+      "name": "PADLOAD",
+      "type_index": "0x6AF7",
+      "reference_size": 8,
+      "fields": [
+        {"name": "padLevel1", "type": "unsigned", "type_index": "0x0075", "offset": 0},
+        {"name": "padLevel2", "type": "unsigned", "type_index": "0x0075", "offset": 4}
+      ],
+      "implementation": "include/jpb/input.h",
+      "status": "reviewed",
+      "port_note": "Fixed-width pad masks preserve the eight-byte PC/Xbox record."
+    },
+    {
+      "name": "Plane",
+      "type_index": "0x7263",
+      "reference_size": 20,
+      "fields": [
+        {
+          "name": "plane_normal",
+          "type": "VECTOR",
+          "type_index": "0x106D",
+          "offset": 0
+        },
+        {
+          "name": "plane_const",
+          "type": "long",
+          "type_index": "0x0012",
+          "offset": 16
+        }
+      ],
+      "implementation": "include/jpb/fmath.h",
+      "status": "reviewed",
+      "port_note": "VECTOR plus an explicit 32-bit constant preserves the PDB layout."
+    },
+    {
+      "name": "wapChunk",
+      "type_index": "0x6DC4",
+      "reference_size": 16,
+      "fields": [
+        {
+          "name": "id",
+          "type": "unsigned char[8]",
+          "type_index": "0x1072",
+          "offset": 0
+        },
+        {
+          "name": "size",
+          "type": "unsigned long",
+          "type_index": "0x0022",
+          "offset": 8
+        },
+        {
+          "name": "realsize",
+          "type": "unsigned long",
+          "type_index": "0x0022",
+          "offset": 12
+        }
+      ],
+      "implementation": "include/jpb/filesys.h",
+      "status": "reviewed",
+      "port_note": "Fixed-width fields preserve the 16-byte archive header on PC and Xbox."
+    },
+    {
+      "name": "rdVECTOR",
+      "type_index": "0x10F1",
+      "reference_size": 12,
+      "fields": [
+        {"name": "vx", "type": "long", "type_index": "0x0012", "offset": 0},
+        {"name": "vy", "type": "long", "type_index": "0x0012", "offset": 4},
+        {"name": "vz", "type": "long", "type_index": "0x0012", "offset": 8}
+      ],
+      "implementation": "include/jpb/world.h",
+      "status": "reviewed",
+      "port_note": "Fixed-width fields preserve Microsoft long layout."
+    },
+    {
+      "name": "CVECTOR",
+      "type_index": "0x117F",
+      "reference_size": 4,
+      "fields": [
+        {"name": "r", "type": "unsigned char", "type_index": "0x0020", "offset": 0},
+        {"name": "g", "type": "unsigned char", "type_index": "0x0020", "offset": 1},
+        {"name": "b", "type": "unsigned char", "type_index": "0x0020", "offset": 2},
+        {"name": "cd", "type": "unsigned char", "type_index": "0x0020", "offset": 3}
+      ],
+      "implementation": "include/jpb/world.h",
+      "status": "reviewed"
+    },
+    {
+      "name": "BAP_CAMERADOLLY",
+      "type_index": "0x1186",
+      "reference_size": 32,
+      "fields": [
+        {"name": "flags", "type": "unsigned", "type_index": "0x0075", "offset": 0},
+        {"name": "pitch", "type": "short", "type_index": "0x0011", "offset": 4},
+        {"name": "slacky", "type": "short", "type_index": "0x0011", "offset": 6},
+        {"name": "yaw", "type": "short", "type_index": "0x0011", "offset": 8},
+        {"name": "offy", "type": "short", "type_index": "0x0011", "offset": 10},
+        {"name": "slackx", "type": "short", "type_index": "0x0011", "offset": 12},
+        {"name": "offx", "type": "short", "type_index": "0x0011", "offset": 14},
+        {"name": "offset", "type": "rdVECTOR", "type_index": "0x108D", "offset": 16},
+        {"name": "slackz", "type": "short", "type_index": "0x0011", "offset": 28},
+        {"name": "offz", "type": "short", "type_index": "0x0011", "offset": 30}
+      ],
+      "implementation": "include/jpb/world.h",
+      "status": "reviewed"
+    },
+    {
+      "name": "BAP_AI",
+      "type_index": "0x10DC",
+      "reference_size": 44,
+      "fields": [
+        {"name": "numNodes", "type": "int", "offset": 0},
+        {"name": "numAvailable", "type": "int", "offset": 4},
+        {"name": "bSize", "type": "int", "offset": 8},
+        {"name": "pVars", "type": "unsigned", "offset": 12},
+        {"name": "pad", "type": "int[4]", "offset": 16},
+        {"name": "aiNodes", "type": "BAP_AINODE[]", "offset": 32}
+      ],
+      "implementation": "include/jpb/world.h",
+      "status": "reviewed",
+      "port_note": "pVars is a 32-bit pointer-registry index, not a host pointer."
+    },
+    {
+      "name": "wsl_ENEMY",
+      "type_index": "0x10ED",
+      "reference_size": 240,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "node", "type": "Node", "type_index": "0x10B1", "offset": 0},
+        {"name": "aiNum", "type": "long", "offset": 8},
+        {"name": "actorNum", "type": "long", "offset": 12},
+        {"name": "aName", "type": "char[12]", "type_index": "0x10D3", "offset": 16},
+        {"name": "pPlace", "type": "wsl_BAP_PLACEMENT*", "type_index": "0x10D9", "offset": 32},
+        {"name": "enemyFlags", "type": "unsigned", "offset": 40},
+        {"name": "enemyID", "type": "long", "offset": 44},
+        {"name": "ownerType", "type": "long", "offset": 48},
+        {"name": "active", "type": "long", "offset": 52},
+        {"name": "exit_flag", "type": "long", "offset": 56},
+        {"name": "pAI", "type": "BAP_AI*", "type_index": "0x10E0", "offset": 64},
+        {"name": "pAINode", "type": "BAP_AINODE*", "type_index": "0x10E2", "offset": 72},
+        {"name": "pPlayer", "type": "playerObject*", "type_index": "0x10E4", "offset": 80},
+        {"name": "enemyNum", "type": "long", "offset": 88},
+        {"name": "hitPoints", "type": "long", "offset": 92},
+        {"name": "range", "type": "int", "offset": 96},
+        {"name": "aRange", "type": "int", "offset": 100},
+        {"name": "aiLocation", "type": "long", "offset": 104},
+        {"name": "lastWayPoint", "type": "long", "offset": 108},
+        {"name": "counter", "type": "unsigned long[5]", "type_index": "0x10E5", "offset": 112},
+        {"name": "aiTimer", "type": "int", "offset": 132},
+        {"name": "currAIMode", "type": "short", "offset": 136},
+        {"name": "prevAIMode", "type": "short[3]", "type_index": "0x10E7", "offset": 138},
+        {"name": "stackID", "type": "int", "offset": 144},
+        {"name": "switchData", "type": "unsigned char[16]", "type_index": "0x105D", "offset": 148},
+        {"name": "kungfu", "type": "kfNode*", "type_index": "0x10EA", "offset": 168},
+        {"name": "movementMode", "type": "short", "offset": 176},
+        {"name": "movementSpeed", "type": "short", "offset": 178},
+        {"name": "destination", "type": "_svector", "type_index": "0x1080", "offset": 180},
+        {"name": "radius", "type": "unsigned", "offset": 188},
+        {"name": "location", "type": "rdVECTOR", "type_index": "0x108D", "offset": 192},
+        {"name": "hitFlag", "type": "long", "offset": 204},
+        {"name": "sinceLast", "type": "int", "offset": 208},
+        {"name": "seqMode", "type": "int", "offset": 212},
+        {"name": "currSeq", "type": "int", "offset": 216},
+        {"name": "currSeqIndex", "type": "int", "offset": 220},
+        {"name": "currHTHDelay", "type": "int", "offset": 224},
+        {"name": "currRangedDelay", "type": "int", "offset": 228},
+        {"name": "aiLevel", "type": "int", "offset": 232}
+      ],
+      "implementation": "include/jpb/world.h",
+      "status": "reviewed",
+      "port_note": "Native AI/player/kung-fu links preserve the matched x64 layout and compact on 32-bit Xbox."
+    },
+    {
+      "name": "wsl_BT_ANIMENTRY",
+      "type_index": "0x108F",
+      "reference_size": 48,
+      "fields": [
+        {"name": "frame", "type": "int", "offset": 0},
+        {"name": "num", "type": "long", "offset": 4},
+        {"name": "flags", "type": "int", "offset": 8},
+        {"name": "xyz", "type": "rdVECTOR", "offset": 12},
+        {"name": "pyr", "type": "rdVECTOR", "offset": 24},
+        {"name": "scale", "type": "rdVECTOR", "offset": 36}
+      ],
+      "implementation": "include/jpb/world.h",
+      "status": "reviewed"
+    },
+    {
+      "name": "wsl_BT_ANIMNODE",
+      "type_index": "0x10C2",
+      "reference_size": 432,
+      "fields": [
+        {"name": "num", "type": "int", "offset": 0},
+        {"name": "used", "type": "int", "offset": 4},
+        {"name": "flags", "type": "int", "offset": 8},
+        {"name": "level", "type": "int", "offset": 12},
+        {"name": "numEntries", "type": "int", "offset": 16},
+        {"name": "numChildren", "type": "int", "offset": 20},
+        {"name": "iParent", "type": "int", "offset": 24},
+        {"name": "iChild", "type": "int", "offset": 28},
+        {"name": "iSibling", "type": "int", "offset": 32},
+        {"name": "iNext", "type": "int", "offset": 36},
+        {"name": "nodeSpeed", "type": "int", "offset": 40},
+        {"name": "pad", "type": "long", "offset": 44},
+        {"name": "aEntry", "type": "wsl_BT_ANIMENTRY[8]", "offset": 48}
+      ],
+      "implementation": "include/jpb/world.h",
+      "status": "reviewed"
+    },
+    {
+      "name": "wsl_BT_ANIMDEF",
+      "type_index": "0x1138",
+      "reference_size": 496,
+      "fields": [
+        {"name": "type", "type": "int", "offset": 0},
+        {"name": "num", "type": "int", "offset": 4},
+        {"name": "bSize", "type": "int", "offset": 8},
+        {"name": "flags", "type": "int", "offset": 12},
+        {"name": "fps", "type": "int", "offset": 16},
+        {"name": "numFrames", "type": "int", "offset": 20},
+        {"name": "numNodes", "type": "int", "offset": 24},
+        {"name": "totalNodes", "type": "int", "offset": 28},
+        {"name": "pad", "type": "long[8]", "offset": 32},
+        {"name": "aNodes", "type": "wsl_BT_ANIMNODE[1]", "offset": 64}
+      ],
+      "implementation": "include/jpb/world.h",
+      "status": "reviewed"
+    },
+    {
+      "name": "wsl_BAPAI_DEFAULTS",
+      "type_index": "0x10DF",
+      "reference_size": 164,
+      "fields": [
+        {"name": "activeFlags", "type": "unsigned", "offset": 0},
+        {"name": "startMode", "type": "int", "offset": 4},
+        {"name": "movementMode", "type": "int", "offset": 8},
+        {"name": "hitPoints", "type": "int", "offset": 12},
+        {"name": "movementSpeed", "type": "int", "offset": 16},
+        {"name": "mass", "type": "int", "offset": 20},
+        {"name": "ftSpeed", "type": "int", "offset": 24},
+        {"name": "fov", "type": "int", "offset": 28},
+        {"name": "range", "type": "int", "offset": 32},
+        {"name": "angle", "type": "int", "offset": 36},
+        {"name": "aRange", "type": "int", "offset": 40},
+        {"name": "daRange", "type": "int", "offset": 44},
+        {"name": "daDelay", "type": "int", "offset": 48},
+        {"name": "ownerType", "type": "int", "offset": 52},
+        {"name": "latency", "type": "int", "offset": 56},
+        {"name": "skillLevel", "type": "int", "offset": 60},
+        {"name": "performanceLevel", "type": "int", "offset": 64},
+        {"name": "rangeExt", "type": "int[4]", "offset": 68},
+        {"name": "pad", "type": "int[2]", "offset": 84},
+        {"name": "soundExt", "type": "unsigned short[4]", "offset": 92},
+        {"name": "emitterExt", "type": "unsigned short[4]", "offset": 100},
+        {"name": "enemyExt", "type": "unsigned short[12]", "offset": 108},
+        {"name": "waypntExt", "type": "unsigned short[4]", "offset": 132},
+        {"name": "weaponExt", "type": "unsigned short[4]", "offset": 140},
+        {"name": "mapanimExt", "type": "unsigned short[4]", "offset": 148},
+        {"name": "lightExt", "type": "unsigned short[4]", "offset": 156}
+      ],
+      "implementation": "include/jpb/world.h",
+      "status": "reviewed"
+    },
+    {
+      "name": "wsl_BAP_PLACEMENT",
+      "type_index": "0x115F",
+      "reference_size": 252,
+      "fields": [
+        {"name": "aiDf", "type": "wsl_BAPAI_DEFAULTS", "offset": 0},
+        {"name": "aiNum", "type": "int", "offset": 164},
+        {"name": "actorNum", "type": "int", "offset": 168},
+        {"name": "loc", "type": "rdVECTOR", "offset": 172},
+        {"name": "aName", "type": "char[12]", "offset": 184},
+        {"name": "enemyID", "type": "int", "offset": 196},
+        {"name": "status", "type": "int", "offset": 200},
+        {"name": "genDelay", "type": "unsigned", "offset": 204},
+        {"name": "pLastEnemy", "type": "unsigned", "offset": 208},
+        {"name": "nLink", "type": "int", "offset": 212},
+        {"name": "links", "type": "unsigned short[8]", "offset": 216},
+        {"name": "nWaypnt", "type": "int", "offset": 232},
+        {"name": "wayPoints", "type": "wsl_wayPoint[]", "offset": 236}
+      ],
+      "implementation": "include/jpb/world.h",
+      "status": "reviewed"
+    },
+    {
+      "name": "wsl_libPoly",
+      "type_index": "0x11B4",
+      "reference_size": 8,
+      "fields": [
+        {"name": "tagIndex", "type": "unsigned short", "offset": 0},
+        {"name": "textureID", "type": "short", "offset": 2},
+        {"name": "n", "type": "int", "offset": 4}
+      ],
+      "implementation": "include/jpb/world.h",
+      "status": "reviewed"
+    },
+    {
+      "name": "wsl_libPart",
+      "type_index": "0x11C1",
+      "reference_size": 184,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "index", "type": "long*", "offset": 0},
+        {"name": "shared", "type": "short*", "offset": 8},
+        {"name": "animstuff", "type": "unsigned", "offset": 16},
+        {"name": "center", "type": "short", "offset": 20},
+        {"name": "numverts", "type": "unsigned char", "offset": 22},
+        {"name": "numpolys", "type": "unsigned char", "offset": 23},
+        {"name": "polys", "type": "wsl_libPoly[20]", "offset": 24}
+      ],
+      "implementation": "include/jpb/world.h",
+      "status": "reviewed",
+      "port_note": "The PC archive is patched in place with its x64 header; Xbox-ready assets must convert this pointer-bearing header to the asserted 32-bit runtime form."
+    },
+    {
+      "name": "MATHEAD",
+      "type_index": "0x1306",
+      "reference_size": 4,
+      "fields": [
+        {"name": "nameofs", "type": "short", "offset": 0},
+        {"name": "listtype", "type": "char", "offset": 2},
+        {"name": "_pad_", "type": "char", "offset": 3}
+      ],
+      "implementation": "include/jpb/jpx.h",
+      "status": "reviewed"
+    },
+    {
+      "name": "_BINHEADER",
+      "type_index": "0x137F",
+      "reference_size": 4102,
+      "fields": [
+        {"name": "NumMats", "type": "short", "offset": 0},
+        {"name": "OfsToWorld", "type": "short", "offset": 2},
+        {"name": "OfsToFirstStriphead", "type": "short", "offset": 4},
+        {"name": "matdefs", "type": "MATHEAD[1024]", "offset": 6}
+      ],
+      "implementation": "include/jpb/jpx.h",
+      "status": "reviewed",
+      "port_note": "Files serialize only NumMats material entries before the name table; the full PDB type records the 1024-entry stack capacity used by InitJPX."
+    },
+    {
+      "name": "objectRoot",
+      "type_index": "0x1161",
+      "reference_size": 24,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "pParent", "type": "objectRoot*", "type_index": "0x10C4", "offset": 0},
+        {"name": "flags", "type": "unsigned", "type_index": "0x0075", "offset": 8},
+        {"name": "objectID", "type": "int", "type_index": "0x0074", "offset": 12},
+        {"name": "objectName", "type": "char[8]", "type_index": "0x115A", "offset": 16}
+      ],
+      "implementation": "include/jpb/objroot.h",
+      "status": "reviewed",
+      "port_note": "Native pParent preserves the 24-byte x64 layout and compacts objectRoot to 20 bytes on 32-bit Xbox."
+    },
+    {
+      "name": "Pad",
+      "type_index": "0x116E",
+      "reference_size": 32,
+      "fields": [
+        {"name": "padnum", "type": "unsigned", "type_index": "0x0075", "offset": 0},
+        {"name": "mask0", "type": "unsigned", "type_index": "0x0075", "offset": 4},
+        {"name": "mask1", "type": "unsigned", "type_index": "0x0075", "offset": 8},
+        {"name": "oldbits0", "type": "unsigned", "type_index": "0x0075", "offset": 12},
+        {"name": "oldbits1", "type": "unsigned", "type_index": "0x0075", "offset": 16},
+        {"name": "bufferedbits", "type": "unsigned", "type_index": "0x0075", "offset": 20},
+        {"name": "cpad", "type": "unsigned[2]", "type_index": "0x1167", "offset": 24}
+      ],
+      "implementation": "include/jpb/player.h",
+      "status": "reviewed"
+    },
+    {
+      "name": "_mvector",
+      "type_index": "0x1164",
+      "reference_size": 8,
+      "fields": [
+        {"name": "vx", "type": "short", "type_index": "0x0011", "offset": 0},
+        {"name": "vy", "type": "short", "type_index": "0x0011", "offset": 2},
+        {"name": "vz", "type": "short", "type_index": "0x0011", "offset": 4},
+        {"name": "speed", "type": "short", "type_index": "0x0011", "offset": 6}
+      ],
+      "implementation": "include/jpb/player.h",
+      "status": "reviewed"
+    },
+    {
+      "name": "playerSettings",
+      "type_index": "0x1141",
+      "reference_size": 20,
+      "fields": [
+        {"name": "JumpVel", "type": "short", "offset": 0},
+        {"name": "RunningJumpVel", "type": "short", "offset": 2},
+        {"name": "dblJumpVel", "type": "short", "offset": 4},
+        {"name": "JumpAngle", "type": "short", "offset": 6},
+        {"name": "RunningJumpAngle", "type": "short", "offset": 8},
+        {"name": "dblJumpAngle", "type": "short", "offset": 10},
+        {"name": "bkJumpAngle", "type": "short", "offset": 12},
+        {"name": "gravity", "type": "unsigned short", "offset": 14},
+        {"name": "dblgravity", "type": "unsigned short", "offset": 16},
+        {"name": "minClosingDist", "type": "short", "offset": 18}
+      ],
+      "implementation": "include/jpb/player.h",
+      "status": "reviewed"
+    },
+    {
+      "name": "playerObject",
+      "type_index": "0x128D",
+      "reference_size": 568,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "playerRoot", "type": "objectRoot", "type_index": "0x10B5", "offset": 0},
+        {"name": "target", "type": "playerObject*", "type_index": "0x10E4", "offset": 24},
+        {"name": "locked", "type": "playerObject*", "type_index": "0x10E4", "offset": 32},
+        {"name": "playerPad", "type": "Pad", "type_index": "0x11A5", "offset": 40},
+        {"name": "PreMotion", "type": "char[32]", "type_index": "0x10AA", "offset": 72},
+        {"name": "HeldMotion", "type": "char[32]", "type_index": "0x10AA", "offset": 104},
+        {"name": "playernum", "type": "short", "offset": 136},
+        {"name": "playerID", "type": "short", "offset": 138},
+        {"name": "FacingLR", "type": "int", "offset": 140},
+        {"name": "ctime", "type": "int", "offset": 144},
+        {"name": "bheld", "type": "unsigned[16]", "type_index": "0x126F", "offset": 148},
+        {"name": "heldMask", "type": "unsigned", "offset": 212},
+        {"name": "releaseMask", "type": "unsigned", "offset": 216},
+        {"name": "dtime", "type": "int", "offset": 220},
+        {"name": "vtime", "type": "int", "offset": 224},
+        {"name": "mtime", "type": "int", "offset": 228},
+        {"name": "chainSlack", "type": "short", "offset": 232},
+        {"name": "chainSlackEnd", "type": "short", "offset": 234},
+        {"name": "fLife", "type": "int", "offset": 236},
+        {"name": "fStun", "type": "int", "offset": 240},
+        {"name": "fForce", "type": "int", "offset": 244},
+        {"name": "hitLocation", "type": "VECTOR", "type_index": "0x106D", "offset": 248},
+        {"name": "hitVelocity", "type": "_mvector", "type_index": "0x11B9", "offset": 264},
+        {"name": "hitMotion", "type": "Motion*", "type_index": "0x1134", "offset": 272},
+        {"name": "whohitme", "type": "playerObject*", "type_index": "0x10E4", "offset": 280},
+        {"name": "hitMask", "type": "unsigned", "offset": 288},
+        {"name": "hitDelay", "type": "unsigned", "offset": 292},
+        {"name": "hitNumber", "type": "unsigned char", "offset": 296},
+        {"name": "numAttackers", "type": "unsigned char", "offset": 297},
+        {"name": "projectile", "type": "ProjType*", "type_index": "0x1277", "offset": 304},
+        {"name": "pMotion", "type": "Motion**", "type_index": "0x1278", "offset": 312},
+        {"name": "pFlags", "type": "unsigned", "offset": 320},
+        {"name": "forceFlags", "type": "unsigned", "offset": 324},
+        {"name": "forceData", "type": "__int64[6]", "type_index": "0x1279", "offset": 328},
+        {"name": "airVelocity", "type": "int", "offset": 376},
+        {"name": "airAngle", "type": "int", "offset": 380},
+        {"name": "groundDelay", "type": "unsigned", "offset": 384},
+        {"name": "maxMotions", "type": "short", "offset": 388},
+        {"name": "oldmaxCMotions", "type": "short", "offset": 390},
+        {"name": "paMotions", "type": "Motion*", "type_index": "0x1134", "offset": 392},
+        {"name": "maxCombos", "type": "short", "offset": 400},
+        {"name": "subOffset", "type": "short", "offset": 402},
+        {"name": "paCombos", "type": "Combo*", "type_index": "0x127D", "offset": 408},
+        {"name": "fScale", "type": "int", "offset": 416},
+        {"name": "paNodesSizes", "type": "CollisionData*", "type_index": "0x1280", "offset": 424},
+        {"name": "numCollisionNodes", "type": "int", "offset": 432},
+        {"name": "currentMotion", "type": "short", "offset": 436},
+        {"name": "previousMotion", "type": "short", "offset": 438},
+        {"name": "delayedMotion", "type": "int", "offset": 440},
+        {"name": "ACTION_LOCK", "type": "short", "offset": 444},
+        {"name": "runCounter", "type": "short", "offset": 446},
+        {"name": "paiMemory", "type": "aiData*", "type_index": "0x1282", "offset": 448},
+        {"name": "pEnemy", "type": "wsl_ENEMY*", "type_index": "0x1286", "offset": 456},
+        {"name": "hitLog", "type": "char[32]", "type_index": "0x10AA", "offset": 464},
+        {"name": "shadow", "type": "int*", "type_index": "0x0674", "offset": 496},
+        {"name": "lockRing", "type": "int*", "type_index": "0x0674", "offset": 504},
+        {"name": "pSettings", "type": "playerSettings", "type_index": "0x1287", "offset": 512},
+        {"name": "pMainCallBack", "type": "int (*)(long*, playerObject*)", "type_index": "0x128A", "offset": 536},
+        {"name": "pMotionCallBack", "type": "int (*)(long*, playerObject*)", "type_index": "0x128A", "offset": 544},
+        {"name": "pForceCallBack", "type": "int (*)(long*, playerObject*)", "type_index": "0x128A", "offset": 552},
+        {"name": "comboUserData", "type": "int", "offset": 560}
+      ],
+      "implementation": "include/jpb/player.h",
+      "status": "reviewed",
+      "port_note": "All pointer-bearing fields use native pointers. The exact x64 offsets are asserted; the runtime-only record intentionally compacts on 32-bit Xbox rather than copying the remaster ABI."
+    },
+    {
+      "name": "_jheightstuff",
+      "type_index": "0x1222",
+      "reference_size": 24,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "cube", "type": "int*", "type_index": "0x0674", "offset": 0},
+        {"name": "entry", "type": "int*", "type_index": "0x0674", "offset": 8},
+        {"name": "poly", "type": "int*", "type_index": "0x0674", "offset": 16}
+      ],
+      "implementation": "include/jpb/physics.h",
+      "status": "reviewed",
+      "port_note": "Native pointers preserve the x64 PDB layout and compact this runtime query record on 32-bit Xbox."
+    },
+    {
+      "name": "sceneObject",
+      "type_index": "0x11A8",
+      "reference_size": 152,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "sceneRoot", "type": "objectRoot", "type_index": "0x10B5", "offset": 0},
+        {"name": "pScene", "type": "objectRoot*", "type_index": "0x10C4", "offset": 24},
+        {"name": "pModel", "type": "objectRoot*", "type_index": "0x10C4", "offset": 32},
+        {"name": "pPhysics", "type": "objectRoot*", "type_index": "0x10C4", "offset": 40},
+        {"name": "pAnim", "type": "objectRoot*", "type_index": "0x10C4", "offset": 48},
+        {"name": "pPlayer", "type": "objectRoot*", "type_index": "0x10C4", "offset": 56},
+        {"name": "v3WorldAngle", "type": "_svector", "type_index": "0x1080", "offset": 64},
+        {"name": "v3WorldPosition", "type": "_svector", "type_index": "0x1080", "offset": 72},
+        {"name": "v3SnapShotPosition", "type": "VECTOR", "type_index": "0x106D", "offset": 80},
+        {"name": "pKeyFrameModel", "type": "_animFrame*", "type_index": "0x1139", "offset": 96},
+        {"name": "m3LocalModelMatrix", "type": "FMATRIX", "type_index": "0x11A0", "offset": 104}
+      ],
+      "implementation": "include/jpb/scene.h",
+      "status": "reviewed",
+      "port_note": "All component links are native objectRoot pointers; exact x64 offsets are asserted and the runtime record compacts on 32-bit Xbox."
+    },
+    {
+      "name": "_solid",
+      "type_index": "0x1242",
+      "reference_size": 136,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "flags", "type": "unsigned", "type_index": "0x0075", "offset": 0},
+        {"name": "object", "type": "sceneObject*", "type_index": "0x121E", "offset": 8},
+        {"name": "modelnode", "type": "Mnode*", "type_index": "0x1188", "offset": 16},
+        {"name": "geometry", "type": "geomData*", "type_index": "0x118E", "offset": 24},
+        {"name": "model", "type": "modelObject*", "type_index": "0x1237", "offset": 32},
+        {"name": "physics", "type": "physicsObject*", "type_index": "0x123A", "offset": 40},
+        {"name": "node", "type": "int", "type_index": "0x0074", "offset": 48},
+        {"name": "coords", "type": "_svector*", "type_index": "0x1140", "offset": 56},
+        {"name": "normals", "type": "_svector*", "type_index": "0x1140", "offset": 64},
+        {"name": "rotmatrix", "type": "MATRIX", "type_index": "0x123D", "offset": 72},
+        {"name": "scale", "type": "VECTOR", "type_index": "0x106D", "offset": 120}
+      ],
+      "implementation": "include/jpb/physics.h",
+      "status": "reviewed",
+      "port_note": "Native object and geometry pointers preserve the x64 PDB layout and intentionally compact the runtime collision record on 32-bit Xbox."
+    },
+    {
+      "name": "_collide_info",
+      "type_index": "0x6982",
+      "reference_size": 52,
+      "fields": [
+        {"name": "type", "type": "short", "type_index": "0x0011", "offset": 0},
+        {"name": "flags", "type": "short", "type_index": "0x0011", "offset": 2},
+        {"name": "dist", "type": "float", "type_index": "0x0040", "offset": 4},
+        {"name": "kisspoint", "type": "FVECTOR", "type_index": "0x11CE", "offset": 8},
+        {"name": "edge", "type": "int", "type_index": "0x0074", "offset": 20},
+        {"name": "n", "type": "FVECTOR", "type_index": "0x11CE", "offset": 24},
+        {"name": "facenormal", "type": "FVECTOR", "type_index": "0x11CE", "offset": 36},
+        {"name": "washack", "type": "int", "type_index": "0x0074", "offset": 48}
+      ],
+      "implementation": "include/jpb/physics.h",
+      "status": "reviewed"
+    },
+    {
+      "name": "_movement_packet",
+      "type_index": "0x8F49",
+      "reference_size": 184,
+      "fields": [
+        {"name": "points", "type": "FVECTOR[4]", "type_index": "0x8F48", "offset": 0},
+        {"name": "facenormal", "type": "FVECTOR", "type_index": "0x11CE", "offset": 48},
+        {"name": "movement", "type": "FVECTOR", "type_index": "0x11CE", "offset": 60},
+        {"name": "startpos", "type": "FVECTOR", "type_index": "0x11CE", "offset": 72},
+        {"name": "to", "type": "FVECTOR", "type_index": "0x11CE", "offset": 84},
+        {"name": "vmin", "type": "FVECTOR", "type_index": "0x11CE", "offset": 96},
+        {"name": "vmax", "type": "FVECTOR", "type_index": "0x11CE", "offset": 108},
+        {"name": "radius", "type": "float", "type_index": "0x0040", "offset": 120},
+        {"name": "distance", "type": "float", "type_index": "0x0040", "offset": 124},
+        {"name": "numsides", "type": "int", "type_index": "0x0074", "offset": 128},
+        {"name": "info", "type": "_collide_info", "type_index": "0x6982", "offset": 132}
+      ],
+      "implementation": "include/jpb/physics.h",
+      "status": "reviewed"
+    },
+    {
+      "name": "_collidevars",
+      "type_index": "0x8F73",
+      "reference_size": 240,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "P0", "type": "FVECTOR*[5]", "type_index": "0x8F71", "offset": 0},
+        {"name": "P1", "type": "FVECTOR*[5]", "type_index": "0x8F71", "offset": 40},
+        {"name": "edge", "type": "FVECTOR[4]", "type_index": "0x6C90", "offset": 80},
+        {"name": "edgenormal", "type": "FVECTOR[4]", "type_index": "0x6C90", "offset": 128},
+        {"name": "vmin", "type": "FVECTOR", "type_index": "0x124D", "offset": 176},
+        {"name": "vmax", "type": "FVECTOR", "type_index": "0x124D", "offset": 188},
+        {"name": "tmp", "type": "FVECTOR", "type_index": "0x124D", "offset": 200},
+        {"name": "rsquared", "type": "float", "type_index": "0x0040", "offset": 212},
+        {"name": "bestDist", "type": "float", "type_index": "0x0040", "offset": 216},
+        {"name": "distToPlane", "type": "float", "type_index": "0x0040", "offset": 220},
+        {"name": "moveToPlaneDot", "type": "float", "type_index": "0x0040", "offset": 224},
+        {"name": "sideMask", "type": "int", "type_index": "0x0074", "offset": 228},
+        {"name": "edge_start", "type": "int", "type_index": "0x0074", "offset": 232}
+      ],
+      "implementation": "include/jpb/physics.h",
+      "status": "reviewed",
+      "port_note": "Native FVECTOR pointers preserve the x64 PDB layout and compact the scratch record on 32-bit Xbox."
+    },
+    {
+      "name": "physicsObject",
+      "type_index": "0x125F",
+      "reference_size": 504,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "physicsRoot", "type": "objectRoot", "type_index": "0x10B5", "offset": 0},
+        {"name": "matrix", "type": "MATRIX", "type_index": "0x123D", "offset": 24},
+        {"name": "angle", "type": "VECTOR", "type_index": "0x106D", "offset": 72},
+        {"name": "face", "type": "VECTOR", "type_index": "0x106D", "offset": 88},
+        {"name": "pos", "type": "FVECTOR", "type_index": "0x124D", "offset": 104},
+        {"name": "snapshotpos", "type": "FVECTOR", "type_index": "0x124D", "offset": 116},
+        {"name": "lastpos", "type": "FVECTOR", "type_index": "0x124D", "offset": 128},
+        {"name": "localpos", "type": "FVECTOR", "type_index": "0x124D", "offset": 140},
+        {"name": "newlocalpos", "type": "FVECTOR", "type_index": "0x124D", "offset": 152},
+        {"name": "localfacing", "type": "FVECTOR", "type_index": "0x124D", "offset": 164},
+        {"name": "svangle", "type": "_svector", "type_index": "0x1080", "offset": 176},
+        {"name": "svpos", "type": "_svector", "type_index": "0x1080", "offset": 184},
+        {"name": "svmov", "type": "_svector", "type_index": "0x1080", "offset": 192},
+        {"name": "vpos", "type": "VECTOR", "type_index": "0x106D", "offset": 200},
+        {"name": "vmov", "type": "VECTOR", "type_index": "0x106D", "offset": 216},
+        {"name": "solidgrabbed", "type": "physicsObject*", "type_index": "0x123A", "offset": 232},
+        {"name": "constmov", "type": "FVECTOR", "type_index": "0x124D", "offset": 240},
+        {"name": "currentmov", "type": "FVECTOR", "type_index": "0x124D", "offset": 252},
+        {"name": "airmov", "type": "FVECTOR", "type_index": "0x124D", "offset": 264},
+        {"name": "mov", "type": "FVECTOR", "type_index": "0x124D", "offset": 276},
+        {"name": "accel", "type": "FVECTOR", "type_index": "0x124D", "offset": 288},
+        {"name": "movemode", "type": "MOVE_MODE", "type_index": "0x104C", "offset": 300},
+        {"name": "trajectory", "type": "short", "type_index": "0x0011", "offset": 304},
+        {"name": "airspeed", "type": "short", "type_index": "0x0011", "offset": 306},
+        {"name": "turnspeed", "type": "short", "type_index": "0x0011", "offset": 308},
+        {"name": "radius", "type": "short", "type_index": "0x0011", "offset": 310},
+        {"name": "mass", "type": "short", "type_index": "0x0011", "offset": 312},
+        {"name": "height", "type": "short", "type_index": "0x0011", "offset": 314},
+        {"name": "noncollideframes", "type": "short", "type_index": "0x0011", "offset": 316},
+        {"name": "collidetime", "type": "unsigned", "type_index": "0x0075", "offset": 320},
+        {"name": "anycollidetime", "type": "unsigned", "type_index": "0x0075", "offset": 324},
+        {"name": "airTime", "type": "int", "type_index": "0x0074", "offset": 328},
+        {"name": "realAirTime", "type": "int", "type_index": "0x0074", "offset": 332},
+        {"name": "airGround", "type": "float", "type_index": "0x0040", "offset": 336},
+        {"name": "validairground", "type": "float", "type_index": "0x0040", "offset": 340},
+        {"name": "reversoi", "type": "int", "type_index": "0x0074", "offset": 344},
+        {"name": "airVx", "type": "int", "type_index": "0x0074", "offset": 348},
+        {"name": "airVz", "type": "int", "type_index": "0x0074", "offset": 352},
+        {"name": "airVelocity", "type": "int", "type_index": "0x0074", "offset": 356},
+        {"name": "airAngle", "type": "int", "type_index": "0x0074", "offset": 360},
+        {"name": "currentmapinfo", "type": "_jheightstuff", "type_index": "0x1255", "offset": 368},
+        {"name": "mapinfo", "type": "_jheightstuff", "type_index": "0x1255", "offset": 392},
+        {"name": "lastpolyhit", "type": "int*", "type_index": "0x0674", "offset": 416},
+        {"name": "flags", "type": "unsigned", "type_index": "0x0075", "offset": 424},
+        {"name": "clipcode", "type": "unsigned char", "type_index": "0x0020", "offset": 428},
+        {"name": "hangcheck", "type": "char", "type_index": "0x0070", "offset": 429},
+        {"name": "airstick", "type": "unsigned char", "type_index": "0x0020", "offset": 430},
+        {"name": "maxledge", "type": "int", "type_index": "0x0074", "offset": 432},
+        {"name": "ledgepoint", "type": "FVECTOR", "type_index": "0x124D", "offset": 436},
+        {"name": "ledgeangle", "type": "int", "type_index": "0x0074", "offset": 448},
+        {"name": "standee", "type": "physicsObject*", "type_index": "0x123A", "offset": 456},
+        {"name": "solid", "type": "_solid*", "type_index": "0x125A", "offset": 464},
+        {"name": "falltimer", "type": "int", "type_index": "0x0074", "offset": 472},
+        {"name": "userdata", "type": "int[3]", "type_index": "0x125C", "offset": 476},
+        {"name": "uservector", "type": "VECTOR", "type_index": "0x106D", "offset": 488}
+      ],
+      "implementation": "include/jpb/physics.h",
+      "status": "reviewed",
+      "port_note": "Exact x64 offsets are asserted. Native subsystem, collision, and map-query pointers intentionally compact the runtime-only record on 32-bit Xbox."
+    },
+    {
+      "name": "Motion",
+      "type_index": "0x10AF",
+      "reference_size": 100,
+      "fields": [
+        {"name": "motionFlags", "type": "unsigned", "type_index": "0x0075", "offset": 0},
+        {"name": "Seq", "type": "unsigned short", "type_index": "0x0021", "offset": 4},
+        {"name": "globalID", "type": "unsigned short", "type_index": "0x0021", "offset": 6},
+        {"name": "twin", "type": "unsigned char", "type_index": "0x0020", "offset": 8},
+        {"name": "twout", "type": "unsigned char", "type_index": "0x0020", "offset": 9},
+        {"name": "cutin", "type": "unsigned char", "type_index": "0x0020", "offset": 10},
+        {"name": "cutout", "type": "unsigned char", "type_index": "0x0020", "offset": 11},
+        {"name": "disp", "type": "unsigned char", "type_index": "0x0020", "offset": 12},
+        {"name": "Lock", "type": "unsigned char", "type_index": "0x0020", "offset": 13},
+        {"name": "frzin", "type": "char", "type_index": "0x0070", "offset": 14},
+        {"name": "frzout", "type": "char", "type_index": "0x0070", "offset": 15},
+        {"name": "vel", "type": "short", "type_index": "0x0011", "offset": 16},
+        {"name": "reface", "type": "short", "type_index": "0x0011", "offset": 18},
+        {"name": "attackFlags", "type": "unsigned", "type_index": "0x0075", "offset": 20},
+        {"name": "Damage", "type": "unsigned char", "type_index": "0x0020", "offset": 24},
+        {"name": "Delay", "type": "unsigned char", "type_index": "0x0020", "offset": 25},
+        {"name": "hitReact", "type": "unsigned char", "type_index": "0x0020", "offset": 26},
+        {"name": "combo", "type": "unsigned char", "type_index": "0x0020", "offset": 27},
+        {"name": "snd", "type": "unsigned char[2][8]", "type_index": "0x1073", "offset": 28},
+        {"name": "sndDelay", "type": "char[2]", "type_index": "0x1076", "offset": 44},
+        {"name": "fx1", "type": "char", "type_index": "0x0070", "offset": 46},
+        {"name": "fx1Delay", "type": "char", "type_index": "0x0070", "offset": 47},
+        {"name": "fx2", "type": "char", "type_index": "0x0070", "offset": 48},
+        {"name": "fx2Delay", "type": "char", "type_index": "0x0070", "offset": 49},
+        {"name": "Speed", "type": "short", "type_index": "0x0011", "offset": 50},
+        {"name": "SpeedAcc", "type": "short", "type_index": "0x0011", "offset": 52},
+        {"name": "Charge", "type": "short", "type_index": "0x0011", "offset": 54},
+        {"name": "ChargeAcc", "type": "short", "type_index": "0x0011", "offset": 56},
+        {"name": "Recoil", "type": "short", "type_index": "0x0011", "offset": 58},
+        {"name": "RecoilAcc", "type": "short", "type_index": "0x0011", "offset": 60},
+        {"name": "FunctPtr", "type": "int", "type_index": "0x0074", "offset": 64},
+        {"name": "name", "type": "char[32]", "type_index": "0x10AA", "offset": 68}
+      ],
+      "implementation": "include/jpb/anim.h",
+      "status": "reviewed",
+      "port_note": "Pointer-free record has an identical 100-byte representation on PC and Xbox."
+    },
+    {
+      "name": "_animFrame",
+      "type_index": "0x10B0",
+      "reference_size": 560,
+      "fields": [
+        {"name": "v3RootTranslation", "type": "_svector", "type_index": "0x1080", "offset": 0},
+        {"name": "av3JointAngle", "type": "_svector[32]", "type_index": "0x1092", "offset": 8},
+        {"name": "v3RootTranslationDelta", "type": "_svector", "type_index": "0x1080", "offset": 264},
+        {"name": "av3JointAngleDeltas", "type": "_svector[32]", "type_index": "0x1092", "offset": 272},
+        {"name": "event", "type": "char[32]", "type_index": "0x10AA", "offset": 528}
+      ],
+      "implementation": "include/jpb/anim.h",
+      "status": "reviewed",
+      "port_note": "Pointer-free frame has an identical 560-byte representation on PC and Xbox; the PDB arrays are 256 bytes each, or 32 eight-byte vectors."
+    },
+    {
+      "name": "_animTemplate",
+      "type_index": "0x106F",
+      "reference_size": 32,
+      "fields": [
+        {"name": "FframeAddr", "type": "unsigned", "type_index": "0x0075", "offset": 0},
+        {"name": "Fframe", "type": "short", "type_index": "0x0011", "offset": 4},
+        {"name": "Lframe", "type": "short", "type_index": "0x0011", "offset": 6},
+        {"name": "parts", "type": "short", "type_index": "0x0011", "offset": 8},
+        {"name": "pad1", "type": "short", "type_index": "0x0011", "offset": 10},
+        {"name": "ConstantNoTrans", "type": "VECTOR", "type_index": "0x106D", "offset": 12},
+        {"name": "pad2", "type": "unsigned", "type_index": "0x0075", "offset": 28}
+      ],
+      "implementation": "include/jpb/anim.h",
+      "status": "reviewed",
+      "port_note": "Pointer-free template has an identical 32-byte representation on PC and Xbox."
+    },
+    {
+      "name": "_dpcontext",
+      "type_index": "0x106B",
+      "reference_size": 64,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "wordbuffer", "type": "unsigned short*", "type_index": "0x0621", "offset": 0},
+        {"name": "wordsinbuffer", "type": "int", "type_index": "0x0074", "offset": 8},
+        {"name": "handyvalues", "type": "unsigned short*", "type_index": "0x0621", "offset": 16},
+        {"name": "huffdata", "type": "unsigned*", "type_index": "0x0675", "offset": 24},
+        {"name": "huffdataorigin", "type": "unsigned*", "type_index": "0x0675", "offset": 32},
+        {"name": "huffdword", "type": "unsigned", "type_index": "0x0075", "offset": 40},
+        {"name": "huffbits", "type": "int", "type_index": "0x0074", "offset": 44},
+        {"name": "n_bitmask", "type": "unsigned", "type_index": "0x0075", "offset": 48},
+        {"name": "numseq", "type": "unsigned short", "type_index": "0x0021", "offset": 52},
+        {"name": "numparts", "type": "unsigned short", "type_index": "0x0021", "offset": 54},
+        {"name": "seqdata", "type": "_animTemplate*", "type_index": "0x1067", "offset": 56}
+      ],
+      "implementation": "include/jpb/anim.h",
+      "status": "reviewed",
+      "port_note": "Native stream pointers preserve the exact x64 PDB layout and compact for the 32-bit Xbox runtime."
+    },
+    {
+      "name": "animListNode",
+      "type_index": "0x1153",
+      "reference_size": 40,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "anm_Node", "type": "Node", "type_index": "0x10B1", "offset": 0},
+        {"name": "pAnimTemplate", "type": "_animTemplate*", "type_index": "0x1067", "offset": 8},
+        {"name": "Lock", "type": "short", "type_index": "0x0011", "offset": 16},
+        {"name": "Speed", "type": "short", "type_index": "0x0011", "offset": 18},
+        {"name": "tweenLevel", "type": "short", "type_index": "0x0011", "offset": 20},
+        {"name": "pad", "type": "short", "type_index": "0x0011", "offset": 22},
+        {"name": "pMotion", "type": "Motion*", "type_index": "0x1134", "offset": 24},
+        {"name": "pUserData", "type": "unsigned long*", "type_index": "0x0622", "offset": 32}
+      ],
+      "implementation": "include/jpb/anim.h",
+      "status": "reviewed",
+      "port_note": "Native intrusive-list and payload pointers preserve the exact x64 PDB layout and compact for Xbox."
+    },
+    {
+      "name": "animObject",
+      "type_index": "0x1145",
+      "reference_size": 2496,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "animRoot", "type": "objectRoot", "type_index": "0x10B5", "offset": 0},
+        {"name": "paMotions", "type": "Motion*", "type_index": "0x1134", "offset": 24},
+        {"name": "pCurrentAnimFrame", "type": "_animFrame*", "type_index": "0x1139", "offset": 32},
+        {"name": "pPreviousAnimFrame", "type": "_animFrame*", "type_index": "0x1139", "offset": 40},
+        {"name": "depack_context", "type": "_dpcontext", "type_index": "0x113A", "offset": 48},
+        {"name": "depack_context3", "type": "_dpcontext", "type_index": "0x113A", "offset": 112},
+        {"name": "AnimFrameBuffer", "type": "_animFrame[2]", "type_index": "0x113C", "offset": 176},
+        {"name": "animFrameIndex", "type": "int", "type_index": "0x0074", "offset": 1296},
+        {"name": "animFrameAcc", "type": "int", "type_index": "0x0074", "offset": 1300},
+        {"name": "animFrameRate", "type": "int", "type_index": "0x0074", "offset": 1304},
+        {"name": "animGlobalFrameRateModifier", "type": "int", "type_index": "0x0074", "offset": 1308},
+        {"name": "animFreeList", "type": "List", "type_index": "0x113D", "offset": 1312},
+        {"name": "animList", "type": "List", "type_index": "0x113D", "offset": 1328},
+        {"name": "pCurrentAnimSeq", "type": "animListNode*", "type_index": "0x113F", "offset": 1344},
+        {"name": "tweenLevel", "type": "unsigned char", "type_index": "0x0020", "offset": 1352},
+        {"name": "tweenFramesLeft", "type": "unsigned char", "type_index": "0x0020", "offset": 1353},
+        {"name": "dispIn", "type": "unsigned short", "type_index": "0x0021", "offset": 1354},
+        {"name": "tweenAnimFrame", "type": "_animFrame", "type_index": "0x1137", "offset": 1356},
+        {"name": "tweenRotFrame", "type": "_svector[32]", "type_index": "0x1092", "offset": 1916},
+        {"name": "tweenDeltaTranslation", "type": "_svector", "type_index": "0x1080", "offset": 2172},
+        {"name": "tweenDeltaRotFrame", "type": "_svector[32]", "type_index": "0x1092", "offset": 2180},
+        {"name": "pv3TweenDeltaTranslation", "type": "_svector*", "type_index": "0x1140", "offset": 2440},
+        {"name": "pv3TweenDeltaRotFrame", "type": "_svector*", "type_index": "0x1140", "offset": 2448},
+        {"name": "curBufferId", "type": "unsigned short", "type_index": "0x0021", "offset": 2456},
+        {"name": "Lock", "type": "unsigned short", "type_index": "0x0021", "offset": 2458},
+        {"name": "pMotion", "type": "Motion*", "type_index": "0x1134", "offset": 2464},
+        {"name": "pUserData", "type": "int*", "type_index": "0x0674", "offset": 2472},
+        {"name": "animFlags", "type": "unsigned", "type_index": "0x0075", "offset": 2480},
+        {"name": "loopHandle", "type": "unsigned short[2]", "type_index": "0x10B2", "offset": 2484},
+        {"name": "soundTimer", "type": "int[2]", "type_index": "0x10D2", "offset": 2488}
+      ],
+      "implementation": "include/jpb/anim.h",
+      "status": "reviewed",
+      "port_note": "Exact x64 offsets are asserted. Native pointers and lists intentionally compact the runtime-only animation record on 32-bit Xbox."
+    },
+    {
+      "name": "geomData",
+      "type_index": "0x11F9",
+      "reference_size": 144,
+      "fields": [
+        {"name": "name", "type": "char[32]", "type_index": "0x10AA", "offset": 0},
+        {"name": "id", "type": "unsigned", "type_index": "0x0075", "offset": 32},
+        {"name": "trans", "type": "_svector", "type_index": "0x1080", "offset": 36},
+        {"name": "numFaces", "type": "int", "type_index": "0x0074", "offset": 44},
+        {"name": "numVerts", "type": "int", "type_index": "0x0074", "offset": 48},
+        {"name": "numShareVerts", "type": "int", "type_index": "0x0074", "offset": 52},
+        {"name": "pVertex", "type": "int", "type_index": "0x0074", "offset": 56},
+        {"name": "pNormal", "type": "int", "type_index": "0x0074", "offset": 60},
+        {"name": "pUV", "type": "int", "type_index": "0x0074", "offset": 64},
+        {"name": "pColor", "type": "int", "type_index": "0x0074", "offset": 68},
+        {"name": "t", "type": "<unnamed-tag>", "type_index": "0x11F2", "offset": 72},
+        {"name": "pIndex", "type": "int", "type_index": "0x0074", "offset": 104},
+        {"name": "numChildren", "type": "int", "type_index": "0x0074", "offset": 108},
+        {"name": "aChildren", "type": "int[7]", "type_index": "0x11F5", "offset": 112},
+        {"name": "pVertNormals", "type": "int", "type_index": "0x0074", "offset": 140}
+      ],
+      "implementation": "include/jpb/bmd.h",
+      "status": "reviewed",
+      "port_note": "Pointer-free archive record. worm.bmd's original data relies on model_MakeNode consuming pVertNormals as an eighth child index."
+    },
+    {
+      "name": "modelObject",
+      "type_index": "0x1200",
+      "reference_size": 104,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "modelRoot", "type": "objectRoot", "type_index": "0x10B5", "offset": 0},
+        {"name": "sModelName", "type": "char[32]", "type_index": "0x10AA", "offset": 24},
+        {"name": "pRootNode", "type": "Mnode*", "type_index": "0x1188", "offset": 56},
+        {"name": "ambientLight", "type": "CVECTOR", "type_index": "0x11FC", "offset": 64},
+        {"name": "v3Scale", "type": "VECTOR", "type_index": "0x106D", "offset": 68},
+        {"name": "idMask", "type": "unsigned", "type_index": "0x0075", "offset": 84},
+        {"name": "eventMask", "type": "unsigned", "type_index": "0x0075", "offset": 88},
+        {"name": "effectMask", "type": "unsigned", "type_index": "0x0075", "offset": 92},
+        {"name": "flags", "type": "unsigned", "type_index": "0x0075", "offset": 96},
+        {"name": "clipradius", "type": "short", "type_index": "0x0011", "offset": 100},
+        {"name": "clipBits", "type": "short", "type_index": "0x0011", "offset": 102}
+      ],
+      "implementation": "include/jpb/model.h",
+      "status": "reviewed",
+      "port_note": "Native node pointers preserve the exact 104-byte x64 PDB layout and compact the runtime-only model record on 32-bit Xbox."
+    },
+    {
+      "name": "modelSpace",
+      "type_index": "0xA521",
+      "reference_size": 4976,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "Model", "type": "modelObject", "type_index": "0x1233", "offset": 0},
+        {"name": "aNodes", "type": "Mnode[32]", "type_index": "0xA517", "offset": 104},
+        {"name": "curNode", "type": "int", "type_index": "0x0074", "offset": 4968}
+      ],
+      "implementation": "include/jpb/model.h",
+      "status": "reviewed",
+      "port_note": "Native-pointer modelObject/Mnode records preserve exact x64 storage and compact naturally on 32-bit targets."
+    },
+    {
+      "name": "TextureTracker",
+      "type_index": "0xA527",
+      "reference_size": 16,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "name", "type": "unsigned[2]", "type_index": "0x1167", "offset": 0},
+        {"name": "th", "type": "_Material*", "type_index": "0x10CE", "offset": 8}
+      ],
+      "implementation": "include/jpb/model.h",
+      "status": "reviewed",
+      "port_note": "The native material pointer preserves the matched x64 layout and compacts naturally on 32-bit targets."
+    },
+    {
+      "name": "Mnode",
+      "type_index": "0x119A",
+      "reference_size": 152,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "id", "type": "modelNodeId", "type_index": "0x1181", "offset": 0},
+        {"name": "v3CurrentRotation", "type": "_svector", "type_index": "0x1080", "offset": 4},
+        {"name": "v3RotationDelta", "type": "_svector", "type_index": "0x1080", "offset": 12},
+        {"name": "v3RotationAbs", "type": "_svector", "type_index": "0x1080", "offset": 20},
+        {"name": "v3Translation", "type": "_svector", "type_index": "0x1080", "offset": 28},
+        {"name": "v3Translation2", "type": "_svector", "type_index": "0x1080", "offset": 36},
+        {"name": "v3RotCenter", "type": "VECTOR", "type_index": "0x106D", "offset": 44},
+        {"name": "v3Velocity2", "type": "_svector", "type_index": "0x1080", "offset": 60},
+        {"name": "time", "type": "int", "type_index": "0x0074", "offset": 68},
+        {"name": "v3Velocity", "type": "_svector", "type_index": "0x1080", "offset": 72},
+        {"name": "v3Scale", "type": "VECTOR", "type_index": "0x106D", "offset": 80},
+        {"name": "v3PostTranslation", "type": "VECTOR", "type_index": "0x106D", "offset": 96},
+        {"name": "RendPacketID", "type": "short", "type_index": "0x0011", "offset": 112},
+        {"name": "ZBufferOffset", "type": "short", "type_index": "0x0011", "offset": 114},
+        {"name": "zPushMod", "type": "short", "type_index": "0x0011", "offset": 116},
+        {"name": "numChildNodes", "type": "short", "type_index": "0x0011", "offset": 118},
+        {"name": "aChildNode", "type": "Mnode*", "type_index": "0x1188", "offset": 120},
+        {"name": "pParent", "type": "Mnode*", "type_index": "0x1188", "offset": 128},
+        {"name": "pGeomData", "type": "geomData*", "type_index": "0x118E", "offset": 136},
+        {"name": "flags", "type": "unsigned", "type_index": "0x0075", "offset": 144}
+      ],
+      "implementation": "include/jpb/collision.h",
+      "status": "reviewed",
+      "port_note": "Native pointers preserve the exact 152-byte x64 PDB layout and intentionally compact the runtime node to 136 bytes on 32-bit Xbox."
+    },
+    {
+      "name": "ExtraCharacter",
+      "type_index": "0x6C4D",
+      "reference_size": 24,
+      "fields": [
+        {"name": "ID", "type": "const model_id", "type_index": "0x6C48", "offset": 0},
+        {"name": "TextIndex", "type": "const int", "type_index": "0x1400", "offset": 4},
+        {"name": "CanReflect", "type": "const int", "type_index": "0x1400", "offset": 8},
+        {"name": "CanForcePower", "type": "const int", "type_index": "0x1400", "offset": 12},
+        {"name": "CanLedgeClimb", "type": "const int", "type_index": "0x1400", "offset": 16},
+        {"name": "Unlocked", "type": "int", "type_index": "0x0074", "offset": 20}
+      ],
+      "implementation": "include/jpb/extracharacters.h",
+      "status": "reviewed",
+      "port_note": "Pointer-free exact PDB record; model_id remains a 32-bit enum on PC and Xbox."
+    },
+    {
+      "name": "WorldData",
+      "type_index": "0x1251",
+      "reference_size": 18736,
+      "fields": [
+        {"name": "start", "type": "rdVECTOR", "type_index": "0x108D", "offset": 0},
+        {"name": "location", "type": "rdVECTOR", "type_index": "0x108D", "offset": 12},
+        {"name": "p0location", "type": "rdVECTOR", "type_index": "0x108D", "offset": 24},
+        {"name": "p1location", "type": "rdVECTOR", "type_index": "0x108D", "offset": 36},
+        {"name": "pFat", "type": "wsl_fatPoly*", "type_index": "0x11E5", "offset": 48},
+        {"name": "pThin", "type": "wsl_thinPoly*", "type_index": "0x11FB", "offset": 56},
+        {"name": "pNewMap", "type": "wsl_mapSlot*", "type_index": "0x1202", "offset": 64},
+        {"name": "pEntryTags", "type": "wsl_entryTags*", "type_index": "0x1208", "offset": 72},
+        {"name": "pEntry", "type": "wsl_mapEntry*", "type_index": "0x120C", "offset": 80},
+        {"name": "pLibTags", "type": "wsl_libTags*", "type_index": "0x1213", "offset": 88},
+        {"name": "numTags", "type": "int", "type_index": "0x0074", "offset": 96},
+        {"name": "pLib", "type": "wsl_libPart**", "type_index": "0x1221", "offset": 104},
+        {"name": "numLibs", "type": "int", "type_index": "0x0074", "offset": 112},
+        {"name": "bkColor", "type": "CVECTOR", "type_index": "0x11FC", "offset": 116},
+        {"name": "numPolys", "type": "int", "type_index": "0x0074", "offset": 120},
+        {"name": "pTexture", "type": "wsl_BAP_TEXTURE*", "type_index": "0x122C", "offset": 128},
+        {"name": "numTexture", "type": "int", "type_index": "0x0074", "offset": 136},
+        {"name": "minX", "type": "short", "type_index": "0x0011", "offset": 140},
+        {"name": "minZ", "type": "short", "type_index": "0x0011", "offset": 142},
+        {"name": "minY", "type": "short", "type_index": "0x0011", "offset": 144},
+        {"name": "maxX", "type": "short", "type_index": "0x0011", "offset": 146},
+        {"name": "maxZ", "type": "short", "type_index": "0x0011", "offset": 148},
+        {"name": "maxY", "type": "short", "type_index": "0x0011", "offset": 150},
+        {"name": "sizeX", "type": "short", "type_index": "0x0011", "offset": 152},
+        {"name": "sizeZ", "type": "short", "type_index": "0x0011", "offset": 154},
+        {"name": "sizeY", "type": "short", "type_index": "0x0011", "offset": 156},
+        {"name": "pObiDolly", "type": "BAP_CAMERADOLLY*", "type_index": "0x1231", "offset": 160},
+        {"name": "aDolly", "type": "BAP_CAMERADOLLY[256]", "type_index": "0x1234", "offset": 168},
+        {"name": "aBkDolly", "type": "BAP_CAMERADOLLY[256]", "type_index": "0x1234", "offset": 8360},
+        {"name": "currentDolly", "type": "short", "type_index": "0x0011", "offset": 16552},
+        {"name": "overRideDolly", "type": "short", "type_index": "0x0011", "offset": 16554},
+        {"name": "player0", "type": "playerObject*", "type_index": "0x10E4", "offset": 16560},
+        {"name": "player1", "type": "playerObject*", "type_index": "0x10E4", "offset": 16568},
+        {"name": "animDef", "type": "wsl_BT_ANIMDEF*[255]", "type_index": "0x123C", "offset": 16576},
+        {"name": "nADef", "type": "int", "type_index": "0x0074", "offset": 18616},
+        {"name": "animMapEnemies", "type": "int*", "type_index": "0x0674", "offset": 18624},
+        {"name": "nAnimMap", "type": "int", "type_index": "0x0074", "offset": 18632},
+        {"name": "pPalette", "type": "short*", "type_index": "0x0611", "offset": 18640},
+        {"name": "pColor", "type": "char*", "type_index": "0x0670", "offset": 18648},
+        {"name": "nEnemy", "type": "int", "type_index": "0x0074", "offset": 18656},
+        {"name": "apEnemy", "type": "wsl_BAP_PLACEMENT**", "type_index": "0x1241", "offset": 18664},
+        {"name": "nAI", "type": "long", "type_index": "0x0012", "offset": 18672},
+        {"name": "apAI", "type": "BAP_AI**", "type_index": "0x1244", "offset": 18680},
+        {"name": "nActor", "type": "int", "type_index": "0x0074", "offset": 18688},
+        {"name": "apActorNames", "type": "char**", "type_index": "0x11F6", "offset": 18696},
+        {"name": "nPowerups", "type": "int", "type_index": "0x0074", "offset": 18704},
+        {"name": "pPowerups", "type": "wsl_Powerup*", "type_index": "0x124B", "offset": 18712},
+        {"name": "celbase", "type": "void*", "type_index": "0x0603", "offset": 18720},
+        {"name": "gotbackdrop", "type": "int", "type_index": "0x0074", "offset": 18728}
+      ],
+      "implementation": "include/jpb/world.h",
+      "status": "reviewed",
+      "port_note": "x64 offsets are asserted exactly; native pointers intentionally compact the runtime-only structure on 32-bit Xbox."
+    },
+    {
+      "name": "CharacterData",
+      "type_index": "0x108C",
+      "reference_size": 28,
+      "fields": [
+        {"name": "Score", "type": "long", "type_index": "0x0012", "offset": 0},
+        {"name": "Energy", "type": "short", "type_index": "0x0011", "offset": 4},
+        {"name": "MaxEnergy", "type": "short", "type_index": "0x0011", "offset": 6},
+        {"name": "MaxEnergyPerc", "type": "unsigned", "type_index": "0x0075", "offset": 8},
+        {"name": "Force", "type": "short", "type_index": "0x0011", "offset": 12},
+        {"name": "MaxForce", "type": "short", "type_index": "0x0011", "offset": 14},
+        {"name": "MaxForcePerc", "type": "short", "type_index": "0x0011", "offset": 16},
+        {"name": "Items", "type": "short", "type_index": "0x0011", "offset": 18},
+        {"name": "PowerType", "type": "short", "type_index": "0x0011", "offset": 20},
+        {"name": "PowerLevel", "type": "long", "type_index": "0x0012", "offset": 24}
+      ],
+      "implementation": "include/jpb/game.h",
+      "status": "reviewed",
+      "port_note": "Pointer-free exact PDB record; fixed-width definitions preserve the Windows long fields on PC and Xbox."
+    },
+    {
+      "name": "JEDICOMBOMASK",
+      "type_index": "0x108A",
+      "reference_size": 6,
+      "fields": [
+        {"name": "m", "type": "unsigned char[6]", "type_index": "0x1088", "offset": 0}
+      ],
+      "implementation": "include/jpb/game.h",
+      "status": "reviewed",
+      "port_note": "Pointer-free exact PDB record."
+    },
+    {
+      "name": "optionstruct",
+      "type_index": "0x1061",
+      "reference_size": 56,
+      "fields": [
+        {"name": "saveFileVer", "type": "int", "type_index": "0x0074", "offset": 0},
+        {"name": "CPULevel", "type": "unsigned char", "type_index": "0x0020", "offset": 4},
+        {"name": "Stereo", "type": "unsigned char", "type_index": "0x0020", "offset": 5},
+        {"name": "Music", "type": "unsigned char", "type_index": "0x0020", "offset": 6},
+        {"name": "SFX", "type": "unsigned char", "type_index": "0x0020", "offset": 7},
+        {"name": "Extra", "type": "unsigned char", "type_index": "0x0020", "offset": 8},
+        {"name": "AutoSave", "type": "unsigned char", "type_index": "0x0020", "offset": 9},
+        {"name": "musicVolume", "type": "unsigned char", "type_index": "0x0020", "offset": 10},
+        {"name": "SFXVolume", "type": "unsigned char", "type_index": "0x0020", "offset": 11},
+        {"name": "xaTrack", "type": "unsigned char", "type_index": "0x0020", "offset": 12},
+        {"name": "oldModelSelect", "type": "unsigned char[2]", "offset": 13},
+        {"name": "ControllerConfig", "type": "unsigned char[2]", "offset": 15},
+        {"name": "AIDebug", "type": "unsigned char", "type_index": "0x0020", "offset": 17},
+        {"name": "FunFactor", "type": "unsigned char", "type_index": "0x0020", "offset": 18},
+        {"name": "WalkLimit", "type": "unsigned char[2]", "offset": 19},
+        {"name": "RunLimit", "type": "unsigned char[2]", "offset": 21},
+        {"name": "ShockFlag", "type": "unsigned char[2]", "offset": 23},
+        {"name": "JumpCheat", "type": "unsigned char", "type_index": "0x0020", "offset": 25},
+        {"name": "DebugLevel", "type": "unsigned char", "type_index": "0x0020", "offset": 26},
+        {"name": "overlayMode", "type": "unsigned char", "type_index": "0x0020", "offset": 27},
+        {"name": "Language", "type": "unsigned char", "type_index": "0x0020", "offset": 28},
+        {"name": "ResolutionChanged", "type": "unsigned long", "type_index": "0x0022", "offset": 32},
+        {"name": "ScreenWidth", "type": "unsigned long", "type_index": "0x0022", "offset": 36},
+        {"name": "ScreenHeight", "type": "unsigned long", "type_index": "0x0022", "offset": 40},
+        {"name": "WindowMode", "type": "unsigned long", "type_index": "0x0022", "offset": 44},
+        {"name": "PadAudioEnabled", "type": "unsigned char", "type_index": "0x0020", "offset": 48},
+        {"name": "EULAaccepted", "type": "unsigned long", "type_index": "0x0022", "offset": 52}
+      ],
+      "implementation": "include/jpb/game.h",
+      "status": "reviewed",
+      "port_note": "Pointer-free exact PDB record; fixed-width implementation fields preserve the matched Windows ABI for Xbox."
+    },
+    {
+      "name": "saveGameStruct",
+      "type_index": "0x6CE8",
+      "reference_size": 4624,
+      "fields": [
+        {"name": "saveFileVer", "type": "int", "type_index": "0x0074", "offset": 0},
+        {"name": "validFlag", "type": "unsigned char", "type_index": "0x0020", "offset": 4},
+        {"name": "gamenum", "type": "unsigned char", "type_index": "0x0020", "offset": 5},
+        {"name": "lastlevel", "type": "unsigned char", "type_index": "0x0020", "offset": 6},
+        {"name": "jediLevel", "type": "unsigned short[23]", "offset": 8},
+        {"name": "jediLevelPlayed", "type": "unsigned char[23][30]", "offset": 54},
+        {"name": "jediScorePerLevel", "type": "unsigned[23][30]", "offset": 744},
+        {"name": "checkpoint", "type": "unsigned char[16]", "offset": 3504},
+        {"name": "completionPoints", "type": "unsigned", "type_index": "0x0075", "offset": 3520},
+        {"name": "maxEnergyLevels", "type": "unsigned short[23]", "offset": 3524},
+        {"name": "maxEnergyLineLength", "type": "unsigned short[23]", "offset": 3570},
+        {"name": "maxForceLevels", "type": "unsigned short[23]", "offset": 3616},
+        {"name": "maxForceLineLength", "type": "unsigned short[23]", "offset": 3662},
+        {"name": "NumPlayers", "type": "char", "type_index": "0x0070", "offset": 3708},
+        {"name": "mNumContinues", "type": "int", "type_index": "0x0074", "offset": 3712},
+        {"name": "ContinuesUsed", "type": "signed char", "type_index": "0x0010", "offset": 3716},
+        {"name": "aCharacterData", "type": "CharacterData[20]", "offset": 3720},
+        {"name": "jediComboMask", "type": "JEDICOMBOMASK[23]", "offset": 4280},
+        {"name": "secretBits", "type": "unsigned long", "type_index": "0x0022", "offset": 4420},
+        {"name": "AIDamage", "type": "char", "type_index": "0x0070", "offset": 4424},
+        {"name": "JediDamage", "type": "char", "type_index": "0x0070", "offset": 4425},
+        {"name": "HTHRate", "type": "char", "type_index": "0x0070", "offset": 4426},
+        {"name": "RangedRate", "type": "char", "type_index": "0x0070", "offset": 4427},
+        {"name": "BlockRate", "type": "char", "type_index": "0x0070", "offset": 4428},
+        {"name": "ComboLevel", "type": "char", "type_index": "0x0070", "offset": 4429},
+        {"name": "ForceLevel", "type": "char", "type_index": "0x0070", "offset": 4430},
+        {"name": "continueAble", "type": "char", "type_index": "0x0070", "offset": 4431},
+        {"name": "difficulty", "type": "char", "type_index": "0x0070", "offset": 4432},
+        {"name": "gameCompleted", "type": "int", "type_index": "0x0074", "offset": 4436},
+        {"name": "players", "type": "unsigned char[2]", "offset": 4440},
+        {"name": "abGlobalBits", "type": "unsigned char[16]", "offset": 4442},
+        {"name": "jediUpgrades", "type": "Upgrades[9]", "offset": 4458},
+        {"name": "unlockedExtraCharacters", "type": "unsigned short", "type_index": "0x0021", "offset": 4620}
+      ],
+      "implementation": "include/jpb/game.h",
+      "status": "reviewed",
+      "port_note": "Pointer-free exact PDB record and matched PC Game payload. Fixed-width fields make the raw layout portable without a serialization dependency."
+    },
+    {
+      "name": "gamestruct",
+      "type_index": "0x9ADA",
+      "reference_size": 4716,
+      "fields": [
+        {"name": "Mode", "type": "signed char", "type_index": "0x0010", "offset": 0},
+        {"name": "gameMode", "type": "signed char", "type_index": "0x0010", "offset": 1},
+        {"name": "Continuing", "type": "int", "type_index": "0x0074", "offset": 4},
+        {"name": "StageExit", "type": "int", "type_index": "0x0074", "offset": 8},
+        {"name": "LevelExit", "type": "int", "type_index": "0x0074", "offset": 12},
+        {"name": "GameExit", "type": "int", "type_index": "0x0074", "offset": 16},
+        {"name": "ModelSelect", "type": "short[2]", "type_index": "0x1051", "offset": 20},
+        {"name": "AIselect", "type": "unsigned char[2]", "type_index": "0x1052", "offset": 24},
+        {"name": "CurrentLevel", "type": "unsigned char", "type_index": "0x0020", "offset": 26},
+        {"name": "inMenuFlag", "type": "unsigned char", "type_index": "0x0020", "offset": 27},
+        {"name": "xaFlag", "type": "unsigned short", "type_index": "0x0021", "offset": 28},
+        {"name": "xaPause", "type": "unsigned short", "type_index": "0x0021", "offset": 30},
+        {"name": "xaTimer", "type": "unsigned short", "type_index": "0x0021", "offset": 32},
+        {"name": "xaClock", "type": "unsigned short", "type_index": "0x0021", "offset": 34},
+        {"name": "xaLoop", "type": "unsigned short", "type_index": "0x0021", "offset": 36},
+        {"name": "xaNum", "type": "unsigned short", "type_index": "0x0021", "offset": 38},
+        {"name": "xaReloc", "type": "unsigned short", "type_index": "0x0021", "offset": 40},
+        {"name": "xaVol", "type": "unsigned short", "type_index": "0x0021", "offset": 42},
+        {"name": "xaPending", "type": "unsigned short", "type_index": "0x0021", "offset": 44},
+        {"name": "xastartPos", "type": "unsigned", "type_index": "0x0075", "offset": 48},
+        {"name": "xaendPos", "type": "unsigned", "type_index": "0x0075", "offset": 52},
+        {"name": "xacurPos", "type": "unsigned", "type_index": "0x0075", "offset": 56},
+        {"name": "AbortCount", "type": "int", "type_index": "0x0074", "offset": 60},
+        {"name": "GameState", "type": "unsigned long", "type_index": "0x0022", "offset": 64},
+        {"name": "QuickDraw", "type": "char", "type_index": "0x0070", "offset": 68},
+        {"name": "screenShotFlag", "type": "char", "type_index": "0x0070", "offset": 69},
+        {"name": "timerBars", "type": "char", "type_index": "0x0070", "offset": 70},
+        {"name": "maxdraw", "type": "char", "type_index": "0x0070", "offset": 71},
+        {"name": "Counter", "type": "long", "type_index": "0x0012", "offset": 72},
+        {"name": "message", "type": "char[256]", "type_index": "0x1053", "offset": 76},
+        {"name": "TestTimerCount", "type": "int", "type_index": "0x0074", "offset": 332},
+        {"name": "letterboxFlag", "type": "char", "type_index": "0x0070", "offset": 336},
+        {"name": "letterboxFlag2", "type": "char", "type_index": "0x0070", "offset": 337},
+        {"name": "versusModeFlag", "type": "short", "type_index": "0x0011", "offset": 338},
+        {"name": "padFlag", "type": "short", "type_index": "0x0011", "offset": 340},
+        {"name": "maxEnergyLevels", "type": "unsigned short[23]", "type_index": "0x1054", "offset": 342},
+        {"name": "maxEnergyLineLength", "type": "unsigned short[23]", "type_index": "0x1054", "offset": 388},
+        {"name": "maxForceLevels", "type": "unsigned short[23]", "type_index": "0x1054", "offset": 434},
+        {"name": "maxForceLineLength", "type": "unsigned short[23]", "type_index": "0x1054", "offset": 480},
+        {"name": "NumPlayers", "type": "char", "type_index": "0x0070", "offset": 526},
+        {"name": "mNumContinues", "type": "int", "type_index": "0x0074", "offset": 528},
+        {"name": "ContinuesUsed", "type": "signed char", "type_index": "0x0010", "offset": 532},
+        {"name": "aCharacterData", "type": "CharacterData[20]", "type_index": "0x1056", "offset": 536},
+        {"name": "jediComboMask", "type": "JEDICOMBOMASK[23]", "type_index": "0x1058", "offset": 1096},
+        {"name": "jediLevelPlayed", "type": "unsigned char[23][30]", "type_index": "0x105A", "offset": 1234},
+        {"name": "jediScorePerLevel", "type": "unsigned[23][30]", "type_index": "0x105C", "offset": 1924},
+        {"name": "checkpoint", "type": "unsigned char[16]", "type_index": "0x105D", "offset": 4684},
+        {"name": "AIDamage", "type": "char", "type_index": "0x0070", "offset": 4700},
+        {"name": "JediDamage", "type": "char", "type_index": "0x0070", "offset": 4701},
+        {"name": "HTHRate", "type": "char", "type_index": "0x0070", "offset": 4702},
+        {"name": "RangedRate", "type": "char", "type_index": "0x0070", "offset": 4703},
+        {"name": "BlockRate", "type": "char", "type_index": "0x0070", "offset": 4704},
+        {"name": "ComboLevel", "type": "char", "type_index": "0x0070", "offset": 4705},
+        {"name": "ForceLevel", "type": "char", "type_index": "0x0070", "offset": 4706},
+        {"name": "continueAble", "type": "char", "type_index": "0x0070", "offset": 4707},
+        {"name": "difficulty", "type": "char", "type_index": "0x0070", "offset": 4708},
+        {"name": "gameCompleted", "type": "int", "type_index": "0x0074", "offset": 4712}
+      ],
+      "implementation": "include/jpb/game.h",
+      "status": "reviewed",
+      "port_note": "Pointer-free exact PDB record. Fixed-width fields preserve the matched Windows ABI unchanged for the later 32-bit Xbox build."
+    },
+    {
+      "name": "CControl",
+      "type_index": "0x1210",
+      "reference_size": 6,
+      "fields": [
+        {"name": "init", "type": "short", "type_index": "0x0011", "offset": 0},
+        {"name": "vel", "type": "char", "type_index": "0x0010", "offset": 2},
+        {"name": "acc", "type": "char", "type_index": "0x0010", "offset": 3},
+        {"name": "limit", "type": "short", "type_index": "0x0011", "offset": 4}
+      ],
+      "implementation": "include/jpb/sprite.h",
+      "status": "reviewed",
+      "port_note": "Pointer-free exact PDB record."
+    },
+    {
+      "name": "SControl",
+      "type_index": "0x1247",
+      "reference_size": 8,
+      "fields": [
+        {"name": "init", "type": "short", "type_index": "0x0011", "offset": 0},
+        {"name": "vel", "type": "short", "type_index": "0x0011", "offset": 2},
+        {"name": "acc", "type": "short", "type_index": "0x0011", "offset": 4},
+        {"name": "limit", "type": "short", "type_index": "0x0011", "offset": 6}
+      ],
+      "implementation": "include/jpb/sprite.h",
+      "status": "reviewed",
+      "port_note": "Pointer-free exact PDB record."
+    },
+    {
+      "name": "SCB",
+      "type_index": "0x10DA",
+      "reference_size": 104,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "scb_next_SCB", "type": "Node*", "type_index": "0x10BC", "offset": 0},
+        {"name": "scb_flags", "type": "int", "type_index": "0x0074", "offset": 8},
+        {"name": "scb_Texture", "type": "_Material*", "type_index": "0x10CE", "offset": 16},
+        {"name": "scb_vertex0", "type": "_sfvector", "type_index": "0x1150", "offset": 24},
+        {"name": "scb_vertex1", "type": "_sfvector", "type_index": "0x1150", "offset": 40},
+        {"name": "scb_vertex2", "type": "_sfvector", "type_index": "0x1150", "offset": 56},
+        {"name": "scb_vertex3", "type": "_sfvector", "type_index": "0x1150", "offset": 72},
+        {"name": "scb_cvertex", "type": "_sfvector", "type_index": "0x1150", "offset": 88}
+      ],
+      "implementation": "include/jpb/sprite.h",
+      "status": "reviewed",
+      "port_note": "Native pointers preserve the x64 PDB layout and compact the live sprite-control record for 32-bit Xbox."
+    },
+    {
+      "name": "EffectData",
+      "type_index": "0x1227",
+      "reference_size": 52,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "bank", "type": "unsigned char", "type_index": "0x0020", "offset": 0},
+        {"name": "type", "type": "unsigned char", "type_index": "0x0020", "offset": 1},
+        {"name": "delay", "type": "short", "type_index": "0x0011", "offset": 2},
+        {"name": "vel", "type": "_svector", "type_index": "0x10A4", "offset": 4},
+        {"name": "acc", "type": "_svector", "type_index": "0x10A4", "offset": 12},
+        {"name": "bright", "type": "SControl", "type_index": "0x1247", "offset": 20},
+        {"name": "scale", "type": "SControl", "type_index": "0x1247", "offset": 28},
+        {"name": "rx", "type": "short", "type_index": "0x0011", "offset": 36},
+        {"name": "rvx", "type": "short", "type_index": "0x0011", "offset": 38},
+        {"name": "pos", "type": "_svector", "type_index": "0x10A4", "offset": 40},
+        {"name": "flags", "type": "unsigned", "type_index": "0x0075", "offset": 48}
+      ],
+      "implementation": "include/jpb/sprite.h",
+      "status": "reviewed",
+      "port_note": "Pointer-free exact PDB layout is directly reusable by the later 32-bit Xbox build."
+    },
+    {
+      "name": "EffectHeader",
+      "type_index": "0x1276",
+      "reference_size": 836,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "num", "type": "unsigned long", "type_index": "0x0022", "offset": 0},
+        {"name": "aEffects", "type": "EffectData[16]", "type_index": "0x1272", "offset": 4}
+      ],
+      "implementation": "include/jpb/sprite.h",
+      "status": "reviewed",
+      "port_note": "Uses a fixed-width 32-bit count and pointer-free effect records, preserving the PC asset layout on Xbox."
+    },
+    {
+      "name": "RingData",
+      "type_index": "0x121B",
+      "reference_size": 52,
+      "fields": [
+        {"name": "bank", "type": "unsigned char", "type_index": "0x0020", "offset": 0},
+        {"name": "type", "type": "unsigned char", "type_index": "0x0020", "offset": 1},
+        {"name": "b", "type": "CControl", "type_index": "0x1210", "offset": 2},
+        {"name": "r1", "type": "CControl", "type_index": "0x1210", "offset": 8},
+        {"name": "r2", "type": "CControl", "type_index": "0x1210", "offset": 14},
+        {"name": "h1", "type": "CControl", "type_index": "0x1210", "offset": 20},
+        {"name": "h2", "type": "CControl", "type_index": "0x1210", "offset": 26},
+        {"name": "rot", "type": "_svector", "type_index": "0x10A4", "offset": 32},
+        {"name": "clut", "type": "unsigned char", "type_index": "0x0020", "offset": 40},
+        {"name": "rvel", "type": "char", "type_index": "0x0010", "offset": 41},
+        {"name": "ratio", "type": "unsigned char", "type_index": "0x0020", "offset": 42},
+        {"name": "pad0", "type": "unsigned char", "type_index": "0x0020", "offset": 43},
+        {"name": "time", "type": "unsigned long", "type_index": "0x0022", "offset": 44},
+        {"name": "tmode", "type": "unsigned char", "type_index": "0x0020", "offset": 48},
+        {"name": "pad1", "type": "unsigned char[3]", "offset": 49}
+      ],
+      "implementation": "include/jpb/sprite.h",
+      "status": "reviewed",
+      "port_note": "Pointer-free exact PDB ring-effect asset record."
+    },
+    {
+      "name": "Ring",
+      "type_index": "0x120B",
+      "reference_size": 72,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "sp_Next", "type": "Node*", "type_index": "0x10BC", "offset": 0},
+        {"name": "sp_Type", "type": "int", "type_index": "0x0074", "offset": 8},
+        {"name": "rot", "type": "_svector", "type_index": "0x10A4", "offset": 12},
+        {"name": "pos", "type": "VECTOR", "type_index": "0x10A0", "offset": 20},
+        {"name": "b1", "type": "short", "type_index": "0x0011", "offset": 36},
+        {"name": "b1v", "type": "short", "type_index": "0x0011", "offset": 38},
+        {"name": "rad1", "type": "short", "type_index": "0x0011", "offset": 40},
+        {"name": "rad2", "type": "short", "type_index": "0x0011", "offset": 42},
+        {"name": "rad1v", "type": "short", "type_index": "0x0011", "offset": 44},
+        {"name": "rad2v", "type": "short", "type_index": "0x0011", "offset": 46},
+        {"name": "h1", "type": "short", "type_index": "0x0011", "offset": 48},
+        {"name": "h2", "type": "short", "type_index": "0x0011", "offset": 50},
+        {"name": "h1v", "type": "short", "type_index": "0x0011", "offset": 52},
+        {"name": "h2v", "type": "short", "type_index": "0x0011", "offset": 54},
+        {"name": "ratio", "type": "int", "type_index": "0x0074", "offset": 56},
+        {"name": "time", "type": "unsigned long", "type_index": "0x0022", "offset": 60},
+        {"name": "pRingData", "type": "RingData*", "type_index": "0x1220", "offset": 64}
+      ],
+      "implementation": "include/jpb/sprite.h",
+      "status": "reviewed",
+      "port_note": "Native pointers match the x64 PDB and compact to the asserted 64-byte Xbox layout."
+    },
+    {
+      "name": "Sprite",
+      "type_index": "0x126E",
+      "reference_size": 152,
+      "pointer_width": 8,
+      "fields": [
+        {"name": "sp_Next", "type": "Node*", "type_index": "0x10BC", "offset": 0},
+        {"name": "sp_Type", "type": "int", "type_index": "0x0074", "offset": 8},
+        {"name": "sp_SCB", "type": "SCB*", "type_index": "0x1263", "offset": 16},
+        {"name": "sp_Pos", "type": "_sfvector", "type_index": "0x1150", "offset": 24},
+        {"name": "sp_Vel", "type": "_sfvector", "type_index": "0x1150", "offset": 40},
+        {"name": "sp_Acc", "type": "_sfvector", "type_index": "0x1150", "offset": 56},
+        {"name": "sp_Rot", "type": "_svector", "type_index": "0x10A4", "offset": 72},
+        {"name": "sp_RVel", "type": "_svector", "type_index": "0x10A4", "offset": 80},
+        {"name": "sp_Anim", "type": "TexAnim*", "type_index": "0x1265", "offset": 88},
+        {"name": "sp_PAnim", "type": "PalAnim*", "type_index": "0x1267", "offset": 96},
+        {"name": "sp_Func", "type": "int (*)(int*)", "type_index": "0x126B", "offset": 104},
+        {"name": "sp_Time", "type": "short", "type_index": "0x0011", "offset": 112},
+        {"name": "sp_Delay", "type": "short", "type_index": "0x0011", "offset": 114},
+        {"name": "sp_User", "type": "int*", "type_index": "0x0674", "offset": 120},
+        {"name": "sp_Flags", "type": "int", "type_index": "0x0074", "offset": 128},
+        {"name": "sp_cScale", "type": "SControl", "type_index": "0x1247", "offset": 132},
+        {"name": "sp_cBright", "type": "SControl", "type_index": "0x1247", "offset": 140},
+        {"name": "sp_Num", "type": "short", "type_index": "0x0011", "offset": 148}
+      ],
+      "implementation": "include/jpb/sprite.h",
+      "status": "reviewed",
+      "port_note": "Native pointers preserve the x64 PDB layout; the live runtime Sprite compacts naturally on 32-bit Xbox."
+    }
+  ]
+}

@@ -1,0 +1,3642 @@
+{
+  "schema_version": 1,
+  "generated_from": [
+    "inventory\\functions.json",
+    "inventory\\globals.json"
+  ],
+  "foundations": [
+    {
+      "module": "list",
+      "status": "reviewed",
+      "risk": "low",
+      "depends_on": [],
+      "required_globals": [],
+      "reason": "Intrusive container used across gameplay systems.",
+      "priority": 1,
+      "procedure_count": 8,
+      "procedure_bytes": 269,
+      "reviewed_procedure_count": 8,
+      "reviewed_procedure_bytes": 269,
+      "named_parameters_and_locals": 16,
+      "procedures_with_direct_lines": 8,
+      "symbols": [
+        "list_AddHead",
+        "list_AddTail",
+        "list_InitList",
+        "list_IsListEmpty",
+        "list_MoveList",
+        "list_RemoveHead",
+        "list_RemoveNode",
+        "list_RemoveTail"
+      ],
+      "global_evidence": []
+    },
+    {
+      "module": "timer",
+      "status": "reviewed",
+      "risk": "low",
+      "depends_on": [],
+      "required_globals": [
+        "mRoundTimer",
+        "timerbucket",
+        "buckettime",
+        "gputiming",
+        "vbls"
+      ],
+      "reason": "Portable state transitions; VBlank source is a port adapter.",
+      "priority": 2,
+      "procedure_count": 7,
+      "procedure_bytes": 159,
+      "reviewed_procedure_count": 7,
+      "reviewed_procedure_bytes": 159,
+      "named_parameters_and_locals": 5,
+      "procedures_with_direct_lines": 7,
+      "symbols": [
+        "timer_GpuCallback",
+        "timer_SuperVbl",
+        "timer_VBlankCallback",
+        "timer_gCheckSystemTimer",
+        "timer_gGetRoundTimer",
+        "timer_gInitSystemTimer",
+        "timer_gSetRoundTimer"
+      ],
+      "global_evidence": [
+        {
+          "name": "mRoundTimer",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "mRoundTimer",
+              "type_index": "0X0012",
+              "type": "long",
+              "section": 3,
+              "section_offset": "0x4A375C",
+              "rva": "0x94475C",
+              "va": "0x14094475C"
+            }
+          ]
+        },
+        {
+          "name": "timerbucket",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "timerbucket",
+              "type_index": "0X9A1F",
+              "type": "_graph_entry",
+              "section": 3,
+              "section_offset": "0x4A3760",
+              "rva": "0x944760",
+              "va": "0x140944760"
+            }
+          ]
+        },
+        {
+          "name": "buckettime",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "buckettime",
+              "type_index": "0X0074",
+              "type": "int",
+              "section": 3,
+              "section_offset": "0x4A3770",
+              "rva": "0x944770",
+              "va": "0x140944770"
+            }
+          ]
+        },
+        {
+          "name": "gputiming",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "gputiming",
+              "type_index": "0X0074",
+              "type": "int",
+              "section": 3,
+              "section_offset": "0x4A3774",
+              "rva": "0x944774",
+              "va": "0x140944774"
+            }
+          ]
+        },
+        {
+          "name": "vbls",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "vbls",
+              "type_index": "0X26D4",
+              "type": "volatile unsigned long",
+              "section": 3,
+              "section_offset": "0x4A3778",
+              "rva": "0x944778",
+              "va": "0x140944778"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module": "alloc",
+      "status": "reviewed",
+      "risk": "medium",
+      "depends_on": [],
+      "required_globals": [],
+      "reason": "Legacy heap contract needed before memory pools.",
+      "priority": 3,
+      "procedure_count": 4,
+      "procedure_bytes": 427,
+      "reviewed_procedure_count": 4,
+      "reviewed_procedure_bytes": 427,
+      "named_parameters_and_locals": 17,
+      "procedures_with_direct_lines": 4,
+      "symbols": [
+        "memalloc",
+        "memfree",
+        "meminit",
+        "memsize"
+      ],
+      "global_evidence": []
+    },
+    {
+      "module": "memory",
+      "status": "reviewed",
+      "risk": "medium",
+      "depends_on": [
+        "alloc"
+      ],
+      "required_globals": [],
+      "reason": "Game memory pools and allocation-domain behavior.",
+      "priority": 4,
+      "procedure_count": 10,
+      "procedure_bytes": 1072,
+      "reviewed_procedure_count": 10,
+      "reviewed_procedure_bytes": 1072,
+      "named_parameters_and_locals": 28,
+      "procedures_with_direct_lines": 10,
+      "symbols": [
+        "memory_FlushMemoryPool",
+        "memory_InitMemoryPool",
+        "memory_InitMemorySystem",
+        "memory_gCalloc",
+        "memory_gCallocAnyMemory",
+        "memory_gCallocMemoryFunc",
+        "memory_gDrainMemoryPool",
+        "memory_gMemUseage",
+        "memory_gSetDefaultMemoryType",
+        "memory_gTestMemoryPool"
+      ],
+      "global_evidence": []
+    },
+    {
+      "module": "fmath",
+      "status": "reviewed",
+      "risk": "high",
+      "depends_on": [],
+      "required_globals": [
+        {
+          "name": "gte_matrix",
+          "module": "fmath",
+          "rva": "0x537CB8"
+        }
+      ],
+      "reason": "All PDB-named fixed-point, packed-vector, matrix, camera-space, and projection procedures are reviewed.",
+      "priority": 5,
+      "procedure_count": 49,
+      "procedure_bytes": 20012,
+      "reviewed_procedure_count": 49,
+      "reviewed_procedure_bytes": 20012,
+      "named_parameters_and_locals": 241,
+      "procedures_with_direct_lines": 49,
+      "symbols": [
+        "ApplyMatrixMany10Bit",
+        "ApplyMatrixMany10BitFV",
+        "ApplyMatrixMany10BitFVnormalize",
+        "ApplyMatrixMany10BitLong",
+        "ApplyMatrixMany10BitStride",
+        "ApplyMatrixManyFV",
+        "ApplyMatrixManySV",
+        "FindSinCos",
+        "PerspectiveTransform",
+        "PerspectiveTransformFV",
+        "PerspectiveTransformLV",
+        "PerspectiveTransformManyFV",
+        "PerspectiveTransformOLD",
+        "RotTransPersFloat",
+        "RotTransPersSFV",
+        "SetGTETransLV",
+        "SetTransformMatrix",
+        "SquareRoot0",
+        "SquareRoot12",
+        "TransformPoints",
+        "TransformPointsFV",
+        "VectorNormal",
+        "VectorNormalS",
+        "XRotMatrix",
+        "YRotMatrix",
+        "ZRotMatrix",
+        "fApplyMatrix",
+        "fApplyMatrixFV",
+        "fApplyMatrixLV",
+        "fApplyMatrixSFV",
+        "fApplyMatrixSV",
+        "fMulMatrix",
+        "fMulMatrix0",
+        "fRotMatrix",
+        "fRotMatrixX",
+        "fRotMatrixY",
+        "fRotMatrixZ",
+        "fRotMatrixZYX",
+        "fRotTransPers",
+        "fScaleMatrix",
+        "fTransMatrix",
+        "fTransposeMatrix",
+        "getscreenz",
+        "normalize",
+        "normalize_l",
+        "normalize_lvector",
+        "ratan2",
+        "rcos",
+        "rsin"
+      ],
+      "global_evidence": [
+        {
+          "name": "gte_matrix",
+          "module": "fmath",
+          "rva": "0x537CB8",
+          "matches": [
+            {
+              "origin": "module_symbols",
+              "module_id": 36,
+              "module": "fmath",
+              "linkage": "local",
+              "name": "gte_matrix",
+              "type_index": "0X1177",
+              "type": "MATRIX",
+              "section": 3,
+              "section_offset": "0x96CB8",
+              "rva": "0x537CB8",
+              "va": "0x140537CB8"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module": "flex",
+      "status": "reviewed",
+      "risk": "medium",
+      "depends_on": [],
+      "required_globals": [],
+      "reason": "All PDB-named fixed-point scalar, cross/dot, projection, packed-normal, and short-vector procedures are reviewed.",
+      "priority": 6,
+      "procedure_count": 32,
+      "procedure_bytes": 3118,
+      "reviewed_procedure_count": 32,
+      "reviewed_procedure_bytes": 3118,
+      "named_parameters_and_locals": 103,
+      "procedures_with_direct_lines": 32,
+      "symbols": [
+        "CROSS",
+        "CROSS12",
+        "CROSSnormal",
+        "DOT",
+        "DOT12",
+        "VectorNormalize",
+        "VectorNormalize2",
+        "VectorNormalize3",
+        "distance_squared",
+        "flexabs",
+        "flexdiv",
+        "flexmul",
+        "flexmul12",
+        "fvectorpointlinesquared",
+        "intersec_2dlines",
+        "mul4105",
+        "normalize_s",
+        "normalize_svector",
+        "normalize_vector",
+        "unpack10bitnormal",
+        "vecSqr",
+        "vecSqr12",
+        "vecadd",
+        "veclength",
+        "vecnegate",
+        "vecnormalize",
+        "vecnormalize2",
+        "vecnormalizevec",
+        "vecoffset",
+        "vecpointlinesquared",
+        "vecscale",
+        "vecsub"
+      ],
+      "global_evidence": []
+    },
+    {
+      "module": "vectors",
+      "status": "reviewed",
+      "risk": "medium",
+      "depends_on": [
+        "fmath"
+      ],
+      "required_globals": [],
+      "reason": "Geometry primitives needed by collision and rendering.",
+      "priority": 7,
+      "procedure_count": 29,
+      "procedure_bytes": 3425,
+      "reviewed_procedure_count": 29,
+      "reviewed_procedure_bytes": 3425,
+      "named_parameters_and_locals": 129,
+      "procedures_with_direct_lines": 29,
+      "symbols": [
+        "InvertMatrix",
+        "vec_AreaTriangle",
+        "vec_DistPoint2Line",
+        "vec_Distance2DLV",
+        "vec_DistanceLV",
+        "vec_DistanceSV",
+        "vec_DistanceSVLV",
+        "vec_IdentMatrix",
+        "vec_InvRotVectorLV",
+        "vec_LengthLV",
+        "vec_LinearCombine",
+        "vec_PointNearSegment",
+        "vec_Polar2Rect",
+        "vec_QuickDistanceLV",
+        "vec_QuickRangeCheck",
+        "vec_QuickRangeCheckFV",
+        "vec_RangeCheck",
+        "vec_RotFromNormal",
+        "vec_RotFromNormalF",
+        "vec_RotFromNormalS",
+        "vec_RotVectorLV",
+        "vec_RotVectorY",
+        "vec_ScaleVector",
+        "vec_VectorNormalLV",
+        "vec_VectorNormalSV",
+        "vec_gDefinePlane",
+        "vec_gDefinePlaneNormal",
+        "vec_gProject2Plane",
+        "vec_gProject2PlaneF12"
+      ],
+      "global_evidence": []
+    },
+    {
+      "module": "IO",
+      "status": "reviewed",
+      "risk": "medium",
+      "depends_on": [],
+      "required_globals": [],
+      "reason": "Game-owned standard-C file boundary for PC and Xbox.",
+      "priority": 8,
+      "procedure_count": 11,
+      "procedure_bytes": 757,
+      "reviewed_procedure_count": 11,
+      "reviewed_procedure_bytes": 757,
+      "named_parameters_and_locals": 31,
+      "procedures_with_direct_lines": 11,
+      "symbols": [
+        "file_AppendFile",
+        "file_CLOSE",
+        "file_GETSIZE",
+        "file_OPEN",
+        "file_READ",
+        "file_ReadPC",
+        "file_SEEK",
+        "file_WriteFile",
+        "file_gInitialise",
+        "io_file_LoadFile",
+        "io_file_LoadFile2Pool"
+      ],
+      "global_evidence": []
+    },
+    {
+      "module": "filesys",
+      "status": "reviewed",
+      "risk": "high",
+      "depends_on": [
+        "alloc",
+        "memory",
+        "IO"
+      ],
+      "required_globals": [
+        {
+          "name": "gFileNotFound",
+          "rva": "0x10D7E20"
+        }
+      ],
+      "reason": "Archive parsing and relocation above the portable I/O seam.",
+      "priority": 9,
+      "procedure_count": 25,
+      "procedure_bytes": 6745,
+      "reviewed_procedure_count": 25,
+      "reviewed_procedure_bytes": 6745,
+      "named_parameters_and_locals": 180,
+      "procedures_with_direct_lines": 25,
+      "symbols": [
+        "file_LoadActorChunk",
+        "file_LoadAiChunk",
+        "file_LoadAnimDefChunk",
+        "file_LoadAnimMapChunk",
+        "file_LoadChunks2Pool",
+        "file_LoadColorChunk",
+        "file_LoadDollyChunk",
+        "file_LoadEffects",
+        "file_LoadEmiterChunk",
+        "file_LoadEnemyChunk",
+        "file_LoadEntryChunk",
+        "file_LoadFatChunk",
+        "file_LoadFile",
+        "file_LoadFile2PoolFunc",
+        "file_LoadJonnyChunk",
+        "file_LoadLibChunk",
+        "file_LoadMapChunk",
+        "file_LoadMaterialChunk",
+        "file_LoadResidentSprites",
+        "file_LoadTagChunk",
+        "file_LoadThinChunk",
+        "file_LoadVersionChunk",
+        "file_getFileSize",
+        "file_loadEntryTags",
+        "readchunk"
+      ],
+      "global_evidence": [
+        {
+          "name": "gFileNotFound",
+          "rva": "0x10D7E20",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "gFileNotFound",
+              "type_index": "0X0074",
+              "type": "int",
+              "section": 3,
+              "section_offset": "0xC36E20",
+              "rva": "0x10D7E20",
+              "va": "0x1410D7E20"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module": "jonny",
+      "status": "partial",
+      "risk": "high",
+      "depends_on": [
+        "IO",
+        "filesys",
+        "fmath",
+        "vectors",
+        "player"
+      ],
+      "required_globals": [
+        {
+          "name": "WorldmeshData",
+          "rva": "0x10DE658"
+        },
+        {
+          "name": "level_materials",
+          "rva": "0x10D7E80"
+        },
+        {
+          "name": "leveldata",
+          "rva": "0x537C88"
+        },
+        {
+          "name": "eventlist_start",
+          "rva": "0x4AFDA8"
+        },
+        {
+          "name": "eventlist_next",
+          "rva": "0x4AFEE8"
+        },
+        {
+          "name": "eventlist_end",
+          "rva": "0x4B0028"
+        }
+      ],
+      "reviewed_symbols": [
+        "ExtraCharacterEnvironmentEffectExceptions",
+        "HitsHit",
+        "InitJPX",
+        "MTV",
+        "clear_eventlist"
+      ],
+      "reason": "JPX relocation, spatial queries, and exact map-contact event propagation.",
+      "priority": 10,
+      "procedure_count": 24,
+      "procedure_bytes": 7404,
+      "reviewed_procedure_count": 5,
+      "reviewed_procedure_bytes": 1563,
+      "named_parameters_and_locals": 200,
+      "procedures_with_direct_lines": 24,
+      "symbols": [
+        "BlockBuster",
+        "ExtraCharacterEnvironmentEffectExceptions",
+        "HitsHit",
+        "InitJPX",
+        "MTV",
+        "band_lights",
+        "calc_frustrum",
+        "clear_eventlist",
+        "contraband_cluts",
+        "contraband_lights",
+        "intersec_WankCheck",
+        "jon_getlibpart",
+        "jon_getlibpartfloat",
+        "jon_getlibpartint32_t",
+        "jon_otagpos",
+        "jon_plumbgeneral",
+        "jon_plumbline",
+        "jon_texscroll",
+        "jpb_render",
+        "makecull",
+        "restore_events",
+        "set_camera",
+        "spack_frustrum",
+        "spackdivver_frustrum"
+      ],
+      "global_evidence": [
+        {
+          "name": "WorldmeshData",
+          "rva": "0x10DE658",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "WorldmeshData",
+              "type_index": "0X0674",
+              "type": "int*",
+              "section": 3,
+              "section_offset": "0xC3D658",
+              "rva": "0x10DE658",
+              "va": "0x1410DE658"
+            }
+          ]
+        },
+        {
+          "name": "level_materials",
+          "rva": "0x10D7E80",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "level_materials",
+              "type_index": "0X6D71",
+              "type": "",
+              "section": 3,
+              "section_offset": "0xC36E80",
+              "rva": "0x10D7E80",
+              "va": "0x1410D7E80"
+            }
+          ]
+        },
+        {
+          "name": "leveldata",
+          "rva": "0x537C88",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "leveldata",
+              "type_index": "0X0612",
+              "type": "long*",
+              "section": 3,
+              "section_offset": "0x96C88",
+              "rva": "0x537C88",
+              "va": "0x140537C88"
+            }
+          ]
+        },
+        {
+          "name": "eventlist_start",
+          "rva": "0x4AFDA8",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "eventlist_start",
+              "type_index": "0X0674",
+              "type": "int*",
+              "section": 3,
+              "section_offset": "0xEDA8",
+              "rva": "0x4AFDA8",
+              "va": "0x1404AFDA8"
+            }
+          ]
+        },
+        {
+          "name": "eventlist_next",
+          "rva": "0x4AFEE8",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "eventlist_next",
+              "type_index": "0X0674",
+              "type": "int*",
+              "section": 3,
+              "section_offset": "0xEEE8",
+              "rva": "0x4AFEE8",
+              "va": "0x1404AFEE8"
+            }
+          ]
+        },
+        {
+          "name": "eventlist_end",
+          "rva": "0x4B0028",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "eventlist_end",
+              "type_index": "0X0674",
+              "type": "int*",
+              "section": 3,
+              "section_offset": "0xF028",
+              "rva": "0x4B0028",
+              "va": "0x1404B0028"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module": "intersec",
+      "status": "reviewed",
+      "risk": "high",
+      "depends_on": [
+        "fmath",
+        "flex",
+        "jonny",
+        "physics",
+        "player"
+      ],
+      "required_globals": [
+        {
+          "name": "leveldata",
+          "rva": "0x537C88"
+        }
+      ],
+      "reason": "Complete PDB-named map and dynamic-solid raycasts, movement wrappers, frustum clipping, walk height, and zap collision.",
+      "priority": 11,
+      "procedure_count": 15,
+      "procedure_bytes": 7822,
+      "reviewed_procedure_count": 15,
+      "reviewed_procedure_bytes": 7822,
+      "named_parameters_and_locals": 196,
+      "procedures_with_direct_lines": 15,
+      "symbols": [
+        "HitSomething",
+        "LineAndPlane",
+        "MoveObject",
+        "MoveObjectNormal",
+        "RaycastCheck",
+        "RaycastCheckSV",
+        "cliptofrustrum",
+        "cliptofrustrumSV",
+        "intersec_FindWalkHeight",
+        "intersec_FindWalkHeightFV",
+        "intersec_FindWalkHeightSV",
+        "intersec_GeneralCheck",
+        "raycastpoly",
+        "raycheckgeneral",
+        "zapcheck"
+      ],
+      "global_evidence": [
+        {
+          "name": "leveldata",
+          "rva": "0x537C88",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "leveldata",
+              "type_index": "0X0612",
+              "type": "long*",
+              "section": 3,
+              "section_offset": "0x96C88",
+              "rva": "0x537C88",
+              "va": "0x140537C88"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module": "camera",
+      "status": "partial",
+      "risk": "high",
+      "depends_on": [
+        "fmath",
+        "vectors"
+      ],
+      "required_globals": [
+        {
+          "name": "gCamera",
+          "rva": "0x10DE6A0"
+        },
+        {
+          "name": "screenshake",
+          "rva": "0x4F1A9C"
+        },
+        {
+          "name": "screenshakeamplitude",
+          "rva": "0x4F1AA0"
+        },
+        {
+          "name": "gGlobalFrameRate",
+          "rva": "0x4CC0A0"
+        }
+      ],
+      "reviewed_symbols": [
+        "camLerp",
+        "camera_Camera2ViewVector",
+        "camera_CameraSlide",
+        "camera_GetCamera",
+        "camera_GetLocation",
+        "camera_GetViewType",
+        "camera_SetShake",
+        "camera_SetViewType",
+        "camera_SnapCamera",
+        "camera_gGetLocation"
+      ],
+      "reason": "Gameplay camera state and renderer-neutral view-transform inputs.",
+      "priority": 12,
+      "procedure_count": 23,
+      "procedure_bytes": 7790,
+      "reviewed_procedure_count": 10,
+      "reviewed_procedure_bytes": 1190,
+      "named_parameters_and_locals": 148,
+      "procedures_with_direct_lines": 23,
+      "symbols": [
+        "camLerp",
+        "camera_Camera2ViewVector",
+        "camera_CameraSlide",
+        "camera_GetCamera",
+        "camera_GetCurrentCameraType",
+        "camera_GetLocation",
+        "camera_GetViewType",
+        "camera_RestoreCameras",
+        "camera_ScrollCamera",
+        "camera_SetCameraPos",
+        "camera_SetCameras",
+        "camera_SetCurrentCameraType",
+        "camera_SetFocusedCameraFocus",
+        "camera_SetShake",
+        "camera_SetViewType",
+        "camera_SnapCamera",
+        "camera_StuffCamera",
+        "camera_gGetLocation",
+        "console_CamerasCommand",
+        "lerp",
+        "map",
+        "mapClamped",
+        "mapDouble"
+      ],
+      "global_evidence": [
+        {
+          "name": "gCamera",
+          "rva": "0x10DE6A0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "gCamera",
+              "type_index": "0X121A",
+              "type": "Camera",
+              "section": 3,
+              "section_offset": "0xC3D6A0",
+              "rva": "0x10DE6A0",
+              "va": "0x1410DE6A0"
+            }
+          ]
+        },
+        {
+          "name": "screenshake",
+          "rva": "0x4F1A9C",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "screenshake",
+              "type_index": "0X0074",
+              "type": "int",
+              "section": 3,
+              "section_offset": "0x50A9C",
+              "rva": "0x4F1A9C",
+              "va": "0x1404F1A9C"
+            }
+          ]
+        },
+        {
+          "name": "screenshakeamplitude",
+          "rva": "0x4F1AA0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "screenshakeamplitude",
+              "type_index": "0X0074",
+              "type": "int",
+              "section": 3,
+              "section_offset": "0x50AA0",
+              "rva": "0x4F1AA0",
+              "va": "0x1404F1AA0"
+            }
+          ]
+        },
+        {
+          "name": "gGlobalFrameRate",
+          "rva": "0x4CC0A0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "gGlobalFrameRate",
+              "type_index": "0X0074",
+              "type": "int",
+              "section": 3,
+              "section_offset": "0x2B0A0",
+              "rva": "0x4CC0A0",
+              "va": "0x1404CC0A0"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module": "cube",
+      "status": "partial",
+      "risk": "high",
+      "depends_on": [
+        "camera"
+      ],
+      "required_globals": [
+        {
+          "name": "cullmesh",
+          "rva": "0x4B0BD0"
+        }
+      ],
+      "reviewed_symbols": [
+        "cube_HideMesh",
+        "cube_ShowMesh",
+        "twatcameramatrix"
+      ],
+      "reason": "Exact mesh-visibility leaves and the camera-to-world-frustum conversion used by scene rendering and collision scheduling.",
+      "priority": 13,
+      "procedure_count": 9,
+      "procedure_bytes": 8497,
+      "reviewed_procedure_count": 3,
+      "reviewed_procedure_bytes": 551,
+      "named_parameters_and_locals": 89,
+      "procedures_with_direct_lines": 9,
+      "symbols": [
+        "GPUcluts",
+        "cube_GetCubeAmbientLight",
+        "cube_HideMesh",
+        "cube_InitVisibility",
+        "cube_NewWorldRender",
+        "cube_ShowMesh",
+        "initUVs",
+        "plotsomecubes",
+        "twatcameramatrix"
+      ],
+      "global_evidence": [
+        {
+          "name": "cullmesh",
+          "rva": "0x4B0BD0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "cullmesh",
+              "type_index": "0X12D8",
+              "type": "",
+              "section": 3,
+              "section_offset": "0xFBD0",
+              "rva": "0x4B0BD0",
+              "va": "0x1404B0BD0"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module": "scene",
+      "status": "partial",
+      "risk": "high",
+      "depends_on": [
+        "camera",
+        "fmath",
+        "vectors"
+      ],
+      "required_globals": [
+        {
+          "name": "maSceneData",
+          "rva": "0x9460C0"
+        },
+        {
+          "name": "v3Translate",
+          "rva": "0x946CB0"
+        },
+        {
+          "name": "gGTEMATRIX",
+          "rva": "0x10D7E40"
+        }
+      ],
+      "reviewed_symbols": [
+        "hurtplayer",
+        "scene_AspectCorrectMatrix",
+        "scene_DimScreen",
+        "scene_GetRawSceneMatrix",
+        "scene_GetSceneMatrix",
+        "scene_GetViewPos",
+        "scene_UpdateWorld2ScreenMatrix",
+        "scene_gCreateObject",
+        "scene_gGetNewSceneObject",
+        "scene_gGetSceneModelMatrix",
+        "scene_gGetSceneModelMatrixFV",
+        "scene_gGetSnapShotPosition",
+        "scene_gInitRoot",
+        "scene_gInitScenes",
+        "scene_gProject2Screen",
+        "scene_gSetSceneModelKeyFrame",
+        "scene_gSetSceneModelMatrix",
+        "scene_gSetSceneModelMatrixFV",
+        "scene_gSetSceneModelMatrixLV",
+        "scene_gSetStrobe",
+        "scene_gSetWorldPosition",
+        "scene_postRender",
+        "scene_preRender"
+      ],
+      "reason": "Exact root/model ownership, command registration, view matrices, model transforms, projection, player death, and post-render state publication.",
+      "priority": 14,
+      "procedure_count": 25,
+      "procedure_bytes": 5021,
+      "reviewed_procedure_count": 23,
+      "reviewed_procedure_bytes": 2155,
+      "named_parameters_and_locals": 79,
+      "procedures_with_direct_lines": 25,
+      "symbols": [
+        "hurtplayer",
+        "playerOffScreenArrow",
+        "scene_AspectCorrectMatrix",
+        "scene_DimScreen",
+        "scene_GetRawSceneMatrix",
+        "scene_GetSceneMatrix",
+        "scene_GetViewPos",
+        "scene_UpdateWorld2ScreenMatrix",
+        "scene_gCreateObject",
+        "scene_gGetNewSceneObject",
+        "scene_gGetSceneModelMatrix",
+        "scene_gGetSceneModelMatrixFV",
+        "scene_gGetSnapShotPosition",
+        "scene_gInitRoot",
+        "scene_gInitScenes",
+        "scene_gProject2Screen",
+        "scene_gSetSceneModelKeyFrame",
+        "scene_gSetSceneModelMatrix",
+        "scene_gSetSceneModelMatrixFV",
+        "scene_gSetSceneModelMatrixLV",
+        "scene_gSetStrobe",
+        "scene_gSetWorldPosition",
+        "scene_middleRender",
+        "scene_postRender",
+        "scene_preRender"
+      ],
+      "global_evidence": [
+        {
+          "name": "maSceneData",
+          "rva": "0x9460C0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "maSceneData",
+              "type_index": "0X8F00",
+              "type": "",
+              "section": 3,
+              "section_offset": "0x4A50C0",
+              "rva": "0x9460C0",
+              "va": "0x1409460C0"
+            }
+          ]
+        },
+        {
+          "name": "v3Translate",
+          "rva": "0x946CB0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "v3Translate",
+              "type_index": "0X1071",
+              "type": "VECTOR",
+              "section": 3,
+              "section_offset": "0x4A5CB0",
+              "rva": "0x946CB0",
+              "va": "0x140946CB0"
+            }
+          ]
+        },
+        {
+          "name": "gGTEMATRIX",
+          "rva": "0x10D7E40",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "gGTEMATRIX",
+              "type_index": "0X1177",
+              "type": "MATRIX",
+              "section": 3,
+              "section_offset": "0xC36E40",
+              "rva": "0x10D7E40",
+              "va": "0x1410D7E40"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module": "input",
+      "status": "partial",
+      "risk": "medium",
+      "depends_on": [],
+      "required_globals": [
+        {
+          "name": "padMaskBits",
+          "rva": "0x4BACA0"
+        },
+        {
+          "name": "padCurrentBits",
+          "rva": "0x10D8EA0"
+        },
+        {
+          "name": "padExist",
+          "rva": "0x538051"
+        },
+        {
+          "name": "nShockers",
+          "rva": "0x10D8E80"
+        }
+      ],
+      "reviewed_symbols": [
+        "ClearInput",
+        "feedback_startEffect",
+        "initPSXPad",
+        "input_ReadControlPad",
+        "maskPadBits"
+      ],
+      "reason": "Game-owned pad masks and edge semantics above a replaceable platform reader.",
+      "priority": 15,
+      "procedure_count": 11,
+      "procedure_bytes": 1400,
+      "reviewed_procedure_count": 5,
+      "reviewed_procedure_bytes": 627,
+      "named_parameters_and_locals": 26,
+      "procedures_with_direct_lines": 11,
+      "symbols": [
+        "ClearInput",
+        "PadGone",
+        "clearShockers",
+        "feedback_startEffect",
+        "handleShockers",
+        "initInput",
+        "initPSXPad",
+        "input_ReadControlPad",
+        "maskPadBits",
+        "psxUpdatePadbits",
+        "startRumble"
+      ],
+      "global_evidence": [
+        {
+          "name": "padMaskBits",
+          "rva": "0x4BACA0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "padMaskBits",
+              "type_index": "0X1D4A",
+              "type": "",
+              "section": 3,
+              "section_offset": "0x19CA0",
+              "rva": "0x4BACA0",
+              "va": "0x1404BACA0"
+            }
+          ]
+        },
+        {
+          "name": "padCurrentBits",
+          "rva": "0x10D8EA0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "padCurrentBits",
+              "type_index": "0X6AC5",
+              "type": "",
+              "section": 3,
+              "section_offset": "0xC37EA0",
+              "rva": "0x10D8EA0",
+              "va": "0x1410D8EA0"
+            }
+          ]
+        },
+        {
+          "name": "padExist",
+          "rva": "0x538051",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "padExist",
+              "type_index": "0X0020",
+              "type": "unsigned char",
+              "section": 3,
+              "section_offset": "0x97051",
+              "rva": "0x538051",
+              "va": "0x140538051"
+            }
+          ]
+        },
+        {
+          "name": "nShockers",
+          "rva": "0x10D8E80",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "nShockers",
+              "type_index": "0X10D2",
+              "type": "",
+              "section": 3,
+              "section_offset": "0xC37E80",
+              "rva": "0x10D8E80",
+              "va": "0x1410D8E80"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module": "collisn",
+      "status": "partial",
+      "risk": "high",
+      "depends_on": [
+        "vectors"
+      ],
+      "required_globals": [
+        {
+          "name": "maNodes",
+          "module": "collisn",
+          "rva": "0x4F1AF0"
+        },
+        {
+          "name": "mNodeIndex",
+          "module": "collisn",
+          "rva": "0x4F2EF0"
+        }
+      ],
+      "reviewed_symbols": [
+        "coll_4DCollision",
+        "coll_CheckForEventNode",
+        "coll_CheckForHotNode",
+        "coll_CheckForSabreNode",
+        "coll_ChkNodeFlags",
+        "coll_ClrNodeFlags",
+        "coll_GetNode",
+        "coll_GetNodeCenter",
+        "coll_GetNodeRotation",
+        "coll_GetNodeRotationAbs",
+        "coll_GetNodeRotationDelta",
+        "coll_GetNodeTranslation",
+        "coll_GetNodeVelocity",
+        "coll_IncNodeRotationAbs",
+        "coll_IncNodeRotationDelta",
+        "coll_ResetCollisionSystem",
+        "coll_ResetPlayerCollision",
+        "coll_SetNodeFlags",
+        "coll_SetNodeRotationAbs",
+        "coll_SetNodeRotationDelta",
+        "coll_SetNodeTranslation",
+        "coll_SetNodeZBufferOffset",
+        "coll_gRegisterNode",
+        "old_coll_ZeroNodeTranslation"
+      ],
+      "reason": "Player/world collision-node state and movement-facing accessors.",
+      "priority": 16,
+      "procedure_count": 27,
+      "procedure_bytes": 3987,
+      "reviewed_procedure_count": 24,
+      "reviewed_procedure_bytes": 1407,
+      "named_parameters_and_locals": 141,
+      "procedures_with_direct_lines": 27,
+      "symbols": [
+        "coll_4DCollision",
+        "coll_CheckForEventNode",
+        "coll_CheckForHotNode",
+        "coll_CheckForSabreNode",
+        "coll_CheckNodeCollision",
+        "coll_CheckProjectileCollision",
+        "coll_ChkNodeFlags",
+        "coll_ClrNodeFlags",
+        "coll_GetNode",
+        "coll_GetNodeCenter",
+        "coll_GetNodeRotation",
+        "coll_GetNodeRotationAbs",
+        "coll_GetNodeRotationDelta",
+        "coll_GetNodeTranslation",
+        "coll_GetNodeVelocity",
+        "coll_IncNodeRotationAbs",
+        "coll_IncNodeRotationDelta",
+        "coll_ResetCollisionSystem",
+        "coll_ResetPlayerCollision",
+        "coll_SetNodeFlags",
+        "coll_SetNodeRotationAbs",
+        "coll_SetNodeRotationDelta",
+        "coll_SetNodeTranslation",
+        "coll_SetNodeZBufferOffset",
+        "coll_gCheckHotNodes",
+        "coll_gRegisterNode",
+        "old_coll_ZeroNodeTranslation"
+      ],
+      "global_evidence": [
+        {
+          "name": "maNodes",
+          "module": "collisn",
+          "rva": "0x4F1AF0",
+          "matches": [
+            {
+              "origin": "module_symbols",
+              "module_id": 14,
+              "module": "collisn",
+              "linkage": "local",
+              "name": "maNodes",
+              "type_index": "0X133C",
+              "type": "",
+              "section": 3,
+              "section_offset": "0x50AF0",
+              "rva": "0x4F1AF0",
+              "va": "0x1404F1AF0"
+            }
+          ]
+        },
+        {
+          "name": "mNodeIndex",
+          "module": "collisn",
+          "rva": "0x4F2EF0",
+          "matches": [
+            {
+              "origin": "module_symbols",
+              "module_id": 14,
+              "module": "collisn",
+              "linkage": "local",
+              "name": "mNodeIndex",
+              "type_index": "0X133E",
+              "type": "",
+              "section": 3,
+              "section_offset": "0x51EF0",
+              "rva": "0x4F2EF0",
+              "va": "0x1404F2EF0"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module": "unpack",
+      "status": "reviewed",
+      "risk": "high",
+      "depends_on": [
+        "fmath"
+      ],
+      "required_globals": [],
+      "reviewed_symbols": [
+        "flushbits",
+        "huffgetword",
+        "unpack_grabsvectors_raw",
+        "unpack_grabsvectors_s",
+        "unpack_init",
+        "unpack_initcontext",
+        "unpack_seekcontext"
+      ],
+      "reason": "Complete CAD bit reservoir, Huffman lookup/tree decode, raw/compressed vectors, table binding, context initialization, and seek state.",
+      "priority": 17,
+      "procedure_count": 7,
+      "procedure_bytes": 1747,
+      "reviewed_procedure_count": 7,
+      "reviewed_procedure_bytes": 1747,
+      "named_parameters_and_locals": 46,
+      "procedures_with_direct_lines": 7,
+      "symbols": [
+        "flushbits",
+        "huffgetword",
+        "unpack_grabsvectors_raw",
+        "unpack_grabsvectors_s",
+        "unpack_init",
+        "unpack_initcontext",
+        "unpack_seekcontext"
+      ],
+      "global_evidence": []
+    },
+    {
+      "module": "anim",
+      "status": "partial",
+      "risk": "high",
+      "depends_on": [
+        "list",
+        "scene",
+        "unpack"
+      ],
+      "required_globals": [
+        {
+          "name": "maAnimationData",
+          "rva": "0x4DC680"
+        }
+      ],
+      "reviewed_symbols": [
+        "anim_AddNextAnimSeq",
+        "anim_CreateObject",
+        "anim_InitAnimations"
+      ],
+      "reason": "Exact animation object pool, fixed motion queue, and motion/frame runtime layouts.",
+      "priority": 18,
+      "procedure_count": 17,
+      "procedure_bytes": 7837,
+      "reviewed_procedure_count": 3,
+      "reviewed_procedure_bytes": 782,
+      "named_parameters_and_locals": 88,
+      "procedures_with_direct_lines": 17,
+      "symbols": [
+        "anim_AddNextAnimSeq",
+        "anim_CheckSlack",
+        "anim_CreateObject",
+        "anim_CreateTweenFrame",
+        "anim_ForceNextAnimSeq",
+        "anim_GetAnimFrame",
+        "anim_GlobalInit",
+        "anim_GoNextAnimFrame",
+        "anim_HandleSound",
+        "anim_InitAnimations",
+        "anim_MotionRecovery",
+        "anim_ProcessAnimations",
+        "anim_SkipToStartFrame",
+        "anim_SoundStart",
+        "console_AnimCommand",
+        "shouldPlayAnimSound",
+        "shouldReplayAnimSound"
+      ],
+      "global_evidence": [
+        {
+          "name": "maAnimationData",
+          "rva": "0x4DC680",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "maAnimationData",
+              "type_index": "0X1027",
+              "type": "",
+              "section": 3,
+              "section_offset": "0x3B680",
+              "rva": "0x4DC680",
+              "va": "0x1404DC680"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module": "animutil",
+      "status": "partial",
+      "risk": "high",
+      "depends_on": [
+        "anim",
+        "scene"
+      ],
+      "required_globals": [],
+      "reviewed_symbols": [
+        "anim_GetSeqFrameRange",
+        "anim_GetTargetContext",
+        "anim_GetTargetPartNum",
+        "anim_GetTargetSeqPtr",
+        "anim_CheckFreeze",
+        "anim_gDumpSeq",
+        "animutl_FlushSeqQueue",
+        "animutl_GetCurrentLock",
+        "animutl_GetLockLevel",
+        "animutl_GetPercentPlayed",
+        "animutl_GetTweeningFramesLeft",
+        "animutl_GetWindow",
+        "animutl_SetCurrentLock",
+        "animutl_gGetCurrentAnimLength",
+        "animutl_gGetCurrentFrameIndex",
+        "animutl_gPauseAnim",
+        "animutl_gRestartAnim",
+        "animutl_gScaleAnimFrameRate",
+        "animutl_gSetAnimFrameRate",
+        "animutl_gSetCurrentFrameIndex",
+        "animutl_gUnPauseAnim"
+      ],
+      "reason": "Exact animation query/control layer consumed by player motion selection.",
+      "priority": 19,
+      "procedure_count": 22,
+      "procedure_bytes": 984,
+      "reviewed_procedure_count": 21,
+      "reviewed_procedure_bytes": 851,
+      "named_parameters_and_locals": 58,
+      "procedures_with_direct_lines": 22,
+      "symbols": [
+        "anim_CheckFreeze",
+        "anim_GetSeqFrameRange",
+        "anim_GetTargetContext",
+        "anim_GetTargetPartNum",
+        "anim_GetTargetSeqPtr",
+        "anim_ResetJedi",
+        "anim_gDumpSeq",
+        "animutl_FlushSeqQueue",
+        "animutl_GetCurrentLock",
+        "animutl_GetLockLevel",
+        "animutl_GetPercentPlayed",
+        "animutl_GetTweeningFramesLeft",
+        "animutl_GetWindow",
+        "animutl_SetCurrentLock",
+        "animutl_gGetCurrentAnimLength",
+        "animutl_gGetCurrentFrameIndex",
+        "animutl_gPauseAnim",
+        "animutl_gRestartAnim",
+        "animutl_gScaleAnimFrameRate",
+        "animutl_gSetAnimFrameRate",
+        "animutl_gSetCurrentFrameIndex",
+        "animutl_gUnPauseAnim"
+      ],
+      "global_evidence": []
+    },
+    {
+      "module": "animctrl",
+      "status": "partial",
+      "risk": "high",
+      "depends_on": [
+        "anim",
+        "animutil",
+        "scene"
+      ],
+      "required_globals": [],
+      "reviewed_symbols": [
+        "animctrl_MotionChain",
+        "animctrl_MotionComboChain",
+        "animctrl_MotionEqualLock",
+        "animctrl_MotionLock",
+        "animctrl_MotionLockLevel",
+        "animctrl_MotionNoLock"
+      ],
+      "reason": "Exact motion queue and lock predicates over bounded forced activation.",
+      "priority": 20,
+      "procedure_count": 6,
+      "procedure_bytes": 472,
+      "reviewed_procedure_count": 6,
+      "reviewed_procedure_bytes": 472,
+      "named_parameters_and_locals": 21,
+      "procedures_with_direct_lines": 6,
+      "symbols": [
+        "animctrl_MotionChain",
+        "animctrl_MotionComboChain",
+        "animctrl_MotionEqualLock",
+        "animctrl_MotionLock",
+        "animctrl_MotionLockLevel",
+        "animctrl_MotionNoLock"
+      ],
+      "global_evidence": []
+    },
+    {
+      "module": "combo",
+      "status": "partial",
+      "risk": "medium",
+      "depends_on": [
+        "anim",
+        "brainutl",
+        "input",
+        "scene"
+      ],
+      "required_globals": [],
+      "reviewed_symbols": [
+        "combo_CheckCombo",
+        "combo_CheckHeldPad",
+        "combo_CheckPreCombo",
+        "combo_GetHeldTime",
+        "combo_ReadCombo",
+        "combo_ResetComboEngine"
+      ],
+      "reason": "Exact combo timing, pad-to-motion buffering, held/released button masks, and motion-state reset used by player control.",
+      "priority": 21,
+      "procedure_count": 8,
+      "procedure_bytes": 3891,
+      "reviewed_procedure_count": 6,
+      "reviewed_procedure_bytes": 3272,
+      "named_parameters_and_locals": 49,
+      "procedures_with_direct_lines": 8,
+      "symbols": [
+        "combo_CheckCombo",
+        "combo_CheckHeldPad",
+        "combo_CheckPreCombo",
+        "combo_GetHeldTime",
+        "combo_InitComboData",
+        "combo_ReadCombo",
+        "combo_ResetComboEngine",
+        "combo_ValidComboAward"
+      ],
+      "global_evidence": []
+    },
+    {
+      "module": "player",
+      "status": "partial",
+      "risk": "high",
+      "depends_on": [
+        "brainutl",
+        "collisn",
+        "combo",
+        "input",
+        "model",
+        "scene",
+        "vectors"
+      ],
+      "required_globals": [
+        {
+          "name": "gaPlayerData",
+          "rva": "0x53A600"
+        },
+        {
+          "name": "gpWorld",
+          "rva": "0x4AFDA0"
+        }
+      ],
+      "reviewed_symbols": [
+        "player_AfterLife",
+        "player_GetPlayerPad",
+        "player_ResetJedi",
+        "player_gGetNewPlayerObject",
+        "player_gGetPlayerPtr",
+        "player_gInitPlayers"
+      ],
+      "reason": "Exact player storage, embedded pad state, pool lifecycle, afterlife cleanup, and Jedi reset state.",
+      "priority": 22,
+      "procedure_count": 22,
+      "procedure_bytes": 9333,
+      "reviewed_procedure_count": 6,
+      "reviewed_procedure_bytes": 630,
+      "named_parameters_and_locals": 114,
+      "procedures_with_direct_lines": 22,
+      "symbols": [
+        "_AddLifeTile",
+        "_DrawTile",
+        "_DrawTile2D",
+        "ch_blipad",
+        "ch_pad",
+        "ch_padadmin",
+        "ch_unblipad",
+        "player_AfterLife",
+        "player_ControllerDump",
+        "player_DoCollisions",
+        "player_FreePlayer",
+        "player_GetPlayerPad",
+        "player_HandleSabre",
+        "player_RefreshPlayer",
+        "player_ResetJedi",
+        "player_gConnectMotionData",
+        "player_gCreateObject",
+        "player_gGetNewPlayerObject",
+        "player_gGetPlayerPtr",
+        "player_gInitPlayers",
+        "player_gProcessPlayers",
+        "player_gRefreshPlayers"
+      ],
+      "global_evidence": [
+        {
+          "name": "gaPlayerData",
+          "rva": "0x53A600",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "gaPlayerData",
+              "type_index": "0XA618",
+              "type": "",
+              "section": 3,
+              "section_offset": "0x99600",
+              "rva": "0x53A600",
+              "va": "0x14053A600"
+            }
+          ]
+        },
+        {
+          "name": "gpWorld",
+          "rva": "0x4AFDA0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "gpWorld",
+              "type_index": "0X1007",
+              "type": "WorldData*",
+              "section": 3,
+              "section_offset": "0xEDA0",
+              "rva": "0x4AFDA0",
+              "va": "0x1404AFDA0"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module": "objroot",
+      "status": "partial",
+      "risk": "medium",
+      "depends_on": [
+        "scene"
+      ],
+      "required_globals": [],
+      "reviewed_symbols": [
+        "obj_gCheckObjectFlag",
+        "obj_gSetChildObject",
+        "obj_gSetObjectFlag"
+      ],
+      "reason": "Exact scene-to-subsystem parent/child ownership links.",
+      "priority": 23,
+      "procedure_count": 5,
+      "procedure_bytes": 222,
+      "reviewed_procedure_count": 3,
+      "reviewed_procedure_bytes": 134,
+      "named_parameters_and_locals": 16,
+      "procedures_with_direct_lines": 5,
+      "symbols": [
+        "obj_gCheckObjectFlag",
+        "obj_gClearObject",
+        "obj_gClrObjectFlag",
+        "obj_gSetChildObject",
+        "obj_gSetObjectFlag"
+      ],
+      "global_evidence": []
+    },
+    {
+      "module": "sprite",
+      "status": "partial",
+      "risk": "high",
+      "depends_on": [
+        "alloc",
+        "fmath",
+        "flex",
+        "list"
+      ],
+      "required_globals": [
+        {
+          "name": "aCircle",
+          "rva": "0x4BA510"
+        },
+        {
+          "name": "framerate",
+          "rva": "0x4CC0A8"
+        },
+        {
+          "name": "mDrawingSurfaceId",
+          "rva": "0x53D270"
+        },
+        {
+          "name": "effects1Handle",
+          "rva": "0x547EC0"
+        },
+        {
+          "name": "mSCBDraw",
+          "rva": "0x548050"
+        },
+        {
+          "name": "mSpriteWork",
+          "module": "sprite",
+          "rva": "0x548070"
+        },
+        {
+          "name": "mCurSpriteList",
+          "module": "sprite",
+          "rva": "0x548090"
+        },
+        {
+          "name": "shot",
+          "module": "sprite",
+          "rva": "0x5480A0"
+        },
+        {
+          "name": "gGlobalTimer",
+          "rva": "0x581FC0"
+        },
+        {
+          "name": "OptionStruct",
+          "rva": "0x10DA100"
+        }
+      ],
+      "reviewed_symbols": [
+        "sprite_AddCallBack",
+        "sprite_AddSpriteEffect",
+        "sprite_AddSpriteEffectAtNode",
+        "sprite_AllocRing",
+        "sprite_CommentsCallBack",
+        "sprite_FireRing",
+        "sprite_GetCommentsSprite",
+        "sprite_GetPointsSprite",
+        "sprite_MainCallBack",
+        "sprite_PointsCallBack",
+        "sprite_SmallPointsCallBack",
+        "sprite_gAllocSCB",
+        "sprite_gAllocSprite",
+        "sprite_gFreeSCB",
+        "sprite_gFreeSprite",
+        "sprite_gHideSCB",
+        "sprite_gHideSprite",
+        "sprite_gInitSprites",
+        "sprite_gMoveSpritePosition",
+        "sprite_gSetSpritePosition",
+        "sprite_gUnHideSprite"
+      ],
+      "reason": "Exact dependency-light effect allocation, node forwarding, ring construction, callback motion, and sprite/SCB lifecycle.",
+      "priority": 24,
+      "procedure_count": 84,
+      "procedure_bytes": 23148,
+      "reviewed_procedure_count": 21,
+      "reviewed_procedure_bytes": 6377,
+      "named_parameters_and_locals": 441,
+      "procedures_with_direct_lines": 84,
+      "symbols": [
+        "_RenderSprite",
+        "drawCylinder",
+        "drawCylinderG",
+        "getScaleAdjustment",
+        "getScaleAdjustmentMM",
+        "setPivotPosition",
+        "setPivotPositionAndFixScale",
+        "setPivotPositionAndFixScaleMM",
+        "setPivotPositionMM",
+        "setPivotPositionMM_PSX",
+        "setPositionOffPivot",
+        "setPositionOffPivotMM",
+        "sprite_AddCallBack",
+        "sprite_AddProjectile",
+        "sprite_AddSpriteAtLoc",
+        "sprite_AddSpriteAtNode",
+        "sprite_AddSpriteEffect",
+        "sprite_AddSpriteEffectAtNode",
+        "sprite_AllocRing",
+        "sprite_Center",
+        "sprite_ClearProjectilePool",
+        "sprite_CommentsCallBack",
+        "sprite_DisplaySprite",
+        "sprite_DisplayTpage",
+        "sprite_FireEmiter",
+        "sprite_FireRing",
+        "sprite_FireSphere",
+        "sprite_Flash",
+        "sprite_Get3DProjectile",
+        "sprite_Get3DShear",
+        "sprite_GetBaseNodeMarker",
+        "sprite_GetCommentsSprite",
+        "sprite_GetPointsSprite",
+        "sprite_GetSpotMarker",
+        "sprite_GetSuckSpritePos",
+        "sprite_GetTargetMarker",
+        "sprite_Glow",
+        "sprite_InitProjectilePool",
+        "sprite_InitSCBPool",
+        "sprite_LightMotion",
+        "sprite_Lock",
+        "sprite_LockNode",
+        "sprite_MainCallBack",
+        "sprite_Move3DSprite",
+        "sprite_OrbitNode",
+        "sprite_PointsCallBack",
+        "sprite_RemoveProjectile",
+        "sprite_RingCallBack",
+        "sprite_Rotate3DSprite",
+        "sprite_SCBDraw",
+        "sprite_Set2DSCBPos",
+        "sprite_SetColorCycle",
+        "sprite_SetProjectile",
+        "sprite_SetSpriteEffect",
+        "sprite_SetTrajectory",
+        "sprite_SmallPointsCallBack",
+        "sprite_Sparks",
+        "sprite_Spot",
+        "sprite_SpriteMotion",
+        "sprite_SpriteRotScale",
+        "sprite_SpriteWork",
+        "sprite_SwapData",
+        "sprite_TrackNode",
+        "sprite_ViewPoint",
+        "sprite_gAllocPCB",
+        "sprite_gAllocSCB",
+        "sprite_gAllocSprite",
+        "sprite_gFreeSCB",
+        "sprite_gFreeSprite",
+        "sprite_gHideSCB",
+        "sprite_gHideSprite",
+        "sprite_gInitSprites",
+        "sprite_gMoveSCBPosition",
+        "sprite_gMoveSpritePosition",
+        "sprite_gSetBillBrd",
+        "sprite_gSetLineColor",
+        "sprite_gSetLinePosition",
+        "sprite_gSetRGB",
+        "sprite_gSetSCBPosition",
+        "sprite_gSetSpriteCenter",
+        "sprite_gSetSpritePosition",
+        "sprite_gSetSpriteRGB",
+        "sprite_gUnHideSCB",
+        "sprite_gUnHideSprite"
+      ],
+      "global_evidence": [
+        {
+          "name": "aCircle",
+          "rva": "0x4BA510",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "aCircle",
+              "type_index": "0X6CEC",
+              "type": "",
+              "section": 3,
+              "section_offset": "0x19510",
+              "rva": "0x4BA510",
+              "va": "0x1404BA510"
+            }
+          ]
+        },
+        {
+          "name": "framerate",
+          "rva": "0x4CC0A8",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "framerate",
+              "type_index": "0X0040",
+              "type": "float",
+              "section": 3,
+              "section_offset": "0x2B0A8",
+              "rva": "0x4CC0A8",
+              "va": "0x1404CC0A8"
+            }
+          ]
+        },
+        {
+          "name": "mDrawingSurfaceId",
+          "rva": "0x53D270",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "mDrawingSurfaceId",
+              "type_index": "0X0074",
+              "type": "int",
+              "section": 3,
+              "section_offset": "0x9C270",
+              "rva": "0x53D270",
+              "va": "0x14053D270"
+            }
+          ]
+        },
+        {
+          "name": "effects1Handle",
+          "rva": "0x547EC0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "effects1Handle",
+              "type_index": "0X6DAF",
+              "type": "",
+              "section": 3,
+              "section_offset": "0xA6EC0",
+              "rva": "0x547EC0",
+              "va": "0x140547EC0"
+            }
+          ]
+        },
+        {
+          "name": "mSCBDraw",
+          "rva": "0x548050",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "mSCBDraw",
+              "type_index": "0X697C",
+              "type": "",
+              "section": 3,
+              "section_offset": "0xA7050",
+              "rva": "0x548050",
+              "va": "0x140548050"
+            }
+          ]
+        },
+        {
+          "name": "mSpriteWork",
+          "module": "sprite",
+          "rva": "0x548070",
+          "matches": [
+            {
+              "origin": "module_symbols",
+              "module_id": 81,
+              "module": "sprite",
+              "linkage": "local",
+              "name": "mSpriteWork",
+              "type_index": "0X697C",
+              "type": "",
+              "section": 3,
+              "section_offset": "0xA7070",
+              "rva": "0x548070",
+              "va": "0x140548070"
+            }
+          ]
+        },
+        {
+          "name": "mCurSpriteList",
+          "module": "sprite",
+          "rva": "0x548090",
+          "matches": [
+            {
+              "origin": "module_symbols",
+              "module_id": 81,
+              "module": "sprite",
+              "linkage": "local",
+              "name": "mCurSpriteList",
+              "type_index": "0X0074",
+              "type": "int",
+              "section": 3,
+              "section_offset": "0xA7090",
+              "rva": "0x548090",
+              "va": "0x140548090"
+            }
+          ]
+        },
+        {
+          "name": "shot",
+          "module": "sprite",
+          "rva": "0x5480A0",
+          "matches": [
+            {
+              "origin": "module_symbols",
+              "module_id": 81,
+              "module": "sprite",
+              "linkage": "local",
+              "name": "shot",
+              "type_index": "0X140C",
+              "type": "",
+              "section": 3,
+              "section_offset": "0xA70A0",
+              "rva": "0x5480A0",
+              "va": "0x1405480A0"
+            }
+          ]
+        },
+        {
+          "name": "gGlobalTimer",
+          "rva": "0x581FC0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "gGlobalTimer",
+              "type_index": "0X0075",
+              "type": "unsigned",
+              "section": 3,
+              "section_offset": "0xE0FC0",
+              "rva": "0x581FC0",
+              "va": "0x140581FC0"
+            }
+          ]
+        },
+        {
+          "name": "OptionStruct",
+          "rva": "0x10DA100",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "OptionStruct",
+              "type_index": "0X1061",
+              "type": "optionstruct",
+              "section": 3,
+              "section_offset": "0xC39100",
+              "rva": "0x10DA100",
+              "va": "0x1410DA100"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module": "sound",
+      "status": "partial",
+      "risk": "medium",
+      "depends_on": [],
+      "required_globals": [],
+      "reviewed_symbols": [
+        "sound_Play",
+        "sound_PlayFV",
+        "sound_StopSound"
+      ],
+      "reason": "Exact bank fallback and float-position conversion over a dependency-light platform audio boundary.",
+      "priority": 25,
+      "procedure_count": 31,
+      "procedure_bytes": 4935,
+      "reviewed_procedure_count": 3,
+      "reviewed_procedure_bytes": 890,
+      "named_parameters_and_locals": 102,
+      "procedures_with_direct_lines": 31,
+      "symbols": [
+        "ExtractFileNameFromPath",
+        "add_looped_sound_to_update",
+        "convert_svector_to_vector",
+        "get_sound_volume",
+        "mute_looped_sounds",
+        "setCDXAvol",
+        "sound_FreeBank",
+        "sound_GetIndex",
+        "sound_GetSoundIndex",
+        "sound_GetSoundName",
+        "sound_Init",
+        "sound_IsPlaying",
+        "sound_LoadBank",
+        "sound_NumInBank",
+        "sound_Pause",
+        "sound_Play",
+        "sound_PlayController",
+        "sound_PlayFV",
+        "sound_PlaySV",
+        "sound_Resume",
+        "sound_SetFrequency",
+        "sound_SetLoopingFadeTime",
+        "sound_SetPosition",
+        "sound_StopAll",
+        "sound_StopSound",
+        "sound_UnLoadBank",
+        "sound_UpdateAll",
+        "sound_playSfx",
+        "stop_all_looped_sounds",
+        "unmute_looped_sounds",
+        "update_looped_sounds"
+      ],
+      "global_evidence": []
+    },
+    {
+      "module": "achievement",
+      "status": "partial",
+      "risk": "low",
+      "depends_on": [
+        "platform"
+      ],
+      "required_globals": [],
+      "reviewed_symbols": [
+        "achievement_complete",
+        "achievement_getcount",
+        "achievement_update"
+      ],
+      "reason": "Exact achievement completion and platinum scan over a portable platform service boundary.",
+      "priority": 26,
+      "procedure_count": 6,
+      "procedure_bytes": 160,
+      "reviewed_procedure_count": 3,
+      "reviewed_procedure_bytes": 88,
+      "named_parameters_and_locals": 8,
+      "procedures_with_direct_lines": 6,
+      "symbols": [
+        "achievement_checkForPlatinum",
+        "achievement_complete",
+        "achievement_destroy",
+        "achievement_getcomplete",
+        "achievement_getcount",
+        "achievement_update"
+      ],
+      "global_evidence": []
+    },
+    {
+      "module": "brainutl",
+      "status": "partial",
+      "risk": "high",
+      "depends_on": [
+        "achievement",
+        "animctrl",
+        "game",
+        "physics",
+        "scene"
+      ],
+      "required_globals": [
+        {
+          "name": "gDeathCount",
+          "rva": "0x5381D4"
+        },
+        {
+          "name": "totalframes",
+          "rva": "0x547B48"
+        }
+      ],
+      "reviewed_symbols": [
+        "brainutl_DeltaTime",
+        "brainutl_ElapsedTime",
+        "brainutl_FindLSB_LV",
+        "brainutl_HeldPad",
+        "brainutl_gGetNearestTarget",
+        "brainutl_Land",
+        "brainutl_MultiPad",
+        "brainutl_PlayMotionSound",
+        "brainutil_ReverseCheck",
+        "brainutil_limitRange"
+      ],
+      "reason": "Exact elapsed-time and bit predicates, pad-to-motion text construction, nearest-target selection, motion sound, landing motion, fall penalty, achievement, and enemy-owner side effects.",
+      "priority": 27,
+      "procedure_count": 16,
+      "procedure_bytes": 4845,
+      "reviewed_procedure_count": 10,
+      "reviewed_procedure_bytes": 1617,
+      "named_parameters_and_locals": 71,
+      "procedures_with_direct_lines": 16,
+      "symbols": [
+        "brainutil_PauseControl",
+        "brainutil_PlotMaulTrajectory",
+        "brainutil_PlotTrajectory",
+        "brainutil_ReverseCheck",
+        "brainutil_limitRange",
+        "brainutl_AddSabreEdge",
+        "brainutl_ConformGeomNodes",
+        "brainutl_DeltaTime",
+        "brainutl_ElapsedTime",
+        "brainutl_FindLSB",
+        "brainutl_FindLSB_LV",
+        "brainutl_HeldPad",
+        "brainutl_Land",
+        "brainutl_MultiPad",
+        "brainutl_PlayMotionSound",
+        "brainutl_gGetNearestTarget"
+      ],
+      "global_evidence": [
+        {
+          "name": "gDeathCount",
+          "rva": "0x5381D4",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "gDeathCount",
+              "type_index": "0X0074",
+              "type": "int",
+              "section": 3,
+              "section_offset": "0x971D4",
+              "rva": "0x5381D4",
+              "va": "0x1405381D4"
+            }
+          ]
+        },
+        {
+          "name": "totalframes",
+          "rva": "0x547B48",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "totalframes",
+              "type_index": "0X0074",
+              "type": "int",
+              "section": 3,
+              "section_offset": "0xA6B48",
+              "rva": "0x547B48",
+              "va": "0x140547B48"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module": "physics",
+      "status": "partial",
+      "risk": "high",
+      "depends_on": [
+        "player",
+        "scene",
+        "anim",
+        "animutil",
+        "camera",
+        "collision",
+        "fmath",
+        "game",
+        "intersec",
+        "vectors",
+        "jonny",
+        "cube",
+        "sprite",
+        "sound",
+        "vehicle",
+        "wRender"
+      ],
+      "required_globals": [
+        {
+          "name": "maPhysicsData",
+          "rva": "0x951BA0"
+        },
+        {
+          "name": "numsolids",
+          "rva": "0x951B90"
+        },
+        {
+          "name": "maRange",
+          "rva": "0x9543E0"
+        },
+        {
+          "name": "maDesert_BNodeSizes",
+          "rva": "0x4CC0D0"
+        },
+        {
+          "name": "maWormNodeSizes",
+          "rva": "0x4CC0E0"
+        },
+        {
+          "name": "gSCENE_READY",
+          "rva": "0x946CA0"
+        },
+        {
+          "name": "collisionfrustrum",
+          "rva": "0x946000"
+        },
+        {
+          "name": "clippingfrustrum",
+          "rva": "0x946060"
+        },
+        {
+          "name": "initialLevelPauseDelay",
+          "rva": "0x547B3C"
+        },
+        {
+          "name": "streetsending",
+          "module": "physics",
+          "rva": "0x53A53C"
+        },
+        {
+          "name": "eventarray",
+          "rva": "0x4CB490"
+        },
+        {
+          "name": "maphitsounds",
+          "rva": "0x4CB820"
+        },
+        {
+          "name": "splasheffects",
+          "rva": "0x4CB8B0"
+        },
+        {
+          "name": "LevelSelect",
+          "rva": "0x537DEA"
+        },
+        {
+          "name": "paEffects",
+          "rva": "0x10DE900"
+        },
+        {
+          "name": "stapbikeindex",
+          "rva": "0x582420"
+        },
+        {
+          "name": "stapsound",
+          "rva": "0x5381EC"
+        },
+        {
+          "name": "totalframes",
+          "rva": "0x547B48"
+        }
+      ],
+      "reviewed_symbols": [
+        "BuildNodeVertexList",
+        "BuildSolids",
+        "CalcNewBox",
+        "CalcRelativePosFromWorld",
+        "CalcSolidRelativePos",
+        "CalcWorldPosFromRelative",
+        "CalcWorldRelativePos",
+        "CharBlocking",
+        "CheckCubeBlocking",
+        "UpdatePublicVars",
+        "UpdateSceneObject",
+        "LaunchMapAnimEffects",
+        "MovePlayer",
+        "ProcessPhysicsObjects",
+        "WorldBlocking",
+        "buildfrustrum",
+        "buildplane",
+        "checkdriving",
+        "generalCollide",
+        "newclosestPoly",
+        "physics_ResetJedi",
+        "physics_gClrConstantVector",
+        "physics_gFaceTarget",
+        "physics_gForceFaceTarget",
+        "physics_gGetConstantVector",
+        "physics_gGetFaceTargetDelta",
+        "physics_gGetFacing",
+        "physics_gGetRange",
+        "physics_gGetNewObject",
+        "physics_gGetPosition",
+        "physics_gInitObjects",
+        "physics_gModFacing",
+        "physics_gSetCharge",
+        "physics_gSetConstantVector",
+        "physics_gSetFacing",
+        "physics_gSetRecoil",
+        "physics_gSnapShotPosition",
+        "physics_gSwapVel",
+        "physics_gTurnToAttack",
+        "physics_gTurnToFace",
+        "planecheck",
+        "polycollidecheck",
+        "sphereAndPoly"
+      ],
+      "reason": "Exact actor physics state, recursive standee scheduling, all six CalcMovement modes, slope/conveyor movement, collision contact, moving-solid geometry construction and ownership, complete MovePlayer scheduling, scene publication, driver synchronization, the complete frame scheduler and both the street-ending collision trigger and terminal sequence, the full Jedi physics reset including its level-ten vehicle exception, landing, splash, and map-animation dispatch.",
+      "priority": 28,
+      "procedure_count": 62,
+      "procedure_bytes": 35771,
+      "reviewed_procedure_count": 43,
+      "reviewed_procedure_bytes": 28503,
+      "named_parameters_and_locals": 498,
+      "procedures_with_direct_lines": 62,
+      "symbols": [
+        "BigBlowMe",
+        "BlowUp",
+        "BuildNodeVertexList",
+        "BuildSolids",
+        "CalcMovement",
+        "CalcNewBox",
+        "CalcRelativePosFromWorld",
+        "CalcSolidRelativePos",
+        "CalcWorldPosFromRelative",
+        "CalcWorldRelativePos",
+        "CharBlocking",
+        "CheckCubeBlocking",
+        "DebugPlayer",
+        "FindBestMachineGunTarget",
+        "LaunchMapAnimEffects",
+        "MovePlayer",
+        "ProcessPhysicsObjects",
+        "UpdatePublicVars",
+        "UpdateSceneObject",
+        "WorldBlocking",
+        "buildfrustrum",
+        "buildplane",
+        "checkdriving",
+        "console_HideMeshCommand",
+        "console_ShowMeshCommand",
+        "dumpmatrix",
+        "generalCollide",
+        "newclosestPoly",
+        "physics_FindNearestEnemy",
+        "physics_FindWithinRange",
+        "physics_ForceFaceLock",
+        "physics_GetPoly",
+        "physics_InitPhysics",
+        "physics_MapAnimCallBack",
+        "physics_ResetJedi",
+        "physics_gCalcTargetPos",
+        "physics_gCheckGround",
+        "physics_gClrConstantVector",
+        "physics_gCreateObject",
+        "physics_gFaceTarget",
+        "physics_gForceFaceTarget",
+        "physics_gGetConstantVector",
+        "physics_gGetFaceTargetDelta",
+        "physics_gGetFacing",
+        "physics_gGetNearestTarget",
+        "physics_gGetNewObject",
+        "physics_gGetPosition",
+        "physics_gGetRange",
+        "physics_gInitObjects",
+        "physics_gModFacing",
+        "physics_gSetCharge",
+        "physics_gSetConstantVector",
+        "physics_gSetFacing",
+        "physics_gSetPosition",
+        "physics_gSetRecoil",
+        "physics_gSnapShotPosition",
+        "physics_gSwapVel",
+        "physics_gTurnToAttack",
+        "physics_gTurnToFace",
+        "planecheck",
+        "polycollidecheck",
+        "sphereAndPoly"
+      ],
+      "global_evidence": [
+        {
+          "name": "maPhysicsData",
+          "rva": "0x951BA0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "maPhysicsData",
+              "type_index": "0X8F55",
+              "type": "",
+              "section": 3,
+              "section_offset": "0x4B0BA0",
+              "rva": "0x951BA0",
+              "va": "0x140951BA0"
+            }
+          ]
+        },
+        {
+          "name": "numsolids",
+          "rva": "0x951B90",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "numsolids",
+              "type_index": "0X0074",
+              "type": "int",
+              "section": 3,
+              "section_offset": "0x4B0B90",
+              "rva": "0x951B90",
+              "va": "0x140951B90"
+            }
+          ]
+        },
+        {
+          "name": "maRange",
+          "rva": "0x9543E0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "maRange",
+              "type_index": "0X8F1A",
+              "type": "",
+              "section": 3,
+              "section_offset": "0x4B33E0",
+              "rva": "0x9543E0",
+              "va": "0x1409543E0"
+            }
+          ]
+        },
+        {
+          "name": "maDesert_BNodeSizes",
+          "rva": "0x4CC0D0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "maDesert_BNodeSizes",
+              "type_index": "0X8F6D",
+              "type": "",
+              "section": 3,
+              "section_offset": "0x2B0D0",
+              "rva": "0x4CC0D0",
+              "va": "0x1404CC0D0"
+            }
+          ]
+        },
+        {
+          "name": "maWormNodeSizes",
+          "rva": "0x4CC0E0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "maWormNodeSizes",
+              "type_index": "0X8F6D",
+              "type": "",
+              "section": 3,
+              "section_offset": "0x2B0E0",
+              "rva": "0x4CC0E0",
+              "va": "0x1404CC0E0"
+            }
+          ]
+        },
+        {
+          "name": "gSCENE_READY",
+          "rva": "0x946CA0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "gSCENE_READY",
+              "type_index": "0X0074",
+              "type": "int",
+              "section": 3,
+              "section_offset": "0x4A5CA0",
+              "rva": "0x946CA0",
+              "va": "0x140946CA0"
+            }
+          ]
+        },
+        {
+          "name": "collisionfrustrum",
+          "rva": "0x946000",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "collisionfrustrum",
+              "type_index": "0X6CDA",
+              "type": "",
+              "section": 3,
+              "section_offset": "0x4A5000",
+              "rva": "0x946000",
+              "va": "0x140946000"
+            }
+          ]
+        },
+        {
+          "name": "clippingfrustrum",
+          "rva": "0x946060",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "clippingfrustrum",
+              "type_index": "0X1310",
+              "type": "",
+              "section": 3,
+              "section_offset": "0x4A5060",
+              "rva": "0x946060",
+              "va": "0x140946060"
+            }
+          ]
+        },
+        {
+          "name": "initialLevelPauseDelay",
+          "rva": "0x547B3C",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "initialLevelPauseDelay",
+              "type_index": "0X0020",
+              "type": "unsigned char",
+              "section": 3,
+              "section_offset": "0xA6B3C",
+              "rva": "0x547B3C",
+              "va": "0x140547B3C"
+            }
+          ]
+        },
+        {
+          "name": "streetsending",
+          "module": "physics",
+          "rva": "0x53A53C",
+          "matches": [
+            {
+              "origin": "module_symbols",
+              "module_id": 60,
+              "module": "physics",
+              "linkage": "local",
+              "name": "streetsending",
+              "type_index": "0X0074",
+              "type": "int",
+              "section": 3,
+              "section_offset": "0x9953C",
+              "rva": "0x53A53C",
+              "va": "0x14053A53C"
+            }
+          ]
+        },
+        {
+          "name": "eventarray",
+          "rva": "0x4CB490",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "eventarray",
+              "type_index": "0X8F6B",
+              "type": "",
+              "section": 3,
+              "section_offset": "0x2A490",
+              "rva": "0x4CB490",
+              "va": "0x1404CB490"
+            }
+          ]
+        },
+        {
+          "name": "maphitsounds",
+          "rva": "0x4CB820",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "maphitsounds",
+              "type_index": "0X10C1",
+              "type": "",
+              "section": 3,
+              "section_offset": "0x2A820",
+              "rva": "0x4CB820",
+              "va": "0x1404CB820"
+            }
+          ]
+        },
+        {
+          "name": "splasheffects",
+          "rva": "0x4CB8B0",
+          "matches": [
+            {
+              "origin": "module_symbols",
+              "module_id": 60,
+              "module": "physics",
+              "linkage": "local",
+              "name": "splasheffects",
+              "type_index": "0X9043",
+              "type": "",
+              "section": 3,
+              "section_offset": "0x2A8B0",
+              "rva": "0x4CB8B0",
+              "va": "0x1404CB8B0"
+            }
+          ]
+        },
+        {
+          "name": "LevelSelect",
+          "rva": "0x537DEA",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "LevelSelect",
+              "type_index": "0X0070",
+              "type": "char",
+              "section": 3,
+              "section_offset": "0x96DEA",
+              "rva": "0x537DEA",
+              "va": "0x140537DEA"
+            }
+          ]
+        },
+        {
+          "name": "paEffects",
+          "rva": "0x10DE900",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "paEffects",
+              "type_index": "0X1432",
+              "type": "",
+              "section": 3,
+              "section_offset": "0xC3D900",
+              "rva": "0x10DE900",
+              "va": "0x1410DE900"
+            }
+          ]
+        },
+        {
+          "name": "stapbikeindex",
+          "rva": "0x582420",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "stapbikeindex",
+              "type_index": "0X697F",
+              "type": "",
+              "section": 3,
+              "section_offset": "0xE1420",
+              "rva": "0x582420",
+              "va": "0x140582420"
+            }
+          ]
+        },
+        {
+          "name": "stapsound",
+          "rva": "0x5381EC",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "stapsound",
+              "type_index": "0X0021",
+              "type": "unsigned short",
+              "section": 3,
+              "section_offset": "0x971EC",
+              "rva": "0x5381EC",
+              "va": "0x1405381EC"
+            }
+          ]
+        },
+        {
+          "name": "totalframes",
+          "rva": "0x547B48",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "totalframes",
+              "type_index": "0X0074",
+              "type": "int",
+              "section": 3,
+              "section_offset": "0xA6B48",
+              "rva": "0x547B48",
+              "va": "0x140547B48"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module": "braindmg",
+      "status": "reviewed",
+      "risk": "high",
+      "depends_on": [
+        "achievement",
+        "ai",
+        "animctrl",
+        "animutil",
+        "brain",
+        "brainutl",
+        "collisn",
+        "combo",
+        "enemy",
+        "extracharacters",
+        "game",
+        "input",
+        "jedi",
+        "physics",
+        "sound",
+        "sprite",
+        "world"
+      ],
+      "required_globals": [
+        {
+          "name": "mDamageTotal",
+          "rva": "0x4F13B0"
+        },
+        {
+          "name": "mCurrentSFXP",
+          "rva": "0x4F13B4"
+        },
+        {
+          "name": "mProjectileAttack",
+          "rva": "0x4F13B8"
+        },
+        {
+          "name": "mProjMotion",
+          "rva": "0x4F13C0"
+        },
+        {
+          "name": "damageTracking",
+          "rva": "0x4F1430"
+        },
+        {
+          "name": "mpMotion",
+          "rva": "0x4F1520"
+        },
+        {
+          "name": "knob",
+          "rva": "0x4F1528"
+        },
+        {
+          "name": "zeroBSSCheck",
+          "rva": "0x4F152C"
+        },
+        {
+          "name": "gaPoints",
+          "rva": "0x4BD900"
+        },
+        {
+          "name": "gpWorld",
+          "rva": "0x4AFDA0"
+        },
+        {
+          "name": "leveldata",
+          "rva": "0x537C88"
+        },
+        {
+          "name": "LevelSelect",
+          "rva": "0x537DEA"
+        },
+        {
+          "name": "projType",
+          "rva": "0x10DEBA0"
+        }
+      ],
+      "reviewed_symbols": [
+        "braindmg_AirHitReaction",
+        "braindmg_BlockEffects",
+        "braindmg_Blocking",
+        "braindmg_DamageControl",
+        "braindmg_DamageEffects",
+        "braindmg_DamageTracker",
+        "braindmg_DeathReaction",
+        "braindmg_FindHitReaction",
+        "braindmg_HitReaction",
+        "braindmg_LevelDamage",
+        "braindmg_LogHits",
+        "braindmg_ResetDamageTracker"
+      ],
+      "reason": "All twelve exact damage procedures cover projectile conversion, blocking, difficulty scaling, scoring, hit/death reactions, achievements, feedback, and hazardous-surface damage.",
+      "priority": 29,
+      "procedure_count": 12,
+      "procedure_bytes": 8389,
+      "reviewed_procedure_count": 12,
+      "reviewed_procedure_bytes": 8389,
+      "named_parameters_and_locals": 88,
+      "procedures_with_direct_lines": 12,
+      "symbols": [
+        "braindmg_AirHitReaction",
+        "braindmg_BlockEffects",
+        "braindmg_Blocking",
+        "braindmg_DamageControl",
+        "braindmg_DamageEffects",
+        "braindmg_DamageTracker",
+        "braindmg_DeathReaction",
+        "braindmg_FindHitReaction",
+        "braindmg_HitReaction",
+        "braindmg_LevelDamage",
+        "braindmg_LogHits",
+        "braindmg_ResetDamageTracker"
+      ],
+      "global_evidence": [
+        {
+          "name": "mDamageTotal",
+          "rva": "0x4F13B0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "mDamageTotal",
+              "type_index": "0X0020",
+              "type": "unsigned char",
+              "section": 3,
+              "section_offset": "0x503B0",
+              "rva": "0x4F13B0",
+              "va": "0x1404F13B0"
+            }
+          ]
+        },
+        {
+          "name": "mCurrentSFXP",
+          "rva": "0x4F13B4",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "mCurrentSFXP",
+              "type_index": "0X0074",
+              "type": "int",
+              "section": 3,
+              "section_offset": "0x503B4",
+              "rva": "0x4F13B4",
+              "va": "0x1404F13B4"
+            }
+          ]
+        },
+        {
+          "name": "mProjectileAttack",
+          "rva": "0x4F13B8",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "mProjectileAttack",
+              "type_index": "0X0074",
+              "type": "int",
+              "section": 3,
+              "section_offset": "0x503B8",
+              "rva": "0x4F13B8",
+              "va": "0x1404F13B8"
+            }
+          ]
+        },
+        {
+          "name": "mProjMotion",
+          "rva": "0x4F13C0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "mProjMotion",
+              "type_index": "0X10AF",
+              "type": "Motion",
+              "section": 3,
+              "section_offset": "0x503C0",
+              "rva": "0x4F13C0",
+              "va": "0x1404F13C0"
+            }
+          ]
+        },
+        {
+          "name": "damageTracking",
+          "rva": "0x4F1430",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "damageTracking",
+              "type_index": "0X1346",
+              "type": "",
+              "section": 3,
+              "section_offset": "0x50430",
+              "rva": "0x4F1430",
+              "va": "0x1404F1430"
+            }
+          ]
+        },
+        {
+          "name": "mpMotion",
+          "rva": "0x4F1520",
+          "matches": [
+            {
+              "origin": "module_symbols",
+              "module_id": 9,
+              "module": "braindmg",
+              "linkage": "local",
+              "name": "mpMotion",
+              "type_index": "0X1134",
+              "type": "Motion*",
+              "section": 3,
+              "section_offset": "0x50520",
+              "rva": "0x4F1520",
+              "va": "0x1404F1520"
+            }
+          ]
+        },
+        {
+          "name": "knob",
+          "rva": "0x4F1528",
+          "matches": [
+            {
+              "origin": "module_symbols",
+              "module_id": 9,
+              "module": "braindmg",
+              "linkage": "local",
+              "name": "knob",
+              "type_index": "0X0074",
+              "type": "int",
+              "section": 3,
+              "section_offset": "0x50528",
+              "rva": "0x4F1528",
+              "va": "0x1404F1528"
+            }
+          ]
+        },
+        {
+          "name": "zeroBSSCheck",
+          "rva": "0x4F152C",
+          "matches": [
+            {
+              "origin": "module_symbols",
+              "module_id": 9,
+              "module": "braindmg",
+              "linkage": "local",
+              "name": "zeroBSSCheck",
+              "type_index": "0X0074",
+              "type": "int",
+              "section": 3,
+              "section_offset": "0x5052C",
+              "rva": "0x4F152C",
+              "va": "0x1404F152C"
+            }
+          ]
+        },
+        {
+          "name": "gaPoints",
+          "rva": "0x4BD900",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "gaPoints",
+              "type_index": "0X1423",
+              "type": "",
+              "section": 3,
+              "section_offset": "0x1C900",
+              "rva": "0x4BD900",
+              "va": "0x1404BD900"
+            }
+          ]
+        },
+        {
+          "name": "gpWorld",
+          "rva": "0x4AFDA0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "gpWorld",
+              "type_index": "0X1007",
+              "type": "WorldData*",
+              "section": 3,
+              "section_offset": "0xEDA0",
+              "rva": "0x4AFDA0",
+              "va": "0x1404AFDA0"
+            }
+          ]
+        },
+        {
+          "name": "leveldata",
+          "rva": "0x537C88",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "leveldata",
+              "type_index": "0X0612",
+              "type": "long*",
+              "section": 3,
+              "section_offset": "0x96C88",
+              "rva": "0x537C88",
+              "va": "0x140537C88"
+            }
+          ]
+        },
+        {
+          "name": "LevelSelect",
+          "rva": "0x537DEA",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "LevelSelect",
+              "type_index": "0X0070",
+              "type": "char",
+              "section": 3,
+              "section_offset": "0x96DEA",
+              "rva": "0x537DEA",
+              "va": "0x140537DEA"
+            }
+          ]
+        },
+        {
+          "name": "projType",
+          "rva": "0x10DEBA0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "projType",
+              "type_index": "0X1277",
+              "type": "ProjType*",
+              "section": 3,
+              "section_offset": "0xC3DBA0",
+              "rva": "0x10DEBA0",
+              "va": "0x1410DEBA0"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module": "brain",
+      "status": "reviewed",
+      "risk": "high",
+      "depends_on": [
+        "animctrl",
+        "braindmg",
+        "brainutl",
+        "camera",
+        "collisn",
+        "combo",
+        "enemy",
+        "extracharacters",
+        "fmath",
+        "force",
+        "game",
+        "input",
+        "objroot",
+        "physics",
+        "player",
+        "sound",
+        "sprite"
+      ],
+      "required_globals": [
+        {
+          "name": "OMNIDIRECTIONAL_MOVEMENT",
+          "rva": "0x4A65A4"
+        },
+        {
+          "name": "gaButtonMap",
+          "rva": "0x4BAA00"
+        },
+        {
+          "name": "player1InputType",
+          "rva": "0x4D49A4"
+        },
+        {
+          "name": "wait",
+          "module": "brain",
+          "rva": "0x4F13A0"
+        },
+        {
+          "name": "mCameraAngleDest",
+          "rva": "0x4F1AA4"
+        },
+        {
+          "name": "leveldata",
+          "rva": "0x537C88"
+        },
+        {
+          "name": "LevelSelect",
+          "rva": "0x537DEA"
+        },
+        {
+          "name": "gGlobalTimer",
+          "rva": "0x581FC0"
+        },
+        {
+          "name": "g_p2Y",
+          "rva": "0x932C80"
+        },
+        {
+          "name": "g_p2X",
+          "rva": "0x932C84"
+        },
+        {
+          "name": "g_p1Y",
+          "rva": "0x932C88"
+        },
+        {
+          "name": "g_p1X",
+          "rva": "0x932C8C"
+        },
+        {
+          "name": "OptionStruct",
+          "rva": "0x10DA100"
+        },
+        {
+          "name": "GameStruct",
+          "rva": "0x10DA140"
+        },
+        {
+          "name": "paEffects",
+          "rva": "0x10DE900"
+        }
+      ],
+      "reviewed_symbols": [
+        "brain_CheckForEffects",
+        "brain_ControlPlayer",
+        "brain_DoRingOffEffect",
+        "brain_DoRingOnEffect",
+        "brain_GroundControl",
+        "brain_HangCallback",
+        "brain_LockOn",
+        "brain_SetFallTrajectory",
+        "brain_SetJumpTrajectory",
+        "brain_SetTrajectory",
+        "brain_SkidCallBack",
+        "brain_SwapVelDirCallBack",
+        "brain_TakeOff",
+        "brain_ThrowEnder",
+        "brain_ValidateLockOn"
+      ],
+      "reason": "All fifteen exact procedures cover the complete player input and callback controller, motion-event sound, lock-on/ring lifecycle, knockdown, recovery, player/NPC death, animation-end callbacks, and jump/fall trajectory setup.",
+      "priority": 30,
+      "procedure_count": 15,
+      "procedure_bytes": 7081,
+      "reviewed_procedure_count": 15,
+      "reviewed_procedure_bytes": 7081,
+      "named_parameters_and_locals": 84,
+      "procedures_with_direct_lines": 15,
+      "symbols": [
+        "brain_CheckForEffects",
+        "brain_ControlPlayer",
+        "brain_DoRingOffEffect",
+        "brain_DoRingOnEffect",
+        "brain_GroundControl",
+        "brain_HangCallback",
+        "brain_LockOn",
+        "brain_SetFallTrajectory",
+        "brain_SetJumpTrajectory",
+        "brain_SetTrajectory",
+        "brain_SkidCallBack",
+        "brain_SwapVelDirCallBack",
+        "brain_TakeOff",
+        "brain_ThrowEnder",
+        "brain_ValidateLockOn"
+      ],
+      "global_evidence": [
+        {
+          "name": "OMNIDIRECTIONAL_MOVEMENT",
+          "rva": "0x4A65A4",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "OMNIDIRECTIONAL_MOVEMENT",
+              "type_index": "0X0074",
+              "type": "int",
+              "section": 3,
+              "section_offset": "0x55A4",
+              "rva": "0x4A65A4",
+              "va": "0x1404A65A4"
+            }
+          ]
+        },
+        {
+          "name": "gaButtonMap",
+          "rva": "0x4BAA00",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "gaButtonMap",
+              "type_index": "0X1063",
+              "type": "",
+              "section": 3,
+              "section_offset": "0x19A00",
+              "rva": "0x4BAA00",
+              "va": "0x1404BAA00"
+            }
+          ]
+        },
+        {
+          "name": "player1InputType",
+          "rva": "0x4D49A4",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "player1InputType",
+              "type_index": "0X10B8",
+              "type": "SDL_InputType",
+              "section": 3,
+              "section_offset": "0x339A4",
+              "rva": "0x4D49A4",
+              "va": "0x1404D49A4"
+            }
+          ]
+        },
+        {
+          "name": "wait",
+          "module": "brain",
+          "rva": "0x4F13A0",
+          "matches": [
+            {
+              "origin": "module_symbols",
+              "module_id": 8,
+              "module": "brain",
+              "linkage": "local",
+              "name": "wait",
+              "type_index": "0X0022",
+              "type": "unsigned long",
+              "section": 3,
+              "section_offset": "0x503A0",
+              "rva": "0x4F13A0",
+              "va": "0x1404F13A0"
+            }
+          ]
+        },
+        {
+          "name": "mCameraAngleDest",
+          "rva": "0x4F1AA4",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "mCameraAngleDest",
+              "type_index": "0X0074",
+              "type": "int",
+              "section": 3,
+              "section_offset": "0x50AA4",
+              "rva": "0x4F1AA4",
+              "va": "0x1404F1AA4"
+            }
+          ]
+        },
+        {
+          "name": "leveldata",
+          "rva": "0x537C88",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "leveldata",
+              "type_index": "0X0612",
+              "type": "long*",
+              "section": 3,
+              "section_offset": "0x96C88",
+              "rva": "0x537C88",
+              "va": "0x140537C88"
+            }
+          ]
+        },
+        {
+          "name": "LevelSelect",
+          "rva": "0x537DEA",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "LevelSelect",
+              "type_index": "0X0070",
+              "type": "char",
+              "section": 3,
+              "section_offset": "0x96DEA",
+              "rva": "0x537DEA",
+              "va": "0x140537DEA"
+            }
+          ]
+        },
+        {
+          "name": "gGlobalTimer",
+          "rva": "0x581FC0",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "gGlobalTimer",
+              "type_index": "0X0075",
+              "type": "unsigned",
+              "section": 3,
+              "section_offset": "0xE0FC0",
+              "rva": "0x581FC0",
+              "va": "0x140581FC0"
+            }
+          ]
+        },
+        {
+          "name": "g_p2Y",
+          "rva": "0x932C80",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "g_p2Y",
+              "type_index": "0X0040",
+              "type": "float",
+              "section": 3,
+              "section_offset": "0x491C80",
+              "rva": "0x932C80",
+              "va": "0x140932C80"
+            }
+          ]
+        },
+        {
+          "name": "g_p2X",
+          "rva": "0x932C84",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "g_p2X",
+              "type_index": "0X0040",
+              "type": "float",
+              "section": 3,
+              "section_offset": "0x491C84",
+              "rva": "0x932C84",
+              "va": "0x140932C84"
+            }
+          ]
+        },
+        {
+          "name": "g_p1Y",
+          "rva": "0x932C88",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "g_p1Y",
+              "type_index": "0X0040",
+              "type": "float",
+              "section": 3,
+              "section_offset": "0x491C88",
+              "rva": "0x932C88",
+              "va": "0x140932C88"
+            }
+          ]
+        },
+        {
+          "name": "g_p1X",
+          "rva": "0x932C8C",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "g_p1X",
+              "type_index": "0X0040",
+              "type": "float",
+              "section": 3,
+              "section_offset": "0x491C8C",
+              "rva": "0x932C8C",
+              "va": "0x140932C8C"
+            }
+          ]
+        },
+        {
+          "name": "OptionStruct",
+          "rva": "0x10DA100",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "OptionStruct",
+              "type_index": "0X1061",
+              "type": "optionstruct",
+              "section": 3,
+              "section_offset": "0xC39100",
+              "rva": "0x10DA100",
+              "va": "0x1410DA100"
+            }
+          ]
+        },
+        {
+          "name": "GameStruct",
+          "rva": "0x10DA140",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "GameStruct",
+              "type_index": "0X9ADA",
+              "type": "gamestruct",
+              "section": 3,
+              "section_offset": "0xC39140",
+              "rva": "0x10DA140",
+              "va": "0x1410DA140"
+            }
+          ]
+        },
+        {
+          "name": "paEffects",
+          "rva": "0x10DE900",
+          "matches": [
+            {
+              "origin": "global_stream",
+              "module_id": null,
+              "module": null,
+              "linkage": "global",
+              "name": "paEffects",
+              "type_index": "0X1432",
+              "type": "",
+              "section": 3,
+              "section_offset": "0xC3D900",
+              "rva": "0x10DE900",
+              "va": "0x1410DE900"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
