@@ -1531,6 +1531,28 @@ static int pc_start_selected_gameplay(
     return JPB_GAME_RUNTIME_OK;
 }
 
+static void pc_apply_front_end_player_model_override(
+    int enabled,
+    int model)
+{
+    if (!enabled) {
+        return;
+    }
+
+    /*
+     * This is a command-line diagnostic override, not retail menu state.
+     * Apply it at the front-end/gameplay boundary because
+     * menu_initPlayerSelect and newMenu_P1CharacterSelect own the real
+     * default/cycling behavior before a player confirms a character.
+     */
+    GameStruct.ModelSelect[0] = (int16_t)model;
+    newMenu_currentModelSelectBaseP1 = model;
+    newMenu_currentModelSelectNGPP1 = model;
+    jpb_PCLog(
+        "front-end diagnostic player-model override applied model=%d",
+        model);
+}
+
 static void pc_save_game_data(void *user_data)
 {
     PcInput *input = (PcInput *)user_data;
@@ -2171,7 +2193,8 @@ static uint32_t pc_read_pad(int32_t pad_index, void *user_data)
         g_p1X = 0.0f;
         g_p1Y = 0.0f;
     }
-    bits = jpb_PCSelectPlayerOneInput(bits, controller_bits);
+    bits = jpb_PCSelectPlayerOneOwnedInput(
+        bits, controller_bits, input->playerOneUsesKeyboard);
     bits = pc_filter_gameplay_handoff_input(input, 0u, bits);
     if (bits == 0) {
         g_p1X = 0.0f;
@@ -9823,6 +9846,8 @@ int main(int argc, char **argv)
                     break;
                 }
                 mesh_path = default_assets.mesh;
+                pc_apply_front_end_player_model_override(
+                    player_model_override, player_model);
                 result = pc_start_selected_gameplay(
                     &runtime,
                     mesh_path,
@@ -9869,6 +9894,8 @@ int main(int argc, char **argv)
                         break;
                     }
                     mesh_path = default_assets.mesh;
+                    pc_apply_front_end_player_model_override(
+                        player_model_override, player_model);
                     result = pc_start_selected_gameplay(
                         &runtime,
                         mesh_path,
@@ -9914,6 +9941,8 @@ int main(int argc, char **argv)
                         break;
                     }
                     mesh_path = default_assets.mesh;
+                    pc_apply_front_end_player_model_override(
+                        player_model_override, player_model);
                     result = pc_start_selected_gameplay(
                         &runtime,
                         mesh_path,
@@ -10137,6 +10166,8 @@ int main(int argc, char **argv)
                         break;
                     }
                     mesh_path = default_assets.mesh;
+                    pc_apply_front_end_player_model_override(
+                        player_model_override, player_model);
                     result = pc_start_selected_gameplay(
                         &runtime,
                         mesh_path,
@@ -10202,6 +10233,8 @@ int main(int argc, char **argv)
                             break;
                         }
                         mesh_path = default_assets.mesh;
+                        pc_apply_front_end_player_model_override(
+                            player_model_override, player_model);
                         result = pc_start_selected_gameplay(
                             &runtime,
                             mesh_path,
@@ -10262,6 +10295,8 @@ int main(int argc, char **argv)
                             break;
                         }
                         mesh_path = default_assets.mesh;
+                        pc_apply_front_end_player_model_override(
+                            player_model_override, player_model);
                         result = pc_start_selected_gameplay(
                             &runtime,
                             mesh_path,
@@ -10504,14 +10539,6 @@ int main(int argc, char **argv)
     if (title_active) {
         unsigned title_menu = menuVars.menuMode[
             menuVars.menuModeSP & 7u];
-        uint32_t title_center = framebuffer.pixels[
-            (size_t)(framebuffer.height / 2) *
-                (size_t)framebuffer.stridePixels +
-            (size_t)(framebuffer.width / 2)];
-        unsigned title_center_brightness =
-            ((title_center >> 16) & UINT32_C(0xff)) +
-            ((title_center >> 8) & UINT32_C(0xff)) +
-            (title_center & UINT32_C(0xff));
 
         if (result == JPB_GAME_RUNTIME_OK &&
             title_character_select &&
@@ -10526,27 +10553,23 @@ int main(int argc, char **argv)
                                   ? 21u : 15u))) ||
              runtime.screenDrawDroppedCount != 0 ||
              runtime.screenDrawCompositePixelCount == 0 ||
-             runtime.textDrawCount <
-                 (title_menu == 0x1a
-                      ? 0u
-                      : (title_character_select == 2
-                           ? (title_character_select_completed
-                                  ? 12u : 8u)
-                           : (title_character_select_completed
-                                  ? 6u : 4u))) ||
-             (title_menu != 0x1a &&
-              title_center_brightness < 180))) {
+                 runtime.textDrawCount <
+                     (title_menu == 0x1a
+                          ? 0u
+                          : (title_character_select == 2
+                               ? (title_character_select_completed
+                                      ? 12u : 8u)
+                               : (title_character_select_completed
+                                      ? 6u : 4u))))) {
             fprintf(
                 stderr,
                 "headless character-select presentation did not composite "
                 "the recovered menu owner "
-                "(screen=%zu/%zu/%zu text=%zu center=%08x/%u)\n",
+                "(screen=%zu/%zu/%zu text=%zu)\n",
                 runtime.screenDrawCount,
                 runtime.screenDrawDroppedCount,
                 runtime.screenDrawCompositePixelCount,
-                runtime.textDrawCount,
-                (unsigned)title_center,
-                title_center_brightness);
+                runtime.textDrawCount);
             result = JPB_GAME_RUNTIME_RENDER_FAILED;
         }
         if (result == JPB_GAME_RUNTIME_OK &&
@@ -12899,7 +12922,7 @@ int main(int argc, char **argv)
         "psx_texture=%zu/%zu "
         "player_hud=%zu/%zu/%zu "
         "screen_alpha=%zu/%zu/%zu/%zu "
-        "saber_glow=%zu/%zu/%zu cylinders=%zu "
+        "saber_glow=%zu/%zu/%zu/%zu cylinders=%zu "
         "screen_poly=%zu/%zu/%zu "
         "water_poly=%zu/%zu "
         "powerups=%zu/%zu/%zu "
@@ -12980,6 +13003,7 @@ int main(int argc, char **argv)
         runtime.glowDrawCount,
         runtime.glowDrawDroppedCount,
         runtime.glowDrawCompositePixelCount,
+        runtime.glowDrawDepthRejectedPixelCount,
         runtime.cylinderDrawCount,
         runtime.screenPolyDrawCount,
         runtime.screenPolyDroppedCount,

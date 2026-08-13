@@ -763,6 +763,9 @@ static void software_draw_glow_disc(
             }
             if (!software_glow_depth_visible(
                     depth_buffer, screen_x, screen_y, depth)) {
+                if (stats != NULL) {
+                    ++stats->glowDepthRejectedPixels;
+                }
                 continue;
             }
             coverage = radius > 1

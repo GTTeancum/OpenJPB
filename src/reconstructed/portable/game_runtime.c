@@ -1182,6 +1182,9 @@ static void game_runtime_flush_glow_draws(
 {
     size_t draw_index;
     size_t pixels_before = stats != NULL ? stats->pixels : 0;
+    size_t rejected_before = stats != NULL
+        ? stats->glowDepthRejectedPixels
+        : 0;
 
     if (runtime == NULL || view == NULL || framebuffer == NULL) {
         return;
@@ -1205,6 +1208,8 @@ static void game_runtime_flush_glow_draws(
     if (stats != NULL) {
         runtime->glowDrawCompositePixelCount =
             stats->pixels - pixels_before;
+        runtime->glowDrawDepthRejectedPixelCount =
+            stats->glowDepthRejectedPixels - rejected_before;
     }
 }
 
@@ -5160,15 +5165,6 @@ static void game_runtime_scene_after_world(
     context->sharedDepthReady =
         context->result == JPB_GAME_RUNTIME_OK;
     if (context->sharedDepthReady) {
-        context->glowDepthReady =
-            game_runtime_snapshot_glow_depth_buffer(
-                runtime,
-                &context->depthBuffer,
-                &context->glowDepthBuffer);
-        if (!context->glowDepthReady) {
-            context->result = JPB_GAME_RUNTIME_RENDER_FAILED;
-            return;
-        }
         runtime->worldLoadedTextures =
             runtime->worldTextureCache->loadedTextureCount;
         runtime->worldRenderedPixels =
@@ -5573,6 +5569,7 @@ int jpb_GameRuntimeFrame(
     runtime->glowDrawCount = 0;
     runtime->glowDrawDroppedCount = 0;
     runtime->glowDrawCompositePixelCount = 0;
+    runtime->glowDrawDepthRejectedPixelCount = 0;
     runtime->cylinderDrawCount = 0;
     runtime->screenPolyDrawCount = 0;
     runtime->screenPolyDroppedCount = 0;
@@ -5797,6 +5794,21 @@ int jpb_GameRuntimeFrame(
     game_runtime_flush_deferred_screen_polys(&context);
     if (context.result != JPB_GAME_RUNTIME_OK) {
         return context.result;
+    }
+    if (context.sharedDepthReady) {
+        /*
+         * PDB fx_screenGlow emits depth-tested immediate quads. Capture the
+         * occluder surface after world, actors, enemies, and deferred
+         * immediate polys have all contributed to the shared depth buffer.
+         */
+        context.glowDepthReady =
+            game_runtime_snapshot_glow_depth_buffer(
+                runtime,
+                &context.depthBuffer,
+                &context.glowDepthBuffer);
+        if (!context.glowDepthReady) {
+            return JPB_GAME_RUNTIME_RENDER_FAILED;
+        }
     }
     enemy_CheckTeleport();
     game_runtime_flush_ordered_title_draws(runtime, framebuffer);

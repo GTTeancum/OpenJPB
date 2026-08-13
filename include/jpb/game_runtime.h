@@ -335,6 +335,7 @@ typedef struct JPBGameRuntime {
     size_t glowDrawCount;
     size_t glowDrawDroppedCount;
     size_t glowDrawCompositePixelCount;
+    size_t glowDrawDepthRejectedPixelCount;
     size_t cylinderDrawCount;
     JPBGameRuntimeScreenPolyDraw screenPolyDraws[
         JPB_GAME_RUNTIME_SCREEN_POLY_CAPACITY];

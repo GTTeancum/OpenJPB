@@ -69,6 +69,7 @@ typedef struct JPBSoftwareRenderStats {
     size_t modelTriangles;
     size_t modelLines;
     size_t modelPixels;
+    size_t glowDepthRejectedPixels;
 } JPBSoftwareRenderStats;
 
 typedef struct JPBSoftwareTexture {

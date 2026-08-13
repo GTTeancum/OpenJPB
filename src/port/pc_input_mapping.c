@@ -186,3 +186,14 @@ uint32_t jpb_PCSelectPlayerOneInput(
 {
     return keyboard_bits != 0 ? keyboard_bits : controller_bits;
 }
+
+uint32_t jpb_PCSelectPlayerOneOwnedInput(
+    uint32_t keyboard_bits,
+    uint32_t controller_bits,
+    int player_one_uses_keyboard)
+{
+    if (keyboard_bits != 0) {
+        return keyboard_bits;
+    }
+    return player_one_uses_keyboard ? 0 : controller_bits;
+}

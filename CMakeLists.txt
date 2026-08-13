@@ -1028,6 +1028,28 @@ if(BUILD_TESTING)
                         PASS_REGULAR_EXPRESSION
                             "title_menu=\\(14,music=1\\).*character=\\(state=24,select=0,players=1,models=0/1")
                 add_test(
+                    NAME jpb_pc_title_character_select_keyboard_changes_once_with_xinput
+                    COMMAND
+                        jpb_pc_game
+                        "${JPB_PC_GAME_MESH}"
+                        --cad
+                        "${JPB_PC_GAME_CAD}"
+                        --bmd
+                        "${JPB_PC_GAME_BMD}"
+                        --headless
+                        --title-character-select
+                        --headless-keyboard-phase none 1
+                        --headless-xinput-phase left 12
+                        --headless-keyboard-phase d 1
+                        --headless-keyboard-phase none 12
+                        --frames 26)
+                set_tests_properties(
+                    jpb_pc_title_character_select_keyboard_changes_once_with_xinput
+                    PROPERTIES
+                        LABELS "real_assets;pc_game;menu;presentation;controls"
+                        PASS_REGULAR_EXPRESSION
+                            "title_menu=\\(14,music=1\\).*character=\\(state=24,select=0,players=1,models=1/1")
+                add_test(
                     NAME jpb_pc_title_character_select_completed
                     COMMAND
                         jpb_pc_game

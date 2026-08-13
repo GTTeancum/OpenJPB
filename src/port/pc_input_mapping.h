@@ -79,4 +79,9 @@ uint32_t jpb_PCSelectPlayerOneInput(
     uint32_t keyboard_bits,
     uint32_t controller_bits);
 
+uint32_t jpb_PCSelectPlayerOneOwnedInput(
+    uint32_t keyboard_bits,
+    uint32_t controller_bits,
+    int player_one_uses_keyboard);
+
 #endif

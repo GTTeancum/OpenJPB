@@ -321,6 +321,12 @@ static int test_controller_ownership(void)
 
     CHECK(jpb_PCSelectPlayerOneInput(0x1000u, 0x4000u) == 0x1000u);
     CHECK(jpb_PCSelectPlayerOneInput(0, 0x4000u) == 0x4000u);
+    CHECK(jpb_PCSelectPlayerOneOwnedInput(
+        0x2000u, 0x4000u, 1) == 0x2000u);
+    CHECK(jpb_PCSelectPlayerOneOwnedInput(
+        0, 0x4000u, 1) == 0);
+    CHECK(jpb_PCSelectPlayerOneOwnedInput(
+        0, 0x4000u, 0) == 0x4000u);
     return 0;
 }
 

@@ -350,6 +350,24 @@ int main(void)
     CHECK(glow_stats.lines == 1);
     CHECK(glow_stats.pixels > 0);
     CHECK(glow_pixels[32 * 64 + 32] == 0);
+    CHECK(glow_stats.glowDepthRejectedPixels > 0);
+    memset(glow_pixels, 0, sizeof(glow_pixels));
+    memset(&glow_stats, 0, sizeof(glow_stats));
+    for (int depth_index = 0; depth_index < 64 * 64; ++depth_index) {
+        poly_depth_values[depth_index] = 500.0f / 10240.0f;
+    }
+    CHECK(jpb_SoftwareDrawGlowLine(
+              &glow_start,
+              &glow_end,
+              4,
+              UINT32_C(0x7f40c0ff),
+              &view,
+              &glow_framebuffer,
+              &poly_depth,
+              &glow_stats) == JPB_SOFTWARE_RENDER_OK);
+    CHECK(glow_stats.lines == 1);
+    CHECK(glow_stats.pixels == 0);
+    CHECK(glow_stats.glowDepthRejectedPixels > 0);
     memset(glow_pixels, 0, sizeof(glow_pixels));
     memset(&glow_stats, 0, sizeof(glow_stats));
     glow_start.vx = 0;
