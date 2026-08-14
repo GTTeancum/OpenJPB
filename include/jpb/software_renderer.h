@@ -100,6 +100,26 @@ typedef struct JPBSoftwareDepthBuffer {
     size_t strideValues;
 } JPBSoftwareDepthBuffer;
 
+typedef struct JPBSoftwareMaterialVertex {
+    float x;
+    float y;
+    float depth;
+    float inverseDepth;
+    float u;
+    float v;
+    float red;
+    float green;
+    float blue;
+    float alpha;
+} JPBSoftwareMaterialVertex;
+
+typedef int (*JPBSoftwareTriangleSink)(
+    void *user_data,
+    const JPBSoftwareMaterialVertex *first,
+    const JPBSoftwareMaterialVertex *second,
+    const JPBSoftwareMaterialVertex *third,
+    const JPBSoftwareTexture *texture);
+
 /*
  * Dependency-free render form of the live FBX level data assembled by
  * el_chavo::InitFBXLevelData. Platform importers flatten their source scene
@@ -265,6 +285,21 @@ int jpb_SoftwareRenderBmdMaterializedWithDepth(
     void *texture_user_data,
     JPBSoftwareDepthBuffer *depth_buffer,
     JPBSoftwareRenderStats *stats);
+int jpb_SoftwareRenderBmdMaterializedWithDepthToSink(
+    const JPBBmdView *bmd,
+    modelObject *model,
+    const _animFrame *key_frame,
+    const FVECTOR *world_position,
+    int32_t world_facing,
+    MATRIX *view_matrix,
+    const JPBSoftwareJpxScene *world_scene,
+    JPBSoftwareFramebuffer *framebuffer,
+    JPBSoftwareTextureResolver resolve_texture,
+    void *texture_user_data,
+    JPBSoftwareDepthBuffer *depth_buffer,
+    JPBSoftwareTriangleSink triangle_sink,
+    void *triangle_user_data,
+    JPBSoftwareRenderStats *stats);
 
 /*
  * Portable realization seam for the original fx_screenGlow pass. PDB
@@ -296,6 +331,16 @@ int jpb_SoftwareDrawScreenPoly(
     int no_scale,
     JPBSoftwareFramebuffer *framebuffer,
     JPBSoftwareDepthBuffer *depth_buffer,
+    JPBSoftwareRenderStats *stats);
+int jpb_SoftwareDrawScreenPolyToSink(
+    const _Material *material,
+    int vertex_count,
+    const JPBScreenPolyVertex *vertices,
+    int no_scale,
+    JPBSoftwareFramebuffer *framebuffer,
+    JPBSoftwareDepthBuffer *depth_buffer,
+    JPBSoftwareTriangleSink triangle_sink,
+    void *triangle_user_data,
     JPBSoftwareRenderStats *stats);
 
 #ifdef __cplusplus

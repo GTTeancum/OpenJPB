@@ -42,6 +42,7 @@
 #include "pc_image_wic.h"
 #include "pc_input_mapping.h"
 #include "pc_log_win32.h"
+#include "pc_present_d3d11.h"
 #include "pc_xinput_win32.h"
 #if defined(JPB_PC_HAS_UFBX)
 #include "pc_level_fbx.h"
@@ -1205,7 +1206,7 @@ static int pc_front_end_requests_versus(int *level_index)
     return 1;
 }
 
-static void pc_release_front_end_gameplay_control(
+static int pc_release_front_end_gameplay_control(
     JPBGameRuntime *runtime,
     int selected_players)
 {
@@ -1220,7 +1221,7 @@ static void pc_release_front_end_gameplay_control(
     int p1_ai_after = 0;
 
     if (runtime == NULL) {
-        return;
+        return 0;
     }
     if ((uint8_t)GameStruct.CurrentLevel == 1 &&
         selected_players == 1 &&
@@ -1240,7 +1241,7 @@ static void pc_release_front_end_gameplay_control(
             runtime->world != NULL
                 ? (int)runtime->world->overRideDolly
                 : 0);
-        return;
+        return 0;
     }
     if (runtime->player != NULL) {
         p1_before = runtime->player->pFlags;
@@ -1297,6 +1298,7 @@ static void pc_release_front_end_gameplay_control(
             override_before,
             override_after);
     }
+    return 1;
 }
 
 static int pc_start_selected_gameplay(
@@ -2036,7 +2038,9 @@ static uint32_t pc_read_pad(int32_t pad_index, void *user_data)
             if ((headless_bits & JPB_PAD_UP) != 0) headless_y -= 1.0f;
             if ((headless_bits & JPB_PAD_DOWN) != 0) headless_y += 1.0f;
             if (pad_index == 0) {
+                input->playerOneUsesKeyboard = 1;
                 player1InputType = 0;
+                lastUsedInputType = 0;
                 g_p1X = headless_x;
                 g_p1Y = headless_y;
             } else {
@@ -2352,210 +2356,226 @@ static HWND pc_create_window(
     return window;
 }
 
-static uint8_t pc_present_luma(uint32_t pixel)
+static void pc_visible_framebuffer_size(int *width, int *height)
 {
-    unsigned red = (pixel >> 16) & UINT32_C(0xff);
-    unsigned green = (pixel >> 8) & UINT32_C(0xff);
-    unsigned blue = pixel & UINT32_C(0xff);
-
-    return (uint8_t)(
-        (red * 54u + green * 183u + blue * 19u) >> 8);
-}
-
-static uint32_t pc_present_average_edge(
-    uint32_t center,
-    uint32_t north,
-    uint32_t south,
-    uint32_t west,
-    uint32_t east)
-{
-    unsigned red =
-        (((center >> 16) & UINT32_C(0xff)) * 2u +
-         ((north >> 16) & UINT32_C(0xff)) +
-         ((south >> 16) & UINT32_C(0xff)) +
-         ((west >> 16) & UINT32_C(0xff)) +
-         ((east >> 16) & UINT32_C(0xff))) / 6u;
-    unsigned green =
-        (((center >> 8) & UINT32_C(0xff)) * 2u +
-         ((north >> 8) & UINT32_C(0xff)) +
-         ((south >> 8) & UINT32_C(0xff)) +
-         ((west >> 8) & UINT32_C(0xff)) +
-         ((east >> 8) & UINT32_C(0xff))) / 6u;
-    unsigned blue =
-        ((center & UINT32_C(0xff)) * 2u +
-         (north & UINT32_C(0xff)) +
-         (south & UINT32_C(0xff)) +
-         (west & UINT32_C(0xff)) +
-         (east & UINT32_C(0xff))) / 6u;
-
-    return (center & UINT32_C(0xff000000)) |
-        (red << 16) | (green << 8) | blue;
-}
-
-static const uint32_t *pc_present_fxaa_pixels(
-    const JPBSoftwareFramebuffer *framebuffer)
-{
-    static uint32_t *fxaa_pixels;
-    static size_t fxaa_capacity;
-    size_t required;
-    int y;
-
-    if (framebuffer == NULL || framebuffer->pixels == NULL ||
-        framebuffer->width < 3 || framebuffer->height < 3 ||
-        framebuffer->stridePixels < framebuffer->width) {
-        return framebuffer != NULL ? framebuffer->pixels : NULL;
-    }
-    required = (size_t)framebuffer->width *
-        (size_t)framebuffer->height;
-    if (required > fxaa_capacity) {
-        uint32_t *new_pixels =
-            (uint32_t *)realloc(fxaa_pixels, required * sizeof(uint32_t));
-
-        if (new_pixels == NULL) {
-            return framebuffer->pixels;
-        }
-        fxaa_pixels = new_pixels;
-        fxaa_capacity = required;
-    }
-    for (y = 0; y < framebuffer->height; ++y) {
-        int x;
-
-        for (x = 0; x < framebuffer->width; ++x) {
-            uint32_t center = framebuffer->pixels[
-                (size_t)y * (size_t)framebuffer->stridePixels +
-                (size_t)x];
-
-            if (x == 0 || y == 0 ||
-                x + 1 == framebuffer->width ||
-                y + 1 == framebuffer->height) {
-                fxaa_pixels[
-                    (size_t)y * (size_t)framebuffer->width +
-                    (size_t)x] = center;
-            } else {
-                uint32_t north = framebuffer->pixels[
-                    (size_t)(y - 1) *
-                        (size_t)framebuffer->stridePixels +
-                    (size_t)x];
-                uint32_t south = framebuffer->pixels[
-                    (size_t)(y + 1) *
-                        (size_t)framebuffer->stridePixels +
-                    (size_t)x];
-                uint32_t west = framebuffer->pixels[
-                    (size_t)y * (size_t)framebuffer->stridePixels +
-                    (size_t)(x - 1)];
-                uint32_t east = framebuffer->pixels[
-                    (size_t)y * (size_t)framebuffer->stridePixels +
-                    (size_t)(x + 1)];
-                uint8_t min_luma = pc_present_luma(center);
-                uint8_t max_luma = min_luma;
-                uint8_t luma;
-
-                luma = pc_present_luma(north);
-                if (luma < min_luma) min_luma = luma;
-                if (luma > max_luma) max_luma = luma;
-                luma = pc_present_luma(south);
-                if (luma < min_luma) min_luma = luma;
-                if (luma > max_luma) max_luma = luma;
-                luma = pc_present_luma(west);
-                if (luma < min_luma) min_luma = luma;
-                if (luma > max_luma) max_luma = luma;
-                luma = pc_present_luma(east);
-                if (luma < min_luma) min_luma = luma;
-                if (luma > max_luma) max_luma = luma;
-
-                fxaa_pixels[
-                    (size_t)y * (size_t)framebuffer->width +
-                    (size_t)x] =
-                    max_luma - min_luma >= 24u
-                        ? pc_present_average_edge(
-                              center, north, south, west, east)
-                        : center;
-            }
-        }
-    }
-    return fxaa_pixels;
-}
-
-static int pc_present(
-    HWND window, const JPBSoftwareFramebuffer *framebuffer)
-{
-    BITMAPINFO bitmap;
-    RECT client;
-    HDC device = GetDC(window);
-    const uint32_t *present_pixels;
+    RECT work_area;
     int client_width;
     int client_height;
-    int destination_width;
-    int destination_height;
-    int destination_x;
-    int destination_y;
-    int copied_scan_lines;
+    int viewport_width;
+    int viewport_height;
 
-    if (device == NULL || framebuffer == NULL ||
-        framebuffer->pixels == NULL) {
-        if (device != NULL) {
-            ReleaseDC(window, device);
+    if (width == NULL || height == NULL ||
+        !SystemParametersInfoA(
+            SPI_GETWORKAREA, 0, &work_area, 0)) {
+        return;
+    }
+    client_width = work_area.right - work_area.left;
+    client_height = work_area.bottom - work_area.top -
+        GetSystemMetrics(SM_CYCAPTION);
+    if (client_width < 320 || client_height < 240) {
+        return;
+    }
+    viewport_width = client_width;
+    viewport_height = (int)(
+        (int64_t)client_width * PC_VISIBLE_FRAMEBUFFER_HEIGHT /
+        PC_VISIBLE_FRAMEBUFFER_WIDTH);
+    if (viewport_height > client_height) {
+        viewport_height = client_height;
+        viewport_width = (int)(
+            (int64_t)client_height * PC_VISIBLE_FRAMEBUFFER_WIDTH /
+            PC_VISIBLE_FRAMEBUFFER_HEIGHT);
+    }
+    if (viewport_width >= 320 && viewport_height >= 240) {
+        *width = viewport_width;
+        *height = viewport_height;
+    }
+}
+
+static int pc_render_level_d3d11(
+    void *user_data,
+    const JPBSoftwareLevelMesh *mesh,
+    const JPBSoftwareJpxScene *world_scene,
+    MATRIX *view_matrix,
+    JPBSoftwareFramebuffer *framebuffer,
+    uint32_t clear_color,
+    JPBSoftwareTextureResolver resolve_texture,
+    void *texture_user_data,
+    JPBSoftwareDepthBuffer *depth_buffer,
+    JPBSoftwareRenderStats *stats)
+{
+    return jpb_PCD3D11PresenterRenderLevel(
+        (JPBPCD3D11Presenter *)user_data,
+        mesh,
+        world_scene,
+        view_matrix,
+        framebuffer,
+        clear_color,
+        resolve_texture,
+        texture_user_data,
+        depth_buffer,
+        stats);
+}
+
+static int pc_begin_models_d3d11(
+    void *user_data,
+    JPBSoftwareFramebuffer *framebuffer,
+    JPBSoftwareDepthBuffer *depth_buffer)
+{
+    return jpb_PCD3D11PresenterBeginModels(
+        (JPBPCD3D11Presenter *)user_data,
+        framebuffer, depth_buffer);
+}
+
+static int pc_end_models_d3d11(
+    void *user_data,
+    JPBSoftwareFramebuffer *framebuffer,
+    JPBSoftwareDepthBuffer *depth_buffer)
+{
+    return jpb_PCD3D11PresenterEndModels(
+        (JPBPCD3D11Presenter *)user_data,
+        framebuffer, depth_buffer);
+}
+
+static int pc_begin_screen_polys_d3d11(
+    void *user_data,
+    JPBSoftwareFramebuffer *framebuffer,
+    JPBSoftwareDepthBuffer *depth_buffer)
+{
+    return jpb_PCD3D11PresenterBeginScreenPolys(
+        (JPBPCD3D11Presenter *)user_data,
+        framebuffer, depth_buffer);
+}
+
+static int pc_end_screen_polys_d3d11(
+    void *user_data,
+    JPBSoftwareFramebuffer *framebuffer,
+    JPBSoftwareDepthBuffer *depth_buffer)
+{
+    return jpb_PCD3D11PresenterEndScreenPolys(
+        (JPBPCD3D11Presenter *)user_data,
+        framebuffer, depth_buffer);
+}
+
+static int pc_render_title_screen_draws_d3d11(
+    void *user_data,
+    const JPBGameRuntimeScreenDraw *draws,
+    size_t draw_count,
+    JPBSoftwareFramebuffer *framebuffer)
+{
+    return jpb_PCD3D11PresenterRenderTitleScreenDraws(
+        (JPBPCD3D11Presenter *)user_data,
+        draws, draw_count, framebuffer);
+}
+
+static int pc_gameplay_composite_d3d11(
+    void *user_data,
+    enum JPBGameRuntimeGameplayCompositeStage stage,
+    const JPBSoftwareFramebuffer *framebuffer,
+    const JPBGameRuntimeGlowDraw *glow_draws,
+    size_t glow_draw_count,
+    MATRIX *view_matrix,
+    JPBSoftwareRenderStats *stats)
+{
+    return jpb_PCD3D11PresenterGameplayComposite(
+        (JPBPCD3D11Presenter *)user_data,
+        (int)stage, framebuffer, glow_draws,
+        glow_draw_count, view_matrix, stats);
+}
+
+static void pc_set_hardware_render_hooks(
+    JPBGameRuntime *runtime,
+    JPBPCD3D11Presenter *presenter)
+{
+    jpb_GameRuntimeSetLevelRenderHook(
+        runtime, pc_render_level_d3d11, presenter);
+    jpb_GameRuntimeSetModelRenderHooks(
+        runtime,
+        pc_begin_models_d3d11,
+        jpb_PCD3D11PresenterModelTriangle,
+        pc_end_models_d3d11,
+        presenter);
+    jpb_GameRuntimeSetScreenPolyRenderHooks(
+        runtime,
+        pc_begin_screen_polys_d3d11,
+        jpb_PCD3D11PresenterScreenPolyTriangle,
+        pc_end_screen_polys_d3d11,
+        presenter);
+    jpb_GameRuntimeSetTitleScreenDrawRenderHook(
+        runtime, pc_render_title_screen_draws_d3d11, presenter);
+    jpb_GameRuntimeSetGameplayCompositeHook(
+        runtime, pc_gameplay_composite_d3d11, presenter);
+}
+
+static HANDLE pc_create_frame_timer(void)
+{
+    HANDLE timer = CreateWaitableTimerExA(
+        NULL,
+        NULL,
+        CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+        TIMER_ALL_ACCESS);
+
+    if (timer == NULL) {
+        timer = CreateWaitableTimerA(NULL, FALSE, NULL);
+    }
+    return timer;
+}
+
+static void pc_cap_frame_rate(
+    HANDLE frame_timer,
+    LARGE_INTEGER frame_started,
+    LARGE_INTEGER frequency)
+{
+    const double target_seconds = 1.0 / 60.0;
+
+    for (;;) {
+        LARGE_INTEGER now;
+        double elapsed;
+        double remaining;
+        LARGE_INTEGER due_time;
+
+        QueryPerformanceCounter(&now);
+        elapsed = (double)(now.QuadPart - frame_started.QuadPart) /
+            (double)frequency.QuadPart;
+        remaining = target_seconds - elapsed;
+        if (remaining <= 0.0) {
+            return;
         }
-        return 0;
+        if (remaining < 0.003) {
+            continue;
+        }
+        if (frame_timer == NULL) {
+            Sleep((DWORD)((remaining - 0.001) * 1000.0));
+            continue;
+        }
+        due_time.QuadPart =
+            -(LONGLONG)((remaining - 0.0025) * 10000000.0);
+        if (!SetWaitableTimer(
+                frame_timer, &due_time, 0, NULL, NULL, FALSE) ||
+            WaitForSingleObject(frame_timer, INFINITE) != WAIT_OBJECT_0) {
+            SwitchToThread();
+        }
     }
-    memset(&bitmap, 0, sizeof(bitmap));
-    bitmap.bmiHeader.biSize = sizeof(bitmap.bmiHeader);
-    bitmap.bmiHeader.biWidth = framebuffer->width;
-    bitmap.bmiHeader.biHeight = -framebuffer->height;
-    bitmap.bmiHeader.biPlanes = 1;
-    bitmap.bmiHeader.biBitCount = 32;
-    bitmap.bmiHeader.biCompression = BI_RGB;
-    GetClientRect(window, &client);
-    client_width = client.right - client.left;
-    client_height = client.bottom - client.top;
-    destination_width = client_width;
-    destination_height = client_height;
-    if (client_width <= 0 || client_height <= 0) {
-        ReleaseDC(window, device);
-        return 0;
-    }
-    if ((int64_t)client_width * framebuffer->height >
-        (int64_t)client_height * framebuffer->width) {
-        destination_width = (int)(
-            (int64_t)client_height * framebuffer->width /
-            framebuffer->height);
-    } else {
-        destination_height = (int)(
-            (int64_t)client_width * framebuffer->height /
-            framebuffer->width);
-    }
-    destination_x = (client_width - destination_width) / 2;
-    destination_y = (client_height - destination_height) / 2;
-    present_pixels = pc_present_fxaa_pixels(framebuffer);
-    if (present_pixels == NULL) {
-        ReleaseDC(window, device);
-        return 0;
-    }
-    SetStretchBltMode(device, HALFTONE);
-    SetBrushOrgEx(device, 0, 0, NULL);
-    if (destination_x != 0 || destination_y != 0 ||
-        destination_width != client_width ||
-        destination_height != client_height) {
-        HBRUSH brush = (HBRUSH)GetStockObject(BLACK_BRUSH);
+}
 
-        FillRect(device, &client, brush);
-    }
-    copied_scan_lines = StretchDIBits(
-        device,
-        destination_x,
-        destination_y,
-        destination_width,
-        destination_height,
-        0,
-        0,
-        framebuffer->width,
-        framebuffer->height,
-        present_pixels,
-        &bitmap,
-        DIB_RGB_COLORS,
-        SRCCOPY);
-    ReleaseDC(window, device);
-    return copied_scan_lines != 0 && copied_scan_lines != GDI_ERROR;
+static int pc_resolve_level_texture(
+    void *user_data,
+    const char *texture_name,
+    JPBSoftwareTexture *texture)
+{
+    return jpb_GameRuntimeResolveLevelTexture(
+        (JPBGameRuntime *)user_data, texture_name, texture);
+}
+
+static int pc_prewarm_hardware_level(
+    JPBGameRuntime *runtime,
+    JPBPCD3D11Presenter *presenter)
+{
+    return runtime->levelRenderMesh == NULL ||
+        jpb_PCD3D11PresenterPrewarmLevel(
+            presenter,
+            runtime->levelRenderMesh,
+            pc_resolve_level_texture,
+            runtime);
 }
 
 static int pc_screen_draw_is_enemy_radar(
@@ -6188,6 +6208,19 @@ static void pc_print_screen_poly_trace(
             draw->texture != NULL && draw->texture->filename[0] != '\0'
                 ? draw->texture->filename
                 : "<none>";
+        const JPBSoftwareTexture *software_texture =
+            draw->texture != NULL
+                ? (const JPBSoftwareTexture *)draw->texture->texture
+                : NULL;
+        int material_type = software_texture != NULL
+            ? software_texture->materialType
+            : -1;
+        uint32_t material_flags = draw->texture != NULL
+            ? draw->texture->flags
+            : UINT32_MAX;
+        int sampler_type = draw->texture != NULL
+            ? (int)draw->texture->samplerType
+            : -1;
         const char *hud_owner = "other";
         int vertex_index;
 
@@ -6197,13 +6230,16 @@ static void pc_print_screen_poly_trace(
 
         printf(
             "screen_poly[%zu]=(owner=%s,file=%s,vertices=%d,"
-            "no_scale=%d,dropped=%zu",
+            "no_scale=%d,dropped=%zu,type=%d,flags=%u,sampler=%d",
             draw_index,
             hud_owner,
             filename,
             draw->vertexCount,
             draw->noScale,
-            runtime->screenPolyDroppedCount);
+            runtime->screenPolyDroppedCount,
+            material_type,
+            (unsigned)material_flags,
+            sampler_type);
         for (vertex_index = 0;
              vertex_index < draw->vertexCount &&
              vertex_index < JPB_SCREEN_POLY_VERTEX_CAPACITY;
@@ -8297,6 +8333,9 @@ int main(int argc, char **argv)
     int overlay_mode_override = -1;
     unsigned presentation_frame_count = 0;
     unsigned gameplay_handoff_count = 0;
+    int presentation_hardware = 0;
+    char presentation_backend[160] = "headless";
+    long presentation_error = 0;
     int exit_code;
     playerObject *resource_second_player = NULL;
 #if defined(JPB_PC_HAS_UFBX)
@@ -9071,6 +9110,13 @@ int main(int argc, char **argv)
         !framebuffer_size_explicit) {
         framebuffer_width = PC_VISIBLE_FRAMEBUFFER_WIDTH;
         framebuffer_height = PC_VISIBLE_FRAMEBUFFER_HEIGHT;
+        pc_visible_framebuffer_size(
+            &framebuffer_width, &framebuffer_height);
+        jpb_PCLog(
+            "visible source framebuffer matched to maximized viewport "
+            "source=%dx%d",
+            framebuffer_width,
+            framebuffer_height);
     }
     pixels = (uint32_t *)malloc(
         (size_t)framebuffer_width *
@@ -9819,16 +9865,18 @@ int main(int argc, char **argv)
                 result = jpb_GameRuntimeTitleFrame(
                     &runtime, &framebuffer);
             } else {
-                if (front_end_playable_handoff) {
+                if (front_end_playable_handoff &&
                     pc_release_front_end_gameplay_control(
-                        &runtime, GameStruct.NumPlayers);
+                        &runtime, GameStruct.NumPlayers)) {
+                    front_end_playable_handoff = 0;
                 }
                 result = jpb_GameRuntimeFrame(
                     &runtime, 1.0f / 60.0f, &framebuffer, &stats);
                 if (result == JPB_GAME_RUNTIME_OK &&
-                    front_end_playable_handoff) {
+                    front_end_playable_handoff &&
                     pc_release_front_end_gameplay_control(
-                        &runtime, GameStruct.NumPlayers);
+                        &runtime, GameStruct.NumPlayers)) {
+                    front_end_playable_handoff = 0;
                 }
             }
             if (result != JPB_GAME_RUNTIME_OK) {
@@ -10026,9 +10074,11 @@ int main(int argc, char **argv)
         HWND window = pc_create_window(
             instance,
             !input.hiddenWindow,
-            !input.hiddenWindow && !input.scriptedInput,
+            !input.hiddenWindow,
             framebuffer.width,
             framebuffer.height);
+        JPBPCD3D11Presenter *presenter = NULL;
+        HANDLE frame_timer = NULL;
         MSG message;
         PcGameplayLogState gameplay_log_states[2];
         uint32_t previous_menu_key_bits = 0;
@@ -10036,32 +10086,71 @@ int main(int argc, char **argv)
             ? menuVars.menuMode[menuVars.menuModeSP & 7u]
             : UINT16_MAX;
         int logged_gameplay_view = 0;
+        double render_seconds = 0.0;
+        double present_seconds = 0.0;
+        double loop_seconds = 0.0;
+        double worst_render_seconds = 0.0;
+        double worst_present_seconds = 0.0;
+        double worst_frame_interval_seconds = 0.0;
+        unsigned missed_frame_deadlines = 0;
+        unsigned frame_interval_count = 0;
+        LARGE_INTEGER loop_started = {0};
 
         if (window == NULL) {
             result = JPB_GAME_RUNTIME_RENDER_FAILED;
         } else {
+            presenter = jpb_PCD3D11PresenterCreate(window);
+            if (presenter == NULL) {
+                presentation_error = E_FAIL;
+                fputs(
+                    "could not initialize the D3D11 hardware presenter\n",
+                    stderr);
+                jpb_PCLog(
+                    "D3D11 hardware presenter initialization failed");
+                result = JPB_GAME_RUNTIME_RENDER_FAILED;
+            }
+        }
+        if (presenter != NULL) {
+            presentation_hardware = 1;
+            snprintf(
+                presentation_backend,
+                sizeof(presentation_backend),
+                "%s",
+                jpb_PCD3D11PresenterDescription(presenter));
+            pc_set_hardware_render_hooks(&runtime, presenter);
+            if (!title_active &&
+                !pc_prewarm_hardware_level(&runtime, presenter)) {
+                jpb_PCLog("D3D11 level texture prewarm failed");
+                result = JPB_GAME_RUNTIME_RENDER_FAILED;
+            }
             memset(
                 gameplay_log_states,
                 0,
                 sizeof(gameplay_log_states));
             QueryPerformanceFrequency(&frequency);
             QueryPerformanceCounter(&previous);
+            loop_started = previous;
+            frame_timer = pc_create_frame_timer();
             jpb_PCLog(
                 "interactive window created visible=%d scripted=%d "
-                "maximize=%d fxaa=present framebuffer=%dx%d",
+                "maximize=%d presenter=%s source_framebuffer=%dx%d",
                 !input.hiddenWindow,
                 input.scriptedInput,
-                !input.hiddenWindow && !input.scriptedInput,
+                !input.hiddenWindow,
+                presentation_backend,
                 framebuffer.width,
                 framebuffer.height);
-            while (pc_running &&
+            while (result == JPB_GAME_RUNTIME_OK && pc_running &&
                    (frame_limit == 0 || frame_count < frame_limit)) {
                 LARGE_INTEGER current;
+                LARGE_INTEGER render_finished;
+                LARGE_INTEGER present_finished;
                 float elapsed;
                 int selected_front_end_level = 0;
                 int selected_front_end_game_mode = 4;
-                uint32_t live_menu_keys =
-                    pc_live_menu_key_bits();
+                uint32_t live_menu_keys = input.scriptedInput
+                    ? 0
+                    : pc_live_menu_key_bits();
 
                 if (input.scriptedInput) {
                     input.headlessActive = frame_count > 0;
@@ -10088,6 +10177,15 @@ int main(int argc, char **argv)
                     (float)((double)(current.QuadPart - previous.QuadPart) /
                             (double)frequency.QuadPart);
                 previous = current;
+                if (frame_count > 0) {
+                    ++frame_interval_count;
+                    if (elapsed > worst_frame_interval_seconds) {
+                        worst_frame_interval_seconds = elapsed;
+                    }
+                    if (elapsed > (1.0 / 60.0) * 1.5) {
+                        ++missed_frame_deadlines;
+                    }
+                }
                 if (title_active) {
                     jpb_PCLogSetCheckpoint(
                         "interactive title frame=%d mode=%u stack=%u select=%u",
@@ -10111,16 +10209,18 @@ int main(int argc, char **argv)
                         runtime.player != NULL
                             ? (int)runtime.player->currentMotion
                             : -1);
-                    if (front_end_playable_handoff) {
+                    if (front_end_playable_handoff &&
                         pc_release_front_end_gameplay_control(
-                            &runtime, GameStruct.NumPlayers);
+                            &runtime, GameStruct.NumPlayers)) {
+                        front_end_playable_handoff = 0;
                     }
                     result = jpb_GameRuntimeFrame(
                         &runtime, elapsed, &framebuffer, &stats);
                     if (result == JPB_GAME_RUNTIME_OK &&
-                        front_end_playable_handoff) {
+                        front_end_playable_handoff &&
                         pc_release_front_end_gameplay_control(
-                            &runtime, GameStruct.NumPlayers);
+                            &runtime, GameStruct.NumPlayers)) {
+                        front_end_playable_handoff = 0;
                     }
                 }
                 if (result != JPB_GAME_RUNTIME_OK) {
@@ -10128,6 +10228,17 @@ int main(int argc, char **argv)
                         "frame failed frame=%d status=%d title=%d",
                         frame_count, result, title_active);
                     break;
+                }
+                QueryPerformanceCounter(&render_finished);
+                {
+                    double duration =
+                        (double)(render_finished.QuadPart - current.QuadPart) /
+                        (double)frequency.QuadPart;
+
+                    render_seconds += duration;
+                    if (duration > worst_render_seconds) {
+                        worst_render_seconds = duration;
+                    }
                 }
                 if (title_active &&
                     menuVars.menuMode[menuVars.menuModeSP & 7u] !=
@@ -10193,6 +10304,16 @@ int main(int argc, char **argv)
                         break;
                     }
 #endif
+                    pc_set_hardware_render_hooks(&runtime, presenter);
+                    if (!pc_prewarm_hardware_level(
+                            &runtime, presenter)) {
+                        jpb_PCLog(
+                            "D3D11 level texture prewarm failed "
+                            "level=%d",
+                            selected_front_end_level);
+                        result = JPB_GAME_RUNTIME_RENDER_FAILED;
+                        break;
+                    }
                     initial_position = runtime.physics->pos;
                     memset(
                         input.observedPlayerBits,
@@ -10257,6 +10378,12 @@ int main(int argc, char **argv)
                             break;
                         }
 #endif
+                        pc_set_hardware_render_hooks(&runtime, presenter);
+                        if (!pc_prewarm_hardware_level(
+                                &runtime, presenter)) {
+                            result = JPB_GAME_RUNTIME_RENDER_FAILED;
+                            break;
+                        }
                         cad_path = selected_player_assets.cad;
                         bmd_path = selected_player_assets.bmd;
                         cmb_path = selected_player_assets.cmb;
@@ -10319,6 +10446,12 @@ int main(int argc, char **argv)
                             break;
                         }
 #endif
+                        pc_set_hardware_render_hooks(&runtime, presenter);
+                        if (!pc_prewarm_hardware_level(
+                                &runtime, presenter)) {
+                            result = JPB_GAME_RUNTIME_RENDER_FAILED;
+                            break;
+                        }
                         cad_path = selected_player_assets.cad;
                         bmd_path = selected_player_assets.bmd;
                         cmb_path = selected_player_assets.cmb;
@@ -10389,15 +10522,264 @@ int main(int argc, char **argv)
                         gameplay_log_states);
                     jpb_PCAudioUpdate(audio);
                 }
-                if (pc_present(window, &framebuffer)) {
-                    ++presentation_frame_count;
+                if (!jpb_PCD3D11PresenterPresent(
+                        presenter, &framebuffer)) {
+                    presentation_error =
+                        jpb_PCD3D11PresenterLastError(presenter);
+                    fprintf(
+                        stderr,
+                        "D3D11 presentation failed (HRESULT=0x%08lx)\n",
+                        (unsigned long)presentation_error);
+                    jpb_PCLog(
+                        "D3D11 presentation failed HRESULT=0x%08lx "
+                        "frame=%d",
+                        (unsigned long)presentation_error,
+                        frame_count);
+                    result = JPB_GAME_RUNTIME_RENDER_FAILED;
+                    break;
                 }
+                pc_cap_frame_rate(frame_timer, current, frequency);
+                QueryPerformanceCounter(&present_finished);
+                {
+                    double duration =
+                        (double)(present_finished.QuadPart -
+                                 render_finished.QuadPart) /
+                        (double)frequency.QuadPart;
+
+                    present_seconds += duration;
+                    if (duration > worst_present_seconds) {
+                        worst_present_seconds = duration;
+                    }
+                }
+                ++presentation_frame_count;
                 ++frame_count;
-                Sleep(1);
             }
-            if (IsWindow(window)) {
-                DestroyWindow(window);
+            if (presentation_frame_count != 0) {
+                LARGE_INTEGER loop_finished;
+
+                QueryPerformanceCounter(&loop_finished);
+                loop_seconds =
+                    (double)(loop_finished.QuadPart - loop_started.QuadPart) /
+                    (double)frequency.QuadPart;
+                jpb_PCLog(
+                    "presentation timing frames=%u wall=%.3fs fps=%.2f "
+                    "render_avg=%.3fms render_max=%.3fms "
+                    "present_avg=%.3fms present_max=%.3fms "
+                    "target_hz=60 missed=%u/%u worst_interval=%.3fms",
+                    presentation_frame_count,
+                    loop_seconds,
+                    loop_seconds > 0.0
+                        ? presentation_frame_count / loop_seconds
+                        : 0.0,
+                    render_seconds * 1000.0 /
+                        presentation_frame_count,
+                    worst_render_seconds * 1000.0,
+                    present_seconds * 1000.0 /
+                        presentation_frame_count,
+                    worst_present_seconds * 1000.0,
+                    missed_frame_deadlines,
+                    frame_interval_count,
+                    worst_frame_interval_seconds * 1000.0);
+                printf(
+                    "presentation_timing=(frames=%u,wall=%.3f,fps=%.2f,"
+                    "render_avg_ms=%.3f,render_max_ms=%.3f,"
+                    "present_avg_ms=%.3f,present_max_ms=%.3f)\n",
+                    presentation_frame_count,
+                    loop_seconds,
+                    loop_seconds > 0.0
+                        ? presentation_frame_count / loop_seconds
+                        : 0.0,
+                    render_seconds * 1000.0 /
+                        presentation_frame_count,
+                    worst_render_seconds * 1000.0,
+                    present_seconds * 1000.0 /
+                        presentation_frame_count,
+                    worst_present_seconds * 1000.0);
+                printf(
+                    "presentation_cadence=(target_hz=60,intervals=%u,"
+                    "missed=%u,worst_ms=%.3f)\n",
+                    frame_interval_count,
+                    missed_frame_deadlines,
+                    worst_frame_interval_seconds * 1000.0);
             }
+            {
+                unsigned world_frames = 0;
+                double world_prepare = 0.0;
+                double world_submit = 0.0;
+                double world_readback = 0.0;
+
+                jpb_PCD3D11PresenterWorldTiming(
+                    presenter, &world_frames, &world_prepare,
+                    &world_submit, &world_readback);
+                if (world_frames != 0) {
+                    jpb_PCLog(
+                        "hardware world timing frames=%u prepare=%.3fms "
+                        "submit=%.3fms readback=%.3fms total=%.3fms",
+                        world_frames,
+                        world_prepare * 1000.0 / world_frames,
+                        world_submit * 1000.0 / world_frames,
+                        world_readback * 1000.0 / world_frames,
+                        (world_prepare + world_submit + world_readback) *
+                            1000.0 / world_frames);
+                    printf(
+                        "hardware_world_timing=(frames=%u,"
+                        "prepare_avg_ms=%.3f,submit_avg_ms=%.3f,"
+                        "readback_avg_ms=%.3f,total_avg_ms=%.3f)\n",
+                        world_frames,
+                        world_prepare * 1000.0 / world_frames,
+                        world_submit * 1000.0 / world_frames,
+                        world_readback * 1000.0 / world_frames,
+                        (world_prepare + world_submit + world_readback) *
+                            1000.0 / world_frames);
+                }
+            }
+            {
+                unsigned model_frames = 0;
+                double model_upload = 0.0;
+                double model_submit = 0.0;
+                double model_color_readback = 0.0;
+                double model_depth_readback = 0.0;
+
+                jpb_PCD3D11PresenterModelTiming(
+                    presenter, &model_frames, &model_upload,
+                    &model_submit, &model_color_readback,
+                    &model_depth_readback);
+                if (model_frames != 0) {
+                    jpb_PCLog(
+                        "hardware model timing frames=%u upload=%.3fms "
+                        "submit=%.3fms color_readback=%.3fms "
+                        "depth_readback=%.3fms total=%.3fms",
+                        model_frames,
+                        model_upload * 1000.0 / model_frames,
+                        model_submit * 1000.0 / model_frames,
+                        model_color_readback * 1000.0 / model_frames,
+                        model_depth_readback * 1000.0 / model_frames,
+                        (model_upload + model_submit + model_color_readback +
+                         model_depth_readback) *
+                            1000.0 / model_frames);
+                    printf(
+                        "hardware_model_timing=(frames=%u,"
+                        "upload_avg_ms=%.3f,submit_avg_ms=%.3f,"
+                        "color_readback_avg_ms=%.3f,"
+                        "depth_readback_avg_ms=%.3f,total_avg_ms=%.3f)\n",
+                        model_frames,
+                        model_upload * 1000.0 / model_frames,
+                        model_submit * 1000.0 / model_frames,
+                        model_color_readback * 1000.0 / model_frames,
+                        model_depth_readback * 1000.0 / model_frames,
+                        (model_upload + model_submit + model_color_readback +
+                         model_depth_readback) *
+                            1000.0 / model_frames);
+                }
+            }
+            {
+                unsigned title_frames = 0;
+                double title_prepare = 0.0;
+                double title_submit = 0.0;
+                double title_readback = 0.0;
+
+                jpb_PCD3D11PresenterTitleTiming(
+                    presenter, &title_frames, &title_prepare,
+                    &title_submit, &title_readback);
+                if (title_frames != 0) {
+                    jpb_PCLog(
+                        "hardware title timing frames=%u prepare=%.3fms "
+                        "submit=%.3fms readback=%.3fms total=%.3fms",
+                        title_frames,
+                        title_prepare * 1000.0 / title_frames,
+                        title_submit * 1000.0 / title_frames,
+                        title_readback * 1000.0 / title_frames,
+                        (title_prepare + title_submit + title_readback) *
+                            1000.0 / title_frames);
+                    printf(
+                        "hardware_title_timing=(frames=%u,"
+                        "prepare_avg_ms=%.3f,submit_avg_ms=%.3f,"
+                        "readback_avg_ms=%.3f,total_avg_ms=%.3f)\n",
+                        title_frames,
+                        title_prepare * 1000.0 / title_frames,
+                        title_submit * 1000.0 / title_frames,
+                        title_readback * 1000.0 / title_frames,
+                        (title_prepare + title_submit + title_readback) *
+                            1000.0 / title_frames);
+                }
+            }
+            if (runtime.profileFrameCount != 0) {
+                jpb_PCLog(
+                    "runtime phase timing frames=%u world=%.3fms "
+                    "models=%.3fms effects=%.3fms remainder=%.3fms",
+                    runtime.profileFrameCount,
+                    runtime.profileWorldSeconds * 1000.0 /
+                        runtime.profileFrameCount,
+                    runtime.profileModelsSeconds * 1000.0 /
+                        runtime.profileFrameCount,
+                    runtime.profileEffectsSeconds * 1000.0 /
+                        runtime.profileFrameCount,
+                    (render_seconds - runtime.profileWorldSeconds -
+                     runtime.profileModelsSeconds -
+                     runtime.profileEffectsSeconds) * 1000.0 /
+                        runtime.profileFrameCount);
+                printf(
+                    "runtime_phase_timing=(frames=%u,world_avg_ms=%.3f,"
+                    "models_avg_ms=%.3f,effects_avg_ms=%.3f,"
+                    "remainder_avg_ms=%.3f)\n",
+                    runtime.profileFrameCount,
+                    runtime.profileWorldSeconds * 1000.0 /
+                        runtime.profileFrameCount,
+                    runtime.profileModelsSeconds * 1000.0 /
+                        runtime.profileFrameCount,
+                    runtime.profileEffectsSeconds * 1000.0 /
+                        runtime.profileFrameCount,
+                    (render_seconds - runtime.profileWorldSeconds -
+                     runtime.profileModelsSeconds -
+                     runtime.profileEffectsSeconds) * 1000.0 /
+                        runtime.profileFrameCount);
+                printf(
+                    "runtime_effect_timing=(frames=%u,screen_poly_avg_ms=%.3f,"
+                    "depth_snapshot_avg_ms=%.3f,hud_avg_ms=%.3f,"
+                    "glow_avg_ms=%.3f,hud_replay_avg_ms=%.3f,"
+                    "composite_upload_avg_ms=%.3f,"
+                    "composite_finish_avg_ms=%.3f)\n",
+                    runtime.profileFrameCount,
+                    runtime.profileScreenPolySeconds * 1000.0 /
+                        runtime.profileFrameCount,
+                    runtime.profileDepthSnapshotSeconds * 1000.0 /
+                        runtime.profileFrameCount,
+                    runtime.profileHudSeconds * 1000.0 /
+                        runtime.profileFrameCount,
+                    runtime.profileGlowSeconds * 1000.0 /
+                        runtime.profileFrameCount,
+                    runtime.profileHudReplaySeconds * 1000.0 /
+                        runtime.profileFrameCount,
+                    runtime.profileCompositeUploadSeconds * 1000.0 /
+                        runtime.profileFrameCount,
+                    runtime.profileCompositeFinishSeconds * 1000.0 /
+                        runtime.profileFrameCount);
+            }
+            if (result == JPB_GAME_RUNTIME_OK &&
+                output_path != NULL && !title_active &&
+                !jpb_PCD3D11PresenterReadbackGameplay(
+                    presenter, &framebuffer)) {
+                result = JPB_GAME_RUNTIME_RENDER_FAILED;
+            }
+            presentation_error =
+                jpb_PCD3D11PresenterLastError(presenter);
+            jpb_GameRuntimeSetLevelRenderHook(&runtime, NULL, NULL);
+            jpb_GameRuntimeSetModelRenderHooks(
+                &runtime, NULL, NULL, NULL, NULL);
+            jpb_GameRuntimeSetScreenPolyRenderHooks(
+                &runtime, NULL, NULL, NULL, NULL);
+            jpb_GameRuntimeSetTitleScreenDrawRenderHook(
+                &runtime, NULL, NULL);
+            jpb_GameRuntimeSetGameplayCompositeHook(
+                &runtime, NULL, NULL);
+            if (frame_timer != NULL) {
+                CloseHandle(frame_timer);
+                frame_timer = NULL;
+            }
+            jpb_PCD3D11PresenterDestroy(presenter);
+        }
+        if (IsWindow(window)) {
+            DestroyWindow(window);
         }
     }
     if (overlay_mode_override >= 0) {
@@ -10411,20 +10793,24 @@ int main(int argc, char **argv)
     }
     if (result == JPB_GAME_RUNTIME_OK &&
         input.validatePresentationHandoff &&
-        (title_active || gameplay_handoff_count != 1 ||
+        (!presentation_hardware || title_active ||
+         gameplay_handoff_count != 1 ||
          presentation_frame_count != (unsigned)frame_count)) {
         fprintf(
             stderr,
             "interactive presentation handoff validation failed "
-            "(title=%d handoffs=%u presents=%u/%d hidden=%d)\n",
+            "(hardware=%d title=%d handoffs=%u presents=%u/%d "
+            "hidden=%d)\n",
+            presentation_hardware,
             title_active,
             gameplay_handoff_count,
             presentation_frame_count,
             frame_count,
             input.hiddenWindow);
         jpb_PCLog(
-            "presentation handoff validation failed title=%d "
-            "handoffs=%u presents=%u/%d hidden=%d",
+            "presentation handoff validation failed hardware=%d "
+            "title=%d handoffs=%u presents=%u/%d hidden=%d",
+            presentation_hardware,
             title_active,
             gameplay_handoff_count,
             presentation_frame_count,
@@ -12712,6 +13098,14 @@ int main(int argc, char **argv)
         input.hiddenWindow,
         input.scriptedInput);
     printf(
+        "presentation_backend=(hardware=%d,name=%s,last_hresult=0x%08lx,"
+        "source=%dx%d)\n",
+        presentation_hardware,
+        presentation_backend,
+        (unsigned long)presentation_error,
+        framebuffer.width,
+        framebuffer.height);
+    printf(
         "audio_handoff=(active=%d,generations=%u,output=%d)\n",
         audio != NULL,
         audio_generation_count,
@@ -13179,6 +13573,113 @@ int main(int argc, char **argv)
         (unsigned)runtime.enemyReactionMotionFrameCount,
         (unsigned)runtime.enemyRecoilReactionCount,
         runtime.lastEnemyRecoil);
+    printf(
+        "player_pose_heading=(physics=%d,%d,%d,scene=%d,%d,%d,"
+        "face=%d,%d,%d,root_joint=%d,%d,%d,"
+        "motion=%d,ai=%d,waypoint=%d,destination=%d,%d,%d)\n",
+        runtime.physics->angle.vx,
+        runtime.physics->angle.vy,
+        runtime.physics->angle.vz,
+        runtime.actorScene->v3WorldAngle.vx,
+        runtime.actorScene->v3WorldAngle.vy,
+        runtime.actorScene->v3WorldAngle.vz,
+        runtime.physics->face.vx,
+        runtime.physics->face.vy,
+        runtime.physics->face.vz,
+        runtime.actorModel.pRootNode != NULL
+            ? runtime.actorModel.pRootNode->v3CurrentRotation.vx
+            : 0,
+        runtime.actorModel.pRootNode != NULL
+            ? runtime.actorModel.pRootNode->v3CurrentRotation.vy
+            : 0,
+        runtime.actorModel.pRootNode != NULL
+            ? runtime.actorModel.pRootNode->v3CurrentRotation.vz
+            : 0,
+        (int)runtime.player->currentMotion,
+        runtime.player->pEnemy != NULL
+            ? (int)runtime.player->pEnemy->aiNum
+            : -1,
+        runtime.player->pEnemy != NULL
+            ? runtime.player->pEnemy->lastWayPoint
+            : -1,
+        runtime.player->pEnemy != NULL
+            ? runtime.player->pEnemy->destination.vx
+            : 0,
+        runtime.player->pEnemy != NULL
+            ? runtime.player->pEnemy->destination.vy
+            : 0,
+        runtime.player->pEnemy != NULL
+            ? runtime.player->pEnemy->destination.vz
+            : 0);
+    printf(
+        "player_anim_transition=(motion=%d,previous=%d,sequence=%d,"
+        "frame=%d,tween=%u,left=%u,lock=%u,flags=%08x,"
+        "joint0=%d,%d,%d,joint1=%d,%d,%d,"
+        "model_root_id=%d,model_root_rotation=%d,%d,%d,"
+        "idle=twin:%u/twout:%u/cutin:%u/cutout:%u/disp:%u/lock:%u)\n",
+        (int)runtime.player->currentMotion,
+        (int)runtime.player->previousMotion,
+        runtime.animation != NULL &&
+                runtime.animation->pMotion != NULL
+            ? (int)runtime.animation->pMotion->Seq
+            : -1,
+        runtime.animation != NULL
+            ? runtime.animation->animFrameIndex
+            : 0,
+        runtime.animation != NULL
+            ? (unsigned)runtime.animation->tweenLevel
+            : 0u,
+        runtime.animation != NULL
+            ? (unsigned)runtime.animation->tweenFramesLeft
+            : 0u,
+        runtime.animation != NULL
+            ? (unsigned)runtime.animation->Lock
+            : 0u,
+        runtime.animation != NULL
+            ? (unsigned)runtime.animation->animFlags
+            : 0u,
+        runtime.authoredFrameReady
+            ? runtime.animation->pCurrentAnimFrame
+                  ->av3JointAngle[0].vx
+            : 0,
+        runtime.authoredFrameReady
+            ? runtime.animation->pCurrentAnimFrame
+                  ->av3JointAngle[0].vy
+            : 0,
+        runtime.authoredFrameReady
+            ? runtime.animation->pCurrentAnimFrame
+                  ->av3JointAngle[0].vz
+            : 0,
+        runtime.authoredFrameReady
+            ? runtime.animation->pCurrentAnimFrame
+                  ->av3JointAngle[1].vx
+            : 0,
+        runtime.authoredFrameReady
+            ? runtime.animation->pCurrentAnimFrame
+                  ->av3JointAngle[1].vy
+            : 0,
+        runtime.authoredFrameReady
+            ? runtime.animation->pCurrentAnimFrame
+                  ->av3JointAngle[1].vz
+            : 0,
+        runtime.actorModel.pRootNode != NULL
+            ? runtime.actorModel.pRootNode->id
+            : -1,
+        runtime.actorModel.pRootNode != NULL
+            ? runtime.actorModel.pRootNode->v3CurrentRotation.vx
+            : 0,
+        runtime.actorModel.pRootNode != NULL
+            ? runtime.actorModel.pRootNode->v3CurrentRotation.vy
+            : 0,
+        runtime.actorModel.pRootNode != NULL
+            ? runtime.actorModel.pRootNode->v3CurrentRotation.vz
+            : 0,
+        (unsigned)runtime.player->paMotions[0].twin,
+        (unsigned)runtime.player->paMotions[0].twout,
+        (unsigned)runtime.player->paMotions[0].cutin,
+        (unsigned)runtime.player->paMotions[0].cutout,
+        (unsigned)runtime.player->paMotions[0].disp,
+        (unsigned)runtime.player->paMotions[0].Lock);
     pc_print_screen_draw_trace(&runtime);
     pc_print_screen_poly_trace(&runtime);
     pc_print_text_draw_trace(&runtime);

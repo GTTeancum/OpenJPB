@@ -86,14 +86,24 @@ int main(int argc, char **argv)
     size_t raw_frame_count = 0;
     size_t compressed_frame_count = 0;
     size_t sequence_index;
+    long dump_sequence = -1;
 
-    if (argc != 5) {
+    if (argc != 5 && argc != 6) {
         fprintf(
             stderr,
             "usage: %s animation.cad huffman.tab "
-            "huffman.val huffman.opt\n",
+            "huffman.val huffman.opt [sequence]\n",
             argv[0]);
         return 2;
+    }
+    if (argc == 6) {
+        char *end = NULL;
+
+        dump_sequence = strtol(argv[5], &end, 0);
+        if (end == argv[5] || *end != '\0' || dump_sequence < 0) {
+            fprintf(stderr, "invalid sequence: %s\n", argv[5]);
+            return 2;
+        }
     }
     huffman_result = jpb_HuffmanLoadFiles(
         argv[2], argv[3], argv[4], &tables);
@@ -214,6 +224,19 @@ int main(int argc, char **argv)
                 ->v3RootTranslation,
             (size_t)vector_count * 4);
         ++raw_frame_count;
+        if ((long)sequence_index == dump_sequence) {
+            printf(
+                "sequence=%zu frame=%d root=(%d,%d,%d) "
+                "joint0=(%d,%d,%d)\n",
+                sequence_index,
+                sequence->Fframe,
+                decoded_frame->v3RootTranslation.vx,
+                decoded_frame->v3RootTranslation.vy,
+                decoded_frame->v3RootTranslation.vz,
+                decoded_frame->av3JointAngle[0].vx,
+                decoded_frame->av3JointAngle[0].vy,
+                decoded_frame->av3JointAngle[0].vz);
+        }
 
         for (frame_index = sequence->Fframe + 1;
              frame_index < sequence->Lframe;
@@ -248,6 +271,19 @@ int main(int argc, char **argv)
                     ->v3RootTranslation,
                 (size_t)vector_count * 4);
             ++compressed_frame_count;
+            if ((long)sequence_index == dump_sequence) {
+                printf(
+                    "sequence=%zu frame=%d root=(%d,%d,%d) "
+                    "joint0=(%d,%d,%d)\n",
+                    sequence_index,
+                    frame_index,
+                    decoded_frame->v3RootTranslation.vx,
+                    decoded_frame->v3RootTranslation.vy,
+                    decoded_frame->v3RootTranslation.vz,
+                    decoded_frame->av3JointAngle[0].vx,
+                    decoded_frame->av3JointAngle[0].vy,
+                    decoded_frame->av3JointAngle[0].vz);
+            }
         }
         if (animation.animFrameIndex !=
             (int32_t)sequence->Lframe * JPB_FIXED_ONE) {

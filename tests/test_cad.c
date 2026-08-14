@@ -606,6 +606,57 @@ static int test_animation_tween_publication(void)
     return 0;
 }
 
+static int test_animation_tween_uses_12_bit_joint_deltas(void)
+{
+    _optab table[256];
+    uint16_t values[1] = {0};
+    uint32_t tree[1] = {0};
+    uint32_t words[8] = {0};
+    int bit_cursor = 0;
+    animObject animation;
+    animListNode current_sequence;
+    _animTemplate sequence;
+    Motion motion;
+    _animFrame *frame;
+
+    append_lsb_bits(words, &bit_cursor, 0, 1);
+    append_lsb_bits(words, &bit_cursor, 0, 11);
+    append_lsb_bits(words, &bit_cursor, 0, 11);
+    append_lsb_bits(words, &bit_cursor, 0, 11);
+    append_lsb_bits(words, &bit_cursor, 0, 1);
+    append_lsb_bits(words, &bit_cursor, 147, 11);
+    append_lsb_bits(words, &bit_cursor, 1860, 11);
+    append_lsb_bits(words, &bit_cursor, 2019, 11);
+    memset(table, 0, sizeof(table));
+    unpack_init(table, values, tree, 1);
+
+    memset(&animation, 0, sizeof(animation));
+    memset(&current_sequence, 0, sizeof(current_sequence));
+    memset(&sequence, 0, sizeof(sequence));
+    memset(&motion, 0, sizeof(motion));
+    sequence.Lframe = 3;
+    sequence.parts = 1;
+    current_sequence.pAnimTemplate = &sequence;
+    current_sequence.pMotion = &motion;
+    animation.pCurrentAnimSeq = &current_sequence;
+    animation.pMotion = &motion;
+    animation.pCurrentAnimFrame = &animation.AnimFrameBuffer[0];
+    animation.pPreviousAnimFrame = &animation.AnimFrameBuffer[0];
+    animation.depack_context.huffdataorigin = words;
+    animation.tweenLevel = 2;
+    animation.AnimFrameBuffer[0].av3JointAngle[0].vx = 3832;
+    animation.AnimFrameBuffer[0].av3JointAngle[0].vy = 3568;
+    animation.AnimFrameBuffer[0].av3JointAngle[0].vz = 190;
+
+    CHECK(jpb_AnimCreateTweenFrameState(
+              &animation, &frame) == JPB_ANIM_PARTIAL_OK);
+    CHECK(frame == &animation.tweenAnimFrame);
+    CHECK(frame->av3JointAngle[0].vx == 4111);
+    CHECK(frame->av3JointAngle[0].vy == 3644);
+    CHECK(frame->av3JointAngle[0].vz == 66);
+    return 0;
+}
+
 static int test_invalid_cad_rejected(void)
 {
     AlignedCadBuffer storage;
@@ -652,6 +703,7 @@ int main(void)
     CHECK(test_huffman_table_validation() == 0);
     CHECK(test_animation_frame_accumulation() == 0);
     CHECK(test_animation_tween_publication() == 0);
+    CHECK(test_animation_tween_uses_12_bit_joint_deltas() == 0);
     CHECK(test_invalid_cad_rejected() == 0);
     puts("CAD tests passed");
     return 0;

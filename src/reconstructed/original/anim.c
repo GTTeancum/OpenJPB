@@ -889,6 +889,20 @@ static int16_t anim_tween_delta(
     return (int16_t)anim_arithmetic_shift12(product);
 }
 
+static int16_t anim_tween_angle_delta12(
+    int16_t destination, int16_t source, int32_t fraction)
+{
+    int16_t wrapped_difference = anim_wrap_signed_bits(
+        (int32_t)destination - (int32_t)source, 12);
+    int32_t product =
+        (int32_t)wrapped_difference * fraction;
+
+    if (product < 0) {
+        product += JPB_FIXED_ONE - 1;
+    }
+    return (int16_t)anim_arithmetic_shift12(product);
+}
+
 static int16_t anim_add_tween_delta(
     int16_t value, int16_t delta)
 {
@@ -987,9 +1001,20 @@ static int anim_CreateTweenFrame(animObject *animation)
         _svector *delta = &animation->tweenDeltaRotFrame[part];
         _svector *pose = &animation->tweenAnimFrame.av3JointAngle[part];
 
-        delta->vx = anim_tween_delta(to->vx, from->vx, fraction);
-        delta->vy = anim_tween_delta(to->vy, from->vy, fraction);
-        delta->vz = anim_tween_delta(to->vz, from->vz, fraction);
+        /*
+         * Exact anim_CreateTweenFrame joint loop at matched-PC RVAs
+         * 0x17BB0..0x17BF9. The renderer consumes 12-bit rotations, so the
+         * retail code sign-extends each destination-source difference from
+         * 12 bits before scaling. Keeping the root-translation path above
+         * at 16 bits is intentional and matches its separate instruction
+         * sequence at 0x17A5A..0x17AFB.
+         */
+        delta->vx = anim_tween_angle_delta12(
+            to->vx, from->vx, fraction);
+        delta->vy = anim_tween_angle_delta12(
+            to->vy, from->vy, fraction);
+        delta->vz = anim_tween_angle_delta12(
+            to->vz, from->vz, fraction);
         pose->vx = anim_add_tween_delta(from->vx, delta->vx);
         pose->vy = anim_add_tween_delta(from->vy, delta->vy);
         pose->vz = anim_add_tween_delta(from->vz, delta->vz);

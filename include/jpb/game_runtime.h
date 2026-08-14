@@ -50,6 +50,26 @@ typedef struct JPBGameRuntimeTextureCache
 typedef struct JPBGameRuntimeEnemyState
     JPBGameRuntimeEnemyState;
 
+typedef int (*JPBGameRuntimeLevelRenderHook)(
+    void *user_data,
+    const JPBSoftwareLevelMesh *mesh,
+    const JPBSoftwareJpxScene *world_scene,
+    MATRIX *view_matrix,
+    JPBSoftwareFramebuffer *framebuffer,
+    uint32_t clear_color,
+    JPBSoftwareTextureResolver resolve_texture,
+    void *texture_user_data,
+    JPBSoftwareDepthBuffer *depth_buffer,
+    JPBSoftwareRenderStats *stats);
+typedef int (*JPBGameRuntimeModelRenderBeginHook)(
+    void *user_data,
+    JPBSoftwareFramebuffer *framebuffer,
+    JPBSoftwareDepthBuffer *depth_buffer);
+typedef int (*JPBGameRuntimeModelRenderEndHook)(
+    void *user_data,
+    JPBSoftwareFramebuffer *framebuffer,
+    JPBSoftwareDepthBuffer *depth_buffer);
+
 typedef struct JPBGameRuntimeScreenDraw {
     uint32_t order;
     _Material *texture;
@@ -62,6 +82,12 @@ typedef struct JPBGameRuntimeScreenDraw {
     int hasSource;
     int isPlayerHudTile;
 } JPBGameRuntimeScreenDraw;
+
+typedef int (*JPBGameRuntimeScreenDrawRenderHook)(
+    void *user_data,
+    const JPBGameRuntimeScreenDraw *draws,
+    size_t draw_count,
+    JPBSoftwareFramebuffer *framebuffer);
 
 typedef struct JPBGameRuntimeScreenPolyDraw {
     _Material *texture;
@@ -78,6 +104,21 @@ typedef struct JPBGameRuntimeGlowDraw {
     int32_t radius;
     uint32_t color;
 } JPBGameRuntimeGlowDraw;
+
+enum JPBGameRuntimeGameplayCompositeStage {
+    JPB_GAMEPLAY_COMPOSITE_HUD_BLACK = 0,
+    JPB_GAMEPLAY_COMPOSITE_HUD_WHITE = 1,
+    JPB_GAMEPLAY_COMPOSITE_FINISH = 2
+};
+
+typedef int (*JPBGameRuntimeGameplayCompositeHook)(
+    void *user_data,
+    enum JPBGameRuntimeGameplayCompositeStage stage,
+    const JPBSoftwareFramebuffer *framebuffer,
+    const JPBGameRuntimeGlowDraw *glow_draws,
+    size_t glow_draw_count,
+    MATRIX *view_matrix,
+    JPBSoftwareRenderStats *stats);
 
 typedef struct JPBGameRuntimeTextDraw {
     uint32_t order;
@@ -181,6 +222,31 @@ typedef struct JPBGameRuntime {
     JPBBmdView enemyBmdView;
     JPBSoftwareJpxScene scene;
     const JPBSoftwareLevelMesh *levelRenderMesh;
+    JPBGameRuntimeLevelRenderHook levelRenderHook;
+    void *levelRenderUserData;
+    JPBGameRuntimeModelRenderBeginHook modelRenderBeginHook;
+    JPBGameRuntimeModelRenderEndHook modelRenderEndHook;
+    JPBSoftwareTriangleSink modelTriangleSink;
+    void *modelRenderUserData;
+    JPBGameRuntimeModelRenderBeginHook screenPolyRenderBeginHook;
+    JPBGameRuntimeModelRenderEndHook screenPolyRenderEndHook;
+    JPBSoftwareTriangleSink screenPolyTriangleSink;
+    void *screenPolyRenderUserData;
+    JPBGameRuntimeScreenDrawRenderHook titleScreenDrawRenderHook;
+    void *titleScreenDrawRenderUserData;
+    JPBGameRuntimeGameplayCompositeHook gameplayCompositeHook;
+    void *gameplayCompositeUserData;
+    double profileWorldSeconds;
+    double profileModelsSeconds;
+    double profileEffectsSeconds;
+    double profileScreenPolySeconds;
+    double profileDepthSnapshotSeconds;
+    double profileHudSeconds;
+    double profileGlowSeconds;
+    double profileHudReplaySeconds;
+    double profileCompositeUploadSeconds;
+    double profileCompositeFinishSeconds;
+    uint32_t profileFrameCount;
     objectRoot actorRoot;
     sceneObject *actorScene;
     modelObject actorModel;
@@ -407,6 +473,34 @@ size_t jpb_GameRuntimeSecondPlayerRenderedPixels(
 void jpb_GameRuntimeSetLevelRenderMesh(
     JPBGameRuntime *runtime,
     const JPBSoftwareLevelMesh *mesh);
+void jpb_GameRuntimeSetLevelRenderHook(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeLevelRenderHook hook,
+    void *user_data);
+void jpb_GameRuntimeSetModelRenderHooks(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeModelRenderBeginHook begin_hook,
+    JPBSoftwareTriangleSink triangle_sink,
+    JPBGameRuntimeModelRenderEndHook end_hook,
+    void *user_data);
+void jpb_GameRuntimeSetScreenPolyRenderHooks(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeModelRenderBeginHook begin_hook,
+    JPBSoftwareTriangleSink triangle_sink,
+    JPBGameRuntimeModelRenderEndHook end_hook,
+    void *user_data);
+void jpb_GameRuntimeSetTitleScreenDrawRenderHook(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeScreenDrawRenderHook hook,
+    void *user_data);
+void jpb_GameRuntimeSetGameplayCompositeHook(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeGameplayCompositeHook hook,
+    void *user_data);
+int jpb_GameRuntimeResolveLevelTexture(
+    JPBGameRuntime *runtime,
+    const char *texture_name,
+    JPBSoftwareTexture *texture);
 void jpb_GameRuntimeShutdown(JPBGameRuntime *runtime);
 int jpb_GameRuntimeFrame(
     JPBGameRuntime *runtime,

@@ -53,6 +53,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+static double game_runtime_wall_seconds(void)
+{
+    struct timespec now;
+
+    timespec_get(&now, TIME_UTC);
+    return (double)now.tv_sec + (double)now.tv_nsec / 1000000000.0;
+}
 
 enum {
     JPB_GAME_RUNTIME_PATH_CAPACITY = 1024,
@@ -4852,6 +4861,80 @@ void jpb_GameRuntimeSetLevelRenderMesh(
     }
 }
 
+void jpb_GameRuntimeSetLevelRenderHook(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeLevelRenderHook hook,
+    void *user_data)
+{
+    if (runtime != NULL) {
+        runtime->levelRenderHook = hook;
+        runtime->levelRenderUserData = user_data;
+    }
+}
+
+void jpb_GameRuntimeSetModelRenderHooks(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeModelRenderBeginHook begin_hook,
+    JPBSoftwareTriangleSink triangle_sink,
+    JPBGameRuntimeModelRenderEndHook end_hook,
+    void *user_data)
+{
+    if (runtime != NULL) {
+        runtime->modelRenderBeginHook = begin_hook;
+        runtime->modelTriangleSink = triangle_sink;
+        runtime->modelRenderEndHook = end_hook;
+        runtime->modelRenderUserData = user_data;
+    }
+}
+
+void jpb_GameRuntimeSetScreenPolyRenderHooks(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeModelRenderBeginHook begin_hook,
+    JPBSoftwareTriangleSink triangle_sink,
+    JPBGameRuntimeModelRenderEndHook end_hook,
+    void *user_data)
+{
+    if (runtime != NULL) {
+        runtime->screenPolyRenderBeginHook = begin_hook;
+        runtime->screenPolyTriangleSink = triangle_sink;
+        runtime->screenPolyRenderEndHook = end_hook;
+        runtime->screenPolyRenderUserData = user_data;
+    }
+}
+
+void jpb_GameRuntimeSetTitleScreenDrawRenderHook(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeScreenDrawRenderHook hook,
+    void *user_data)
+{
+    if (runtime != NULL) {
+        runtime->titleScreenDrawRenderHook = hook;
+        runtime->titleScreenDrawRenderUserData = user_data;
+    }
+}
+
+void jpb_GameRuntimeSetGameplayCompositeHook(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeGameplayCompositeHook hook,
+    void *user_data)
+{
+    if (runtime != NULL) {
+        runtime->gameplayCompositeHook = hook;
+        runtime->gameplayCompositeUserData = user_data;
+    }
+}
+
+int jpb_GameRuntimeResolveLevelTexture(
+    JPBGameRuntime *runtime,
+    const char *texture_name,
+    JPBSoftwareTexture *texture)
+{
+    return runtime != NULL
+        ? game_runtime_resolve_texture(
+              runtime->worldTextureCache, texture_name, texture)
+        : 0;
+}
+
 static int game_runtime_update_enemy_actor(
     JPBGameRuntimeEnemyActor *actor,
     JPBEnemyOpcodeParseResult opcode_result,
@@ -4918,7 +5001,8 @@ static void game_runtime_capture_screen_poly(
         draw->texture = material;
         draw->vertexCount = vertex_count;
         draw->noScale = no_scale;
-        draw->deferred = !context->sharedDepthReady;
+        draw->deferred = !context->sharedDepthReady ||
+            runtime->modelRenderBeginHook != NULL;
         if (copy_count > 0 && vertices != NULL) {
             memcpy(
                 draw->vertices,
@@ -4938,7 +5022,8 @@ static void game_runtime_capture_screen_poly(
         ++runtime->screenPolyDroppedCount;
     }
     ++runtime->screenPolyDrawCount;
-    if (!context->sharedDepthReady) {
+    if (!context->sharedDepthReady ||
+        runtime->modelRenderBeginHook != NULL) {
         return;
     }
     pixels_before = context->stats != NULL
@@ -4984,6 +5069,13 @@ static void game_runtime_flush_deferred_screen_polys(
         return;
     }
     runtime = context->runtime;
+    if (runtime->screenPolyRenderBeginHook != NULL &&
+        !runtime->screenPolyRenderBeginHook(
+            runtime->screenPolyRenderUserData,
+            context->framebuffer, &context->depthBuffer)) {
+        context->result = JPB_GAME_RUNTIME_RENDER_FAILED;
+        return;
+    }
     for (draw_index = 0;
          draw_index < runtime->screenPolyDrawCount &&
          draw_index < JPB_GAME_RUNTIME_SCREEN_POLY_CAPACITY;
@@ -5004,14 +5096,25 @@ static void game_runtime_flush_deferred_screen_polys(
         is_water = draw->texture != NULL &&
             game_runtime_path_stem_equals(
                 draw->texture->filename, "a_water");
-        result = jpb_SoftwareDrawScreenPoly(
-            draw->texture,
-            draw->vertexCount,
-            draw->vertices,
-            draw->noScale,
-            context->framebuffer,
-            &context->depthBuffer,
-            context->stats);
+        result = runtime->screenPolyTriangleSink != NULL
+            ? jpb_SoftwareDrawScreenPolyToSink(
+                  draw->texture,
+                  draw->vertexCount,
+                  draw->vertices,
+                  draw->noScale,
+                  context->framebuffer,
+                  &context->depthBuffer,
+                  runtime->screenPolyTriangleSink,
+                  runtime->screenPolyRenderUserData,
+                  context->stats)
+            : jpb_SoftwareDrawScreenPoly(
+                  draw->texture,
+                  draw->vertexCount,
+                  draw->vertices,
+                  draw->noScale,
+                  context->framebuffer,
+                  &context->depthBuffer,
+                  context->stats);
         if (result != JPB_SOFTWARE_RENDER_OK) {
             context->result = JPB_GAME_RUNTIME_RENDER_FAILED;
             return;
@@ -5027,6 +5130,12 @@ static void game_runtime_flush_deferred_screen_polys(
             ++runtime->waterPolyDrawCount;
             runtime->waterPolyCompositePixelCount += pixels_added;
         }
+    }
+    if (runtime->screenPolyRenderEndHook != NULL &&
+        !runtime->screenPolyRenderEndHook(
+            runtime->screenPolyRenderUserData,
+            context->framebuffer, &context->depthBuffer)) {
+        context->result = JPB_GAME_RUNTIME_RENDER_FAILED;
     }
 }
 
@@ -5111,6 +5220,7 @@ static void game_runtime_scene_after_world(
     JPBGameRuntimeFrameContext *context =
         game_runtime_active_frame;
     uint32_t clear_color;
+    double started;
 
     if (context == NULL || context->runtime != runtime ||
         context->result != JPB_GAME_RUNTIME_OK) {
@@ -5132,6 +5242,7 @@ static void game_runtime_scene_after_world(
           ((uint32_t)runtime->world->bkColor.g << 8) |
           (uint32_t)runtime->world->bkColor.b
         : 0;
+    started = game_runtime_wall_seconds();
     if (!game_runtime_prepare_depth_buffer(
             runtime,
             context->framebuffer,
@@ -5140,7 +5251,20 @@ static void game_runtime_scene_after_world(
         return;
     }
     context->result =
-        (runtime->levelRenderMesh != NULL
+        (runtime->levelRenderMesh != NULL &&
+                 runtime->levelRenderHook != NULL
+             ? runtime->levelRenderHook(
+                   runtime->levelRenderUserData,
+                   runtime->levelRenderMesh,
+                   &runtime->scene,
+                   view,
+                   context->framebuffer,
+                   clear_color,
+                   game_runtime_resolve_texture,
+                   runtime->worldTextureCache,
+                   &context->depthBuffer,
+                   context->stats)
+             : runtime->levelRenderMesh != NULL
              ? jpb_SoftwareRenderLevelMesh(
                    runtime->levelRenderMesh,
                    &runtime->scene,
@@ -5164,6 +5288,8 @@ static void game_runtime_scene_after_world(
             : JPB_GAME_RUNTIME_RENDER_FAILED;
     context->sharedDepthReady =
         context->result == JPB_GAME_RUNTIME_OK;
+    runtime->profileWorldSeconds +=
+        game_runtime_wall_seconds() - started;
     if (context->sharedDepthReady) {
         runtime->worldLoadedTextures =
             runtime->worldTextureCache->loadedTextureCount;
@@ -5184,7 +5310,16 @@ static int game_runtime_scene_render_model(
     JPBGameRuntimeTextureCache *texture_cache)
 {
     JPBGameRuntime *runtime = context->runtime;
-    int result = context->sharedDepthReady
+    int result = context->sharedDepthReady &&
+            runtime->modelTriangleSink != NULL
+        ? jpb_SoftwareRenderBmdMaterializedWithDepthToSink(
+            view, model, key_frame, position, yaw,
+            scene_GetSceneMatrix(), &runtime->scene,
+            context->framebuffer, game_runtime_resolve_texture,
+            texture_cache, &context->depthBuffer,
+            runtime->modelTriangleSink,
+            runtime->modelRenderUserData, context->stats)
+        : context->sharedDepthReady
         ? jpb_SoftwareRenderBmdMaterializedWithDepth(
             view,
             model,
@@ -5220,10 +5355,19 @@ static void game_runtime_scene_after_models(
     JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
     JPBGameRuntimeFrameContext *context =
         game_runtime_active_frame;
+    double started;
 
     (void)view;
     if (context == NULL || context->runtime != runtime ||
         context->result != JPB_GAME_RUNTIME_OK) {
+        return;
+    }
+    started = game_runtime_wall_seconds();
+    if (runtime->modelRenderBeginHook != NULL &&
+        !runtime->modelRenderBeginHook(
+            runtime->modelRenderUserData,
+            context->framebuffer, &context->depthBuffer)) {
+        context->result = JPB_GAME_RUNTIME_RENDER_FAILED;
         return;
     }
     if (runtime->actorModel.pRootNode != NULL) {
@@ -5360,6 +5504,15 @@ static void game_runtime_scene_after_models(
                     : 0;
         }
     }
+    if (runtime->modelRenderEndHook != NULL &&
+        !runtime->modelRenderEndHook(
+            runtime->modelRenderUserData,
+            context->framebuffer, &context->depthBuffer)) {
+        context->result = JPB_GAME_RUNTIME_RENDER_FAILED;
+        return;
+    }
+    runtime->profileModelsSeconds +=
+        game_runtime_wall_seconds() - started;
 }
 
 static void game_runtime_scene_before_player_process(
@@ -5537,6 +5690,7 @@ int jpb_GameRuntimeFrame(
     JPBGameRuntimeFrameContext context;
     int animation_index;
     int enemy_frame_processed;
+    double effects_started;
 
     if (runtime == NULL || framebuffer == NULL) {
         return JPB_GAME_RUNTIME_INVALID_ARGUMENT;
@@ -5621,12 +5775,13 @@ int jpb_GameRuntimeFrame(
         runtime->orbitDistance = runtime->maximumOrbitDistance;
     }
     /*
-     * Reference timing expresses movement as a 30 Hz scale: 1/60 s maps to
-     * the matched executable's initial fGlobalFrameRate of 0.5.
+     * The matched executable initializes these gameplay scales to 0.5 and
+     * 0x800 and never writes them again. Wall-clock deltaTime remains live
+     * for the PC front end, while gameplay advances at its authored 60 Hz
+     * fixed step.
      */
-    fGlobalFrameRate = elapsed_seconds * 30.0f;
-    gGlobalFrameRate =
-        (int)(fGlobalFrameRate * (float)JPB_FIXED_ONE);
+    fGlobalFrameRate = 0.5f;
+    gGlobalFrameRate = 0x800;
     if (runtime->authoredMotionReady && player1InputType == 0) {
         /*
          * Keyboard input has no analog provider, so derive its camera-relative
@@ -5691,6 +5846,7 @@ int jpb_GameRuntimeFrame(
     if (context.result != JPB_GAME_RUNTIME_OK) {
         return context.result;
     }
+    ++runtime->profileFrameCount;
     /*
      * Exact game_ProcessStatus ordering: scene/input processing completes,
      * then each live world player conforms its authored model nodes.
@@ -5791,11 +5947,16 @@ int jpb_GameRuntimeFrame(
         }
         runtime->powerupCollectedCount = collected_count;
     }
+    effects_started = game_runtime_wall_seconds();
     game_runtime_flush_deferred_screen_polys(&context);
+    runtime->profileScreenPolySeconds +=
+        game_runtime_wall_seconds() - effects_started;
     if (context.result != JPB_GAME_RUNTIME_OK) {
         return context.result;
     }
-    if (context.sharedDepthReady) {
+    if (context.sharedDepthReady &&
+        runtime->gameplayCompositeHook == NULL) {
+        double snapshot_started = game_runtime_wall_seconds();
         /*
          * PDB fx_screenGlow emits depth-tested immediate quads. Capture the
          * occluder surface after world, actors, enemies, and deferred
@@ -5809,15 +5970,113 @@ int jpb_GameRuntimeFrame(
         if (!context.glowDepthReady) {
             return JPB_GAME_RUNTIME_RENDER_FAILED;
         }
+        runtime->profileDepthSnapshotSeconds +=
+            game_runtime_wall_seconds() - snapshot_started;
     }
     enemy_CheckTeleport();
-    game_runtime_flush_ordered_title_draws(runtime, framebuffer);
-    game_runtime_flush_glow_draws(
-        runtime,
-        view,
-        framebuffer,
-        context.glowDepthReady ? &context.glowDepthBuffer : NULL,
-        stats);
+    {
+        double hud_started = game_runtime_wall_seconds();
+
+        game_runtime_flush_ordered_title_draws(runtime, framebuffer);
+        runtime->profileHudSeconds +=
+            game_runtime_wall_seconds() - hud_started;
+    }
+    if (runtime->gameplayCompositeHook != NULL) {
+        size_t saved_screen_pixels =
+            runtime->screenDrawCompositePixelCount;
+        size_t saved_player_hud_pixels =
+            runtime->playerHudTileCompositePixelCount;
+        size_t saved_text_pixels =
+            runtime->textDrawCompositePixelCount;
+        size_t saved_alpha_pixels =
+            runtime->screenDrawTextureAlphaModulatedPixelCount;
+        size_t saved_item_alpha_pixels =
+            runtime->itemHudTextureAlphaModulatedPixelCount;
+        size_t saved_credit_alpha_pixels =
+            runtime->creditHudTextureAlphaModulatedPixelCount;
+        size_t saved_rescue_alpha_pixels =
+            runtime->rescueHudTextureAlphaModulatedPixelCount;
+        size_t saved_text_draw_pixels[
+            JPB_GAME_RUNTIME_TEXT_DRAW_CAPACITY];
+        size_t draw_index;
+        double stage_started;
+
+        for (draw_index = 0;
+             draw_index < runtime->textDrawCount;
+             ++draw_index) {
+            saved_text_draw_pixels[draw_index] =
+                runtime->textDraws[draw_index].compositePixels;
+        }
+        stage_started = game_runtime_wall_seconds();
+        if (!runtime->gameplayCompositeHook(
+                runtime->gameplayCompositeUserData,
+                JPB_GAMEPLAY_COMPOSITE_HUD_BLACK,
+                framebuffer, runtime->glowDraws,
+                runtime->glowDrawCount, view, stats)) {
+            return JPB_GAME_RUNTIME_RENDER_FAILED;
+        }
+        runtime->profileCompositeUploadSeconds +=
+            game_runtime_wall_seconds() - stage_started;
+        stage_started = game_runtime_wall_seconds();
+        game_runtime_clear_framebuffer(
+            framebuffer, UINT32_C(0x00ffffff));
+        game_runtime_flush_ordered_title_draws(runtime, framebuffer);
+        runtime->profileHudReplaySeconds +=
+            game_runtime_wall_seconds() - stage_started;
+        stage_started = game_runtime_wall_seconds();
+        if (!runtime->gameplayCompositeHook(
+                runtime->gameplayCompositeUserData,
+                JPB_GAMEPLAY_COMPOSITE_HUD_WHITE,
+                framebuffer, runtime->glowDraws,
+                runtime->glowDrawCount, view, stats)) {
+            return JPB_GAME_RUNTIME_RENDER_FAILED;
+        }
+        runtime->profileCompositeUploadSeconds +=
+            game_runtime_wall_seconds() - stage_started;
+        runtime->screenDrawCompositePixelCount = saved_screen_pixels;
+        runtime->playerHudTileCompositePixelCount =
+            saved_player_hud_pixels;
+        runtime->textDrawCompositePixelCount = saved_text_pixels;
+        runtime->screenDrawTextureAlphaModulatedPixelCount =
+            saved_alpha_pixels;
+        runtime->itemHudTextureAlphaModulatedPixelCount =
+            saved_item_alpha_pixels;
+        runtime->creditHudTextureAlphaModulatedPixelCount =
+            saved_credit_alpha_pixels;
+        runtime->rescueHudTextureAlphaModulatedPixelCount =
+            saved_rescue_alpha_pixels;
+        for (draw_index = 0;
+             draw_index < runtime->textDrawCount;
+             ++draw_index) {
+            runtime->textDraws[draw_index].compositePixels =
+                saved_text_draw_pixels[draw_index];
+        }
+        stage_started = game_runtime_wall_seconds();
+        if (!runtime->gameplayCompositeHook(
+                runtime->gameplayCompositeUserData,
+                JPB_GAMEPLAY_COMPOSITE_FINISH,
+                framebuffer, runtime->glowDraws,
+                runtime->glowDrawCount, view, stats)) {
+            return JPB_GAME_RUNTIME_RENDER_FAILED;
+        }
+        runtime->profileCompositeFinishSeconds +=
+            game_runtime_wall_seconds() - stage_started;
+        runtime->glowDrawCompositePixelCount =
+            runtime->glowDrawCount != 0 ? 1 : 0;
+    } else {
+        double glow_started = game_runtime_wall_seconds();
+
+        game_runtime_flush_glow_draws(
+            runtime,
+            view,
+            framebuffer,
+            context.glowDepthReady ? &context.glowDepthBuffer : NULL,
+            stats);
+        runtime->profileGlowSeconds +=
+            game_runtime_wall_seconds() - glow_started;
+    }
+    runtime->profileEffectsSeconds +=
+        game_runtime_wall_seconds() - effects_started;
     /* Return post-frame state to its exact PDB-named scene owner. */
     scene_postRender();
     return JPB_GAME_RUNTIME_OK;
@@ -5863,7 +6122,17 @@ int jpb_GameRuntimeTitleFrame(
     scaleAdjustmentMM = getScaleAdjustmentMM();
     menu_mainLoop();
 
-    game_runtime_flush_screen_draws(runtime, framebuffer);
+    if (runtime->titleScreenDrawRenderHook != NULL) {
+        if (!runtime->titleScreenDrawRenderHook(
+                runtime->titleScreenDrawRenderUserData,
+                runtime->screenDraws,
+                runtime->screenDrawCount,
+                framebuffer)) {
+            return JPB_GAME_RUNTIME_RENDER_FAILED;
+        }
+    } else {
+        game_runtime_flush_screen_draws(runtime, framebuffer);
+    }
     game_runtime_flush_text_draws(runtime, framebuffer);
     menu_mode = menuVars.menuMode[menuVars.menuModeSP & 7u];
 

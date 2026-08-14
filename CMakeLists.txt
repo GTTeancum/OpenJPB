@@ -82,10 +82,11 @@ if(WIN32)
         src/port/pc_image_wic.c
         src/port/pc_input_mapping.c
         src/port/pc_log_win32.c
+        src/port/pc_present_d3d11.c
         src/port/pc_xinput_win32.c)
     target_link_libraries(
         jpb_pc_game PRIVATE jpb_reconstructed user32 gdi32 winmm
-        ole32 windowscodecs)
+        ole32 windowscodecs d3d11 dxgi dxguid d3dcompiler)
     if(JPB_UFBX_SOURCE_DIR)
         target_sources(
             jpb_pc_game PRIVATE
@@ -1705,7 +1706,7 @@ if(BUILD_TESTING)
                     ag_idle_a_core pl_idle_a_core dm_idle_b_core
                     hu_idle_pistol_core hu_idle_pistol_core km_idle_a_core)
                 # Unlike the headless menu regressions, this drives the real
-                # Win32 window and StretchDIBits presentation path through
+                # Win32 window and D3D11 hardware presentation path through
                 # title, character select, level select, and gameplay handoff.
                 # The diagnostic window remains hidden. Audio banks/hooks are
                 # rebuilt with output disabled, and persistence is redirected

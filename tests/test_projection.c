@@ -34,6 +34,33 @@ typedef struct ScreenPolyTrace {
     JPBScreenPolyVertex vertices[4];
 } ScreenPolyTrace;
 
+typedef struct ScreenPolyTriangleTrace {
+    int calls;
+    JPBSoftwareMaterialVertex vertices[6];
+    const JPBSoftwareTexture *textures[2];
+} ScreenPolyTriangleTrace;
+
+static int capture_screen_poly_triangle(
+    void *user_data,
+    const JPBSoftwareMaterialVertex *first,
+    const JPBSoftwareMaterialVertex *second,
+    const JPBSoftwareMaterialVertex *third,
+    const JPBSoftwareTexture *texture)
+{
+    ScreenPolyTriangleTrace *trace =
+        (ScreenPolyTriangleTrace *)user_data;
+    int offset;
+
+    if (trace == NULL || trace->calls >= 2) return 0;
+    offset = trace->calls * 3;
+    trace->vertices[offset] = *first;
+    trace->vertices[offset + 1] = *second;
+    trace->vertices[offset + 2] = *third;
+    trace->textures[trace->calls] = texture;
+    ++trace->calls;
+    return 1;
+}
+
 static void capture_screen_poly(
     void *user_data,
     _Material *material,
@@ -75,8 +102,8 @@ int main(void)
     JPBSoftwareRenderStats poly_stats = {0};
     JPBScreenPolyVertex software_quad[4] = {
         {20.0f, 20.0f, 0.5f, UINT32_C(0xffffffff), 0.0f, 0.0f},
-        {44.0f, 20.0f, 0.5f, UINT32_C(0xffffffff), 1.0f, 0.0f},
         {20.0f, 44.0f, 0.5f, UINT32_C(0xffffffff), 0.0f, 1.0f},
+        {44.0f, 20.0f, 0.5f, UINT32_C(0xffffffff), 1.0f, 0.0f},
         {44.0f, 44.0f, 0.5f, UINT32_C(0xffffffff), 1.0f, 1.0f}
     };
     JPBScreenPolyVertex camera_quad[4] = {
@@ -409,10 +436,20 @@ int main(void)
 
     {
         const uint32_t smoke_texel = UINT32_C(0x8080c040);
+        uint32_t clamp_texels[2] = {
+            UINT32_C(0xffff0000),
+            UINT32_C(0xff00ff00)
+        };
         JPBSoftwareTexture smoke_texture = {
             &smoke_texel, 1, 1, 1,
             0, TEXTURESAMPLER_LINEARCLAMP, -1, 2
         };
+        JPBSoftwareTexture clamp_texture = {
+            clamp_texels, 2, 1, 2,
+            0, TEXTURESAMPLER_LINEARCLAMP, -1, 2
+        };
+        JPBScreenPolyVertex deeper_quad[4];
+        JPBScreenPolyVertex clamp_quad[4];
 
         memset(poly_pixels, 0x20, sizeof(poly_pixels));
         memset(&poly_stats, 0, sizeof(poly_stats));
@@ -428,11 +465,103 @@ int main(void)
                   &poly_depth,
                   &poly_stats) == JPB_SOFTWARE_RENDER_OK);
         /*
-         * Texture class 2 is the exact a_ transparent queue. A half-alpha
-         * texel must blend over the existing framebuffer rather than replace
-         * it, covering the shipped a_SMOKEGRY FED gas material.
+         * D3DTransparencyPass::CreatePipelineState builds the class-2 a_
+         * queue from the second PSO at this+0x68 with SrcAlpha/InvSrcAlpha
+         * blending. a_SMOKEGRY has colored zero-alpha border texels, so this
+         * split is what prevents the moving gas cards from outlining.
          */
         CHECK(poly_pixels[32 * 64 + 32] == UINT32_C(0x00507030));
+        /*
+         * D3DTransparencyPass::Render consumes the explicit triangle-list
+         * indices built by el_chavo::NoScaleEndPoly: 0,1,2 and 1,3,2.
+         */
+        CHECK(poly_pixels[42 * 64 + 42] == UINT32_C(0x00507030));
+
+        {
+            ScreenPolyTriangleTrace triangle_trace = {0};
+            JPBSoftwareRenderStats sink_stats = {0};
+
+            CHECK(jpb_SoftwareDrawScreenPolyToSink(
+                      &material,
+                      4,
+                      software_quad,
+                      0,
+                      &poly_framebuffer,
+                      &poly_depth,
+                      capture_screen_poly_triangle,
+                      &triangle_trace,
+                      &sink_stats) == JPB_SOFTWARE_RENDER_OK);
+            CHECK(triangle_trace.calls == 2);
+            CHECK(triangle_trace.textures[0] == &smoke_texture);
+            CHECK(triangle_trace.textures[1] == &smoke_texture);
+            CHECK(triangle_trace.vertices[0].x == software_quad[0].x);
+            CHECK(triangle_trace.vertices[0].y == software_quad[0].y);
+            CHECK(triangle_trace.vertices[1].x == software_quad[1].x);
+            CHECK(triangle_trace.vertices[1].y == software_quad[1].y);
+            CHECK(triangle_trace.vertices[2].x == software_quad[2].x);
+            CHECK(triangle_trace.vertices[2].y == software_quad[2].y);
+            CHECK(triangle_trace.vertices[3].x == software_quad[1].x);
+            CHECK(triangle_trace.vertices[3].y == software_quad[1].y);
+            CHECK(triangle_trace.vertices[4].x == software_quad[3].x);
+            CHECK(triangle_trace.vertices[4].y == software_quad[3].y);
+            CHECK(triangle_trace.vertices[5].x == software_quad[2].x);
+            CHECK(triangle_trace.vertices[5].y == software_quad[2].y);
+            CHECK(sink_stats.triangles == 2);
+            CHECK(sink_stats.pixels == 2);
+        }
+
+        memcpy(deeper_quad, software_quad, sizeof(deeper_quad));
+        for (int smoke_vertex = 0; smoke_vertex < 4; ++smoke_vertex) {
+            deeper_quad[smoke_vertex].z = 0.75f;
+        }
+        CHECK(jpb_SoftwareDrawScreenPoly(
+                  &material,
+                  4,
+                  deeper_quad,
+                  0,
+                  &poly_framebuffer,
+                  &poly_depth,
+                  &poly_stats) == JPB_SOFTWARE_RENDER_OK);
+        /*
+         * D3DTransparencyPass cards depth-test against the scene but do not
+         * stamp depth into later transparent cards. The FED gas is layered
+         * from overlapping a_SMOKEGRY quads; depth writes expose card edges.
+         */
+        CHECK(poly_pixels[32 * 64 + 32] == UINT32_C(0x00689838));
+
+        smoke_texture.materialType = 1;
+        memset(poly_pixels, 0x20, sizeof(poly_pixels));
+        memset(&poly_stats, 0, sizeof(poly_stats));
+        CHECK(jpb_SoftwareClearDepthBuffer(&poly_depth));
+        CHECK(jpb_SoftwareDrawScreenPoly(
+                  &material,
+                  4,
+                  software_quad,
+                  0,
+                  &poly_framebuffer,
+                  &poly_depth,
+                  &poly_stats) == JPB_SOFTWARE_RENDER_OK);
+        CHECK(poly_pixels[32 * 64 + 32] == UINT32_C(0x00608040));
+        smoke_texture.materialType = 2;
+
+        memcpy(clamp_quad, software_quad, sizeof(clamp_quad));
+        for (int clamp_vertex = 0; clamp_vertex < 4; ++clamp_vertex) {
+            clamp_quad[clamp_vertex].tu = 1.0f;
+            clamp_quad[clamp_vertex].tv = 0.0f;
+        }
+        memset(poly_pixels, 0, sizeof(poly_pixels));
+        memset(&poly_stats, 0, sizeof(poly_stats));
+        CHECK(jpb_SoftwareClearDepthBuffer(&poly_depth));
+        material.texture = &clamp_texture;
+        CHECK(jpb_SoftwareDrawScreenPoly(
+                  &material,
+                  4,
+                  clamp_quad,
+                  0,
+                  &poly_framebuffer,
+                  &poly_depth,
+                  &poly_stats) == JPB_SOFTWARE_RENDER_OK);
+        CHECK(poly_pixels[32 * 64 + 32] == UINT32_C(0x0000ff00));
         material.texture = NULL;
     }
 
@@ -459,6 +588,50 @@ int main(void)
               &poly_stats) == JPB_SOFTWARE_RENDER_OK);
     CHECK(poly_stats.triangles == 2);
     CHECK(poly_stats.pixels > 0);
+
+    {
+        const uint32_t white_texel = UINT32_C(0xffffffff);
+        JPBSoftwareTexture class_two_texture = {
+            &white_texel, 1, 1, 1,
+            0, TEXTURESAMPLER_LINEARCLAMP, -1, 2
+        };
+        JPBScreenPolyVertex offscreen_quad[4] = {
+            {2000.0f, -40.0f, 100.0f, UINT32_C(0xffffffff), 0.0f, 0.0f},
+            {2100.0f, -40.0f, 100.0f, UINT32_C(0xffffffff), 1.0f, 0.0f},
+            {2000.0f, 40.0f, 100.0f, UINT32_C(0xffffffff), 0.0f, 1.0f},
+            {2100.0f, 40.0f, 100.0f, UINT32_C(0xffffffff), 1.0f, 1.0f}
+        };
+
+        material.texture = &class_two_texture;
+        material.flags = JPB_MATERIAL_MODE_BACKFACE_REJECT;
+        memset(poly_pixels, 0, sizeof(poly_pixels));
+        memset(&poly_stats, 0, sizeof(poly_stats));
+        CHECK(jpb_SoftwareClearDepthBuffer(&poly_depth));
+        CHECK(jpb_SoftwareDrawScreenPoly(
+                  &material,
+                  4,
+                  offscreen_quad,
+                  1,
+                  &poly_framebuffer,
+                  &poly_depth,
+                  &poly_stats) == JPB_SOFTWARE_RENDER_OK);
+        CHECK(poly_stats.triangles == 2);
+        CHECK(poly_stats.pixels == 0);
+        material.flags = JPB_MATERIAL_MODE_SCREEN_TILE;
+        memset(poly_pixels, 0, sizeof(poly_pixels));
+        memset(&poly_stats, 0, sizeof(poly_stats));
+        CHECK(jpb_SoftwareClearDepthBuffer(&poly_depth));
+        CHECK(jpb_SoftwareDrawScreenPoly(
+                  &material,
+                  4,
+                  camera_quad,
+                  1,
+                  &poly_framebuffer,
+                  &poly_depth,
+                  &poly_stats) == JPB_SOFTWARE_RENDER_OK);
+        CHECK(poly_stats.pixels > 0);
+        material.texture = NULL;
+    }
 
     {
         VECTOR water_position = {0, 32, 0, 0};
