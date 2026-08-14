@@ -1516,7 +1516,7 @@ if(BUILD_TESTING)
                     PROPERTIES
                         LABELS "real_assets;pc_game;menu;controls;flow;camera;enemy_ai"
                         PASS_REGULAR_EXPRESSION
-                            "camera_director=\\(override=144,current=144,enemy=0,mode=0,node=14,opcode=0x0200.*camera=\\(dolly=144,authored=3,collision=1\\.0000/0\\).*player_flags=00000002"
+                            "camera_director=\\(override=144,current=144,enemy=0,mode=2,node=7,opcode=0x0200.*run_origin=\\(player=22528\\.0/3328\\.0/-13056\\.0/facing:2048\\).*camera=\\(dolly=144,authored=3,collision=1\\.0000/0\\).*player_flags=00000002"
                         TIMEOUT 120)
                 add_test(
                     NAME jpb_pc_title_keyboard_gameplay_control_handoff

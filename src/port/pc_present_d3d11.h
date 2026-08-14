@@ -106,6 +106,9 @@ int jpb_PCD3D11PresenterGameplayComposite(
 int jpb_PCD3D11PresenterReadbackGameplay(
     JPBPCD3D11Presenter *presenter,
     JPBSoftwareFramebuffer *framebuffer);
+int jpb_PCD3D11PresenterFinalWorldCoverage(
+    JPBPCD3D11Presenter *presenter,
+    size_t *covered_pixels);
 int jpb_PCD3D11PresenterPrewarmLevel(
     JPBPCD3D11Presenter *presenter,
     const JPBSoftwareLevelMesh *mesh,

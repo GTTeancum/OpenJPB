@@ -7,6 +7,7 @@
  */
 
 #include "jpb/transparent_texture_database.h"
+#include "jpb/level_world.h"
 
 #include "ufbx.h"
 
@@ -50,7 +51,10 @@ static void probe_face_bounds(
     const ufbx_node *node,
     const ufbx_mesh *mesh,
     const ufbx_mesh_material *mesh_material,
-    ProbeBounds *bounds)
+    ProbeBounds *bounds,
+    ProbeBounds *game_bounds,
+    int level_index,
+    int reference_space)
 {
     size_t face_list_index;
 
@@ -70,7 +74,21 @@ static void probe_face_bounds(
                 ufbx_get_vertex_vec3(&mesh->vertex_position, index);
             ufbx_vec3 world = ufbx_transform_position(
                 &node->geometry_to_world, local);
+            FVECTOR game;
+            ufbx_vec3 game_position;
+
             probe_bounds_add(bounds, world);
+            if (jpb_LevelTransformFbxVertex(
+                    level_index,
+                    reference_space ? (float)local.x : (float)(world.x / 2.54),
+                    reference_space ? (float)local.y : (float)(-world.z / 2.54),
+                    reference_space ? (float)local.z : (float)(world.y / 2.54),
+                    &game)) {
+                game_position.x = game.vx;
+                game_position.y = game.vy;
+                game_position.z = game.vz;
+                probe_bounds_add(game_bounds, game_position);
+            }
         }
     }
 }
@@ -184,6 +202,7 @@ int main(int argc, char **argv)
     int level_index;
     int dump_triangle_mode = 0;
     int reference_space = 0;
+    ProbeBounds game_bounds = {0};
     ufbx_load_opts load_opts;
 
     if (argc != 3 && argc != 4) {
@@ -332,9 +351,12 @@ int main(int argc, char **argv)
             if (mesh_material->num_faces == 0) {
                 continue;
             }
-            probe_face_bounds(node, mesh, mesh_material, &bounds);
+            probe_face_bounds(
+                node, mesh, mesh_material, &bounds,
+                &game_bounds, level_index, reference_space);
             printf(
-                "  material[%zu] name=%.*s texture=%.*s pass=%s "
+                "  material[%zu] name=%.*s texture=%.*s "
+                "texture_path=%.*s pass=%s "
                 "faces=%zu triangles=%zu "
                 "bounds=%.6f,%.6f,%.6f..%.6f,%.6f,%.6f\n",
                 material_index,
@@ -344,6 +366,8 @@ int main(int argc, char **argv)
                     ? mesh_material->material->name.data : "",
                 (int)base_length,
                 base,
+                (int)texture.length,
+                texture_data,
                 probe_pass_name(transparent, glass),
                 mesh_material->num_faces,
                 mesh_material->num_triangles,
@@ -372,6 +396,12 @@ int main(int argc, char **argv)
         opaque_mesh_index,
         transparent_mesh_index,
         glass_mesh_index);
+    if (game_bounds.valid) {
+        printf(
+            "game_bounds=%.3f,%.3f,%.3f..%.3f,%.3f,%.3f\n",
+            game_bounds.minX, game_bounds.minY, game_bounds.minZ,
+            game_bounds.maxX, game_bounds.maxY, game_bounds.maxZ);
+    }
     ufbx_free_scene(scene);
     return 0;
 }

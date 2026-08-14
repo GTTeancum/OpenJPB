@@ -154,6 +154,12 @@ typedef struct JPBSoftwareLevelMesh {
     size_t triangles;
 } JPBSoftwareLevelMesh;
 
+typedef struct JPBSoftwareOwnedLevelMesh {
+    JPBSoftwareLevelMesh mesh;
+    JPBSoftwareLevelBatch *batches;
+    JPBSoftwareLevelVertex *vertices;
+} JPBSoftwareOwnedLevelMesh;
+
 /*
  * Portable addition used to keep asset lookup and texture ownership outside
  * the renderer. texture_name is the exact geomData.t.Texture string.
@@ -172,6 +178,11 @@ int jpb_SoftwarePrepareJpxLevelScene(
     const JPBJpxView *view,
     int level_index,
     JPBSoftwareJpxScene *scene);
+int jpb_SoftwareBuildJpxLevelMesh(
+    const JPBSoftwareJpxScene *scene,
+    JPBSoftwareOwnedLevelMesh *mesh);
+void jpb_SoftwareFreeOwnedLevelMesh(
+    JPBSoftwareOwnedLevelMesh *mesh);
 
 /*
  * Portable camera/scene seam. Clips the segment from a gameplay focus point

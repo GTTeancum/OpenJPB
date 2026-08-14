@@ -19,6 +19,34 @@ extern int32_t nEnemy;
 extern wsl_ENEMY *pLatestDebugEnemy;
 extern wsl_ENEMY *pDebugEnemy;
 extern wsl_ENEMY aEnemyListNodes[20];
+
+typedef struct JPBEnemyVehicleDiagnostics {
+    uint32_t opcode607Count;
+    uint32_t stapCandidateCount;
+    uint32_t stapAttachAttemptCount;
+    uint32_t stapAttachSuccessCount;
+    uint32_t rangeEvaluationCount;
+    uint32_t rangeSuccessCount;
+    int32_t lastRangeEnemyID;
+    int32_t lastRangeTarget;
+    int32_t lastRangeCompare;
+    int32_t lastRangeDistance0;
+    int32_t lastRangeDistance1;
+    float lastRangeThreshold;
+    int32_t lastRangeResult;
+    int32_t lastOpcode607SourceID;
+    int32_t lastOpcode607Extension;
+    int32_t lastOpcode607LinkedEnemyID;
+    int32_t lastOpcode607PointerIndex;
+    int32_t lastOpcode607PlayerID;
+    int32_t lastOpcode607CallbackIndex;
+    int32_t lastOpcode607Stage;
+    FVECTOR lastStapPositionBeforeAttach;
+    FVECTOR lastStapPositionAfterAttach;
+} JPBEnemyVehicleDiagnostics;
+
+void jpb_EnemyGetVehicleDiagnostics(
+    JPBEnemyVehicleDiagnostics *diagnostics);
 extern uint8_t abGlobalBits[16];
 extern int32_t _aiFlagsTimer[4];
 extern int32_t _aiFlagsSave[4];

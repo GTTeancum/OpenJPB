@@ -50,6 +50,7 @@
 
 #include <limits.h>
 #include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -72,6 +73,7 @@ enum {
 };
 
 static const char *game_runtime_last_failure_stage = "none";
+static char game_runtime_last_failure_detail[2048];
 
 static void game_runtime_set_failure_stage(const char *stage)
 {
@@ -81,6 +83,32 @@ static void game_runtime_set_failure_stage(const char *stage)
 const char *jpb_GameRuntimeLastFailureStage(void)
 {
     return game_runtime_last_failure_stage;
+}
+
+const char *jpb_GameRuntimeLastFailureDetail(void)
+{
+    return game_runtime_last_failure_detail[0] != '\0'
+        ? game_runtime_last_failure_detail
+        : "none";
+}
+
+static void game_runtime_set_failure_detail(
+    const char *stage, const char *format, ...)
+{
+    va_list arguments;
+
+    game_runtime_set_failure_stage(stage);
+    if (format == NULL) {
+        game_runtime_last_failure_detail[0] = '\0';
+        return;
+    }
+    va_start(arguments, format);
+    vsnprintf(
+        game_runtime_last_failure_detail,
+        sizeof(game_runtime_last_failure_detail),
+        format,
+        arguments);
+    va_end(arguments);
 }
 
 static int game_runtime_fail(
@@ -94,7 +122,8 @@ static int game_runtime_fail(
 }
 
 typedef struct JPBGameRuntimeTexture {
-    char name[sizeof(((geomData *)0)->t.Texture)];
+    /* FBX texture filenames are preserved in 256-byte adapter slots. */
+    char name[256];
     uint8_t *fileData;
     uint32_t *pixels;
     JPBSoftwareTexture texture;
@@ -1225,6 +1254,7 @@ static void game_runtime_flush_glow_draws(
 struct JPBGameRuntimeTextureCache {
     char directory[JPB_GAME_RUNTIME_PATH_CAPACITY];
     int levelIndex;
+    int retailLevelTextureLookup;
     JPBGameRuntimeTexture *textures;
     size_t textureCount;
     size_t textureCapacity;
@@ -2126,6 +2156,8 @@ static int game_runtime_load_texture(
     const char *texture_name)
 {
     char path[JPB_GAME_RUNTIME_PATH_CAPACITY];
+    char local_path[JPB_GAME_RUNTIME_PATH_CAPACITY];
+    char resource_name[JPB_RESOURCE_PATH_CAPACITY];
     JPBFileHandle file = 0;
     uint64_t file_size;
     JPBTgaView tga;
@@ -2144,8 +2176,93 @@ static int game_runtime_load_texture(
         return 0;
     }
     memcpy(entry->name, texture_name, name_bytes + 1);
+    memcpy(local_path, path, strlen(path) + 1);
     if (!file_OPEN(path, &file)) {
-        return 0;
+        const char *slash = strrchr(texture_name, '/');
+        const char *backslash = strrchr(texture_name, '\\');
+        const char *base_name = texture_name;
+        const char *dot;
+        const char *resource_path;
+        size_t stem_bytes;
+
+        if (slash != NULL) base_name = slash + 1;
+        if (backslash != NULL && backslash + 1 > base_name) {
+            base_name = backslash + 1;
+        }
+        dot = strrchr(base_name, '.');
+        stem_bytes = dot != NULL
+            ? (size_t)(dot - base_name)
+            : strlen(base_name);
+        if (stem_bytes == 0) {
+            return 0;
+        }
+        resource_path = NULL;
+        if (cache->retailLevelTextureLookup &&
+            cache->levelIndex != JPB_LEVEL_INDEX_NONE) {
+            const char *level_name = sLevelNames[cache->levelIndex];
+            size_t level_bytes;
+
+            /*
+             * Retail _TryLoadTexture (game.exe VA 0x140126770) builds
+             * levelName + "/" + baseFileName under LEVEL_JPX, with the
+             * exact arena -> fed substitution at VA 0x1401269A3.  The FBX
+             * adapter has already reduced ufbx paths to base filenames.
+             */
+            if (strcmp(level_name, "arena") == 0) level_name = "fed";
+            level_bytes = strlen(level_name);
+            if (level_bytes + 1 + stem_bytes + sizeof(".tga") <=
+                sizeof(resource_name)) {
+                memcpy(resource_name, level_name, level_bytes);
+                resource_name[level_bytes] = '/';
+                memcpy(
+                    resource_name + level_bytes + 1,
+                    base_name,
+                    stem_bytes);
+                memcpy(
+                    resource_name + level_bytes + 1 + stem_bytes,
+                    ".tga",
+                    sizeof(".tga"));
+                resource_path = resource_getPath(
+                    resource_name, JPB_RESOURCE_LEVEL_JPX);
+                if (resource_path != NULL &&
+                    strlen(resource_path) < sizeof(path)) {
+                    memcpy(path, resource_path, strlen(resource_path) + 1);
+                    if (!file_OPEN(path, &file)) resource_path = NULL;
+                } else {
+                    resource_path = NULL;
+                }
+            }
+        }
+        if (file == 0) {
+            if (stem_bytes + sizeof(".tga") > sizeof(resource_name)) {
+                return 0;
+            }
+            memcpy(resource_name, base_name, stem_bytes);
+            memcpy(
+                resource_name + stem_bytes, ".tga", sizeof(".tga"));
+            resource_path = resource_getPath(
+                resource_name, JPB_RESOURCE_LEVEL_3DS);
+        }
+        if (resource_path == NULL ||
+            strlen(resource_path) >= sizeof(path)) {
+            fprintf(
+                stderr,
+                "texture_load_failed=(name=%s,local=%s,"
+                "retail=<unresolved>,reason=resource-path)\n",
+                texture_name, local_path);
+            return 0;
+        }
+        if (file == 0) {
+            memcpy(path, resource_path, strlen(resource_path) + 1);
+        }
+        if (file == 0 && !file_OPEN(path, &file)) {
+            fprintf(
+                stderr,
+                "texture_load_failed=(name=%s,local=%s,"
+                "retail=%s,reason=file-not-found)\n",
+                texture_name, local_path, path);
+            return 0;
+        }
     }
     file_size = file_GETSIZE(&file);
     if (file_size == 0 || file_size > INT32_MAX) {
@@ -2348,12 +2465,10 @@ static int game_runtime_build_authored_camera(
 
 /*
  * Mini2's recovered Kaadu owner (ai_Kadu) publishes gJarJarPos and selects
- * camera type 6 every gameplay tick. The portable player bridge does not yet
- * instantiate the two Kaadu mount actors, so preserve that exact camera
- * ownership with the live rider position instead of leaving the PDB global
- * at its zero-initialized address. The start table gives both Mini2 riders
- * the same x/z position; once the mount actors are present ai_Kadu supersedes
- * this boundary with its player-pair/maPhysicsData[2..3] calculation.
+ * camera type 6 every gameplay tick. Publish the live rider position before
+ * authored AI runs so the first camera tick cannot observe the PDB global's
+ * zero-initialized address; ai_Kadu then supersedes it from the mounted rider
+ * pair and maPhysicsData[2..3].
  */
 static void game_runtime_publish_level_camera_owner(
     JPBGameRuntime *runtime)
@@ -3013,6 +3128,7 @@ int jpb_GameRuntimeInitWithPlayerAssets(
             runtime, "init:world-texture-cache",
             JPB_GAME_RUNTIME_OUT_OF_MEMORY);
     }
+    runtime->worldTextureCache->retailLevelTextureLookup = 1;
     if (!game_runtime_file_directory(
             jpx_path,
             runtime->worldTextureCache->directory,
@@ -3209,16 +3325,25 @@ int jpb_GameRuntimeInitWithPlayerAssets(
     runtime->inactivePlayerActorRoot.objectID = 1;
     runtime->inactivePlayerActorRoot.flags =
         UINT32_C(0x20);
+    runtime->inactivePlayerModel.modelRoot.objectID = 1;
     runtime->inactivePlayer->playerRoot.flags =
         UINT32_C(0x20);
     memcpy(
         runtime->inactivePlayerActorRoot.objectName,
         "ACTOR",
         sizeof("ACTOR"));
+    memcpy(
+        runtime->inactivePlayerModel.modelRoot.objectName,
+        "MODEL",
+        sizeof("MODEL"));
     obj_gSetChildObject(
         runtime->inactivePlayerScene,
         &runtime->inactivePlayerActorRoot,
         0);
+    obj_gSetChildObject(
+        runtime->inactivePlayerScene,
+        &runtime->inactivePlayerModel.modelRoot,
+        1);
     obj_gSetChildObject(
         runtime->inactivePlayerScene,
         &runtime->inactivePlayerPhysics->physicsRoot,
@@ -4134,6 +4259,7 @@ static int game_runtime_load_enemy_class(
     JPBGameRuntimeEnemyClass *asset_class;
     char cad_path[JPB_GAME_RUNTIME_PATH_CAPACITY];
     char bmd_path[JPB_GAME_RUNTIME_PATH_CAPACITY];
+    int load_result;
 
     if (state == NULL || spec == NULL ||
         cad_reference_path == NULL ||
@@ -4195,21 +4321,66 @@ static int game_runtime_load_enemy_class(
         (uint8_t *)malloc(JPB_BMD_REFERENCE_CAPACITY);
     if (asset_class->cadStorage == NULL ||
         asset_class->bmdStorage == NULL) {
+        game_runtime_set_failure_detail(
+            "enemy-assets:allocate",
+            "actor=%s actor_num=%d model=%s animation=%s",
+            spec->actorStem,
+            actor_num,
+            spec->modelName,
+            spec->animationName);
         game_runtime_release_enemy_class(asset_class);
         return JPB_GAME_RUNTIME_OUT_OF_MEMORY;
     }
-    if (jpb_BmdLoadFile(
+    load_result = jpb_BmdLoadFile(
+        bmd_path,
+        asset_class->bmdStorage,
+        JPB_BMD_REFERENCE_CAPACITY,
+        &asset_class->bmdView);
+    if (load_result != JPB_BMD_OK) {
+        game_runtime_set_failure_detail(
+            "enemy-assets:bmd-load",
+            "actor=%s actor_num=%d model=%s animation=%s "
+            "path=%s loader_status=%d",
+            spec->actorStem,
+            actor_num,
+            spec->modelName,
+            spec->animationName,
             bmd_path,
-            asset_class->bmdStorage,
-            JPB_BMD_REFERENCE_CAPACITY,
-            &asset_class->bmdView) != JPB_BMD_OK ||
-        jpb_CadLoadFile(
+            load_result);
+        game_runtime_release_enemy_class(asset_class);
+        return JPB_GAME_RUNTIME_LOAD_FAILED;
+    }
+    load_result = jpb_CadLoadFile(
+        cad_path,
+        asset_class->cadStorage,
+        JPB_CAD_REFERENCE_CAPACITY,
+        &asset_class->cadView);
+    if (load_result != JPB_CAD_OK) {
+        game_runtime_set_failure_detail(
+            "enemy-assets:cad-load",
+            "actor=%s actor_num=%d model=%s animation=%s "
+            "path=%s loader_status=%d",
+            spec->actorStem,
+            actor_num,
+            spec->modelName,
+            spec->animationName,
             cad_path,
-            asset_class->cadStorage,
-            JPB_CAD_REFERENCE_CAPACITY,
-            &asset_class->cadView) != JPB_CAD_OK ||
-        asset_class->cadView.sequence_count < 1 ||
+            load_result);
+        game_runtime_release_enemy_class(asset_class);
+        return JPB_GAME_RUNTIME_LOAD_FAILED;
+    }
+    if (asset_class->cadView.sequence_count < 1 ||
         asset_class->cadView.sequence_count > INT16_MAX) {
+        game_runtime_set_failure_detail(
+            "enemy-assets:cad-sequences",
+            "actor=%s actor_num=%d model=%s animation=%s "
+            "path=%s sequences=%zu",
+            spec->actorStem,
+            actor_num,
+            spec->modelName,
+            spec->animationName,
+            cad_path,
+            asset_class->cadView.sequence_count);
         game_runtime_release_enemy_class(asset_class);
         return JPB_GAME_RUNTIME_LOAD_FAILED;
     }
@@ -4225,6 +4396,13 @@ static int game_runtime_load_enemy_class(
             bmd_path,
             asset_class->textureCache->directory,
             sizeof(asset_class->textureCache->directory))) {
+        game_runtime_set_failure_detail(
+            "enemy-assets:texture-directory",
+            "actor=%s actor_num=%d model=%s path=%s",
+            spec->actorStem,
+            actor_num,
+            spec->modelName,
+            bmd_path);
         game_runtime_release_enemy_class(asset_class);
         return JPB_GAME_RUNTIME_LOAD_FAILED;
     }
@@ -4498,6 +4676,8 @@ int jpb_GameRuntimeAddEnemyAssets(
     int index;
     int result;
 
+    game_runtime_set_failure_detail("none", NULL);
+
     if (runtime == NULL || cad_path == NULL || bmd_path == NULL ||
         runtime->world == NULL || runtime->player == NULL ||
         runtime->world->apEnemy == NULL ||
@@ -4527,6 +4707,10 @@ int jpb_GameRuntimeAddEnemyAssets(
 
         if (!game_runtime_enemy_class_spec(
                 spec_index, &spec)) {
+            game_runtime_set_failure_detail(
+                "enemy-assets:class-table",
+                "actor_table_index=%zu",
+                spec_index);
             game_runtime_release_enemy_classes(state);
             free(state);
             runtime->enemyState = NULL;
@@ -4563,12 +4747,6 @@ int jpb_GameRuntimeAddEnemyAssets(
             return result;
         }
     }
-    if (state->classCount == 0) {
-        game_runtime_release_enemy_classes(state);
-        free(state);
-        runtime->enemyState = NULL;
-        return JPB_GAME_RUNTIME_LOAD_FAILED;
-    }
     runtime->enemyLoadedClassCount = state->classCount;
     for (spec_index = 0;
          spec_index < state->classCount;
@@ -4587,21 +4765,30 @@ int jpb_GameRuntimeAddEnemyAssets(
             }
         }
     }
-    runtime->enemyCadStorage =
-        state->classes[0].cadStorage;
-    runtime->enemyBmdStorage =
-        state->classes[0].bmdStorage;
-    runtime->enemyCadView =
-        state->classes[0].cadView;
-    runtime->enemyBmdView =
-        state->classes[0].bmdView;
-    runtime->enemyTextureCache =
-        state->classes[0].textureCache;
+    if (state->classCount != 0) {
+        runtime->enemyCadStorage =
+            state->classes[0].cadStorage;
+        runtime->enemyBmdStorage =
+            state->classes[0].bmdStorage;
+        runtime->enemyCadView =
+            state->classes[0].cadView;
+        runtime->enemyBmdView =
+            state->classes[0].bmdView;
+        runtime->enemyTextureCache =
+            state->classes[0].textureCache;
+    }
 
     enemy_InitEnemies();
     shaolin_InitKungfu();
     jpb_LoaderSetEnemyCreateProvider(
         game_runtime_create_enemy, runtime);
+    /*
+     * game_gPlayTheGame calls this PDB-named owner when the loaded stage
+     * transitions into gameplay. At that point loader_LevelLoad has already
+     * loaded enemy classes. Streets additionally resets both player physics
+     * slots and the collision transients used by its STAP script.
+     */
+    player_gRefreshPlayers();
     /*
      * Loading assets must not manufacture an active actor. The exact
      * enemy_HandleEnemies -> _checkForNewEnemies owner activates authored
@@ -4857,7 +5044,59 @@ void jpb_GameRuntimeSetLevelRenderMesh(
     const JPBSoftwareLevelMesh *mesh)
 {
     if (runtime != NULL) {
+        size_t batch_index;
+
         runtime->levelRenderMesh = mesh;
+        runtime->worldDeclaredTextures = 0;
+        if (mesh == NULL || mesh->batches == NULL) return;
+        for (batch_index = 0;
+             batch_index < mesh->batchCount;
+             ++batch_index) {
+            const char *name = mesh->batches[batch_index].textureName;
+            size_t previous;
+            int duplicate = 0;
+
+            if (name == NULL || name[0] == '\0') continue;
+            for (previous = 0; previous < batch_index; ++previous) {
+                const char *candidate =
+                    mesh->batches[previous].textureName;
+                if (candidate != NULL && strcmp(candidate, name) == 0) {
+                    duplicate = 1;
+                    break;
+                }
+            }
+            if (!duplicate) ++runtime->worldDeclaredTextures;
+        }
+        if (runtime->worldTextureCache != NULL &&
+            runtime->worldDeclaredTextures >
+                runtime->worldTextureCache->textureCapacity &&
+            runtime->worldDeclaredTextures <=
+                SIZE_MAX / sizeof(JPBGameRuntimeTexture)) {
+            JPBGameRuntimeTexture *resized =
+                (JPBGameRuntimeTexture *)realloc(
+                    runtime->worldTextureCache->textures,
+                    runtime->worldDeclaredTextures *
+                        sizeof(*resized));
+
+            /*
+             * Retail _TryLoadTexture owns a dynamically sized std::map.
+             * Match that behavior with the exact number of unique FBX
+             * material names instead of the unrelated JPX collision-material
+             * count used to bootstrap this cache during runtime init.
+             */
+            if (resized != NULL) {
+                memset(
+                    resized +
+                        runtime->worldTextureCache->textureCapacity,
+                    0,
+                    (runtime->worldDeclaredTextures -
+                        runtime->worldTextureCache->textureCapacity) *
+                        sizeof(*resized));
+                runtime->worldTextureCache->textures = resized;
+                runtime->worldTextureCache->textureCapacity =
+                    runtime->worldDeclaredTextures;
+            }
+        }
     }
 }
 
@@ -5161,9 +5400,9 @@ static void game_runtime_scene_after_animations(
                 runtime,
                 context->previousAnimationIndices[
                     animation_index])) {
-            context->result =
-                JPB_GAME_RUNTIME_RENDER_FAILED;
-            return;
+                context->result =
+                    JPB_GAME_RUNTIME_RENDER_FAILED;
+                return;
         }
     }
     if (runtime->secondPlayerState != NULL &&
@@ -5177,9 +5416,9 @@ static void game_runtime_scene_after_animations(
                 runtime,
                 context->previousAnimationIndices[
                     animation_index])) {
-            context->result =
-                JPB_GAME_RUNTIME_RENDER_FAILED;
-            return;
+                context->result =
+                    JPB_GAME_RUNTIME_RENDER_FAILED;
+                return;
         }
     }
     if (runtime->enemyState != NULL) {
@@ -5346,7 +5585,7 @@ static int game_runtime_scene_render_model(
             texture_cache,
             context->stats);
 
-    return result == JPB_SOFTWARE_RENDER_OK;
+    return result;
 }
 
 static void game_runtime_scene_after_models(
@@ -5367,6 +5606,8 @@ static void game_runtime_scene_after_models(
         !runtime->modelRenderBeginHook(
             runtime->modelRenderUserData,
             context->framebuffer, &context->depthBuffer)) {
+        game_runtime_set_failure_detail(
+            "frame:models-begin", "hardware model begin hook failed");
         context->result = JPB_GAME_RUNTIME_RENDER_FAILED;
         return;
     }
@@ -5383,7 +5624,8 @@ static void game_runtime_scene_after_models(
             ? context->stats->modelPixels
             : 0;
 
-        if (!game_runtime_scene_render_model(
+        {
+            int render_result = game_runtime_scene_render_model(
                 context,
                 &runtime->bmdView,
                 &runtime->actorModel,
@@ -5392,10 +5634,19 @@ static void game_runtime_scene_after_models(
                     : NULL,
                 &position,
                 runtime->physics->angle.vy,
-                runtime->textureCache)) {
+                runtime->textureCache);
+
+            if (render_result != JPB_SOFTWARE_RENDER_OK) {
+                game_runtime_set_failure_detail(
+                    "frame:model-player-one",
+                    "software renderer status=%d root=%d position=%.1f/%.1f/%.1f",
+                    render_result,
+                    (int)runtime->actorModel.pRootNode->id,
+                    position.vx, position.vy, position.vz);
             context->result =
                 JPB_GAME_RUNTIME_RENDER_FAILED;
             return;
+            }
         }
         runtime->playerRenderedTriangles =
             context->stats != NULL
@@ -5426,7 +5677,8 @@ static void game_runtime_scene_after_models(
             ? context->stats->modelPixels
             : 0;
 
-        if (!game_runtime_scene_render_model(
+        {
+            int render_result = game_runtime_scene_render_model(
                 context,
                 &state->bmdView,
                 &state->model,
@@ -5435,10 +5687,19 @@ static void game_runtime_scene_after_models(
                     : NULL,
                 &position,
                 runtime->inactivePlayerPhysics->angle.vy,
-                state->textureCache)) {
+                state->textureCache);
+
+            if (render_result != JPB_SOFTWARE_RENDER_OK) {
+                game_runtime_set_failure_detail(
+                    "frame:model-player-two",
+                    "software renderer status=%d root=%d position=%.1f/%.1f/%.1f",
+                    render_result,
+                    (int)state->model.pRootNode->id,
+                    position.vx, position.vy, position.vz);
             context->result =
                 JPB_GAME_RUNTIME_RENDER_FAILED;
             return;
+            }
         }
         state->renderedTriangles =
             context->stats != NULL
@@ -5475,7 +5736,8 @@ static void game_runtime_scene_after_models(
             pixels_before = context->stats != NULL
                 ? context->stats->modelPixels
                 : 0;
-            if (!game_runtime_scene_render_model(
+            {
+                int render_result = game_runtime_scene_render_model(
                     context,
                     &actor->assetClass->bmdView,
                     &actor->model,
@@ -5484,10 +5746,21 @@ static void game_runtime_scene_after_models(
                         : NULL,
                     &position,
                     actor->physics->angle.vy,
-                    actor->assetClass->textureCache)) {
-                context->result =
-                    JPB_GAME_RUNTIME_RENDER_FAILED;
-                return;
+                    actor->assetClass->textureCache);
+
+                if (render_result != JPB_SOFTWARE_RENDER_OK) {
+                    game_runtime_set_failure_detail(
+                        "frame:model-enemy",
+                        "software renderer status=%d actor=%zu id=%d root=%d position=%.1f/%.1f/%.1f",
+                        render_result, index,
+                        actor->enemy != NULL
+                            ? actor->enemy->enemyID : -1,
+                        (int)actor->model.pRootNode->id,
+                        position.vx, position.vy, position.vz);
+                    context->result =
+                        JPB_GAME_RUNTIME_RENDER_FAILED;
+                    return;
+                }
             }
             if (!actor->assetClass->wasRendered) {
                 actor->assetClass->wasRendered = 1;
@@ -5508,6 +5781,8 @@ static void game_runtime_scene_after_models(
         !runtime->modelRenderEndHook(
             runtime->modelRenderUserData,
             context->framebuffer, &context->depthBuffer)) {
+        game_runtime_set_failure_detail(
+            "frame:models-end", "hardware model end hook failed");
         context->result = JPB_GAME_RUNTIME_RENDER_FAILED;
         return;
     }
@@ -5693,8 +5968,12 @@ int jpb_GameRuntimeFrame(
     double effects_started;
 
     if (runtime == NULL || framebuffer == NULL) {
+        game_runtime_set_failure_detail(
+            "frame:invalid-arguments", "runtime=%p framebuffer=%p",
+            (void *)runtime, (void *)framebuffer);
         return JPB_GAME_RUNTIME_INVALID_ARGUMENT;
     }
+    game_runtime_set_failure_detail("none", NULL);
     runtime->screenDrawCount = 0;
     runtime->drawOrder = 0;
     runtime->screenDrawDroppedCount = 0;

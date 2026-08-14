@@ -350,9 +350,9 @@ static int test_driver_state_sync(void)
     driven->mov.vx = 1.0f;
     driven->mov.vy = 2.0f;
     driven->mov.vz = 3.0f;
-    driven->currentmapinfo.cube = &cube;
-    driven->currentmapinfo.entry = &entry;
-    driven->currentmapinfo.poly = &poly;
+    driven->mapinfo.cube = &cube;
+    driven->mapinfo.entry = &entry;
+    driven->mapinfo.poly = &poly;
 
     CHECK(jpb_PhysicsSyncDriverState(0) ==
           JPB_PHYSICS_PARTIAL_OK);
@@ -365,9 +365,9 @@ static int test_driver_state_sync(void)
     CHECK(driver->mov.vx == 1.0f);
     CHECK(driver->mov.vy == 2.0f);
     CHECK(driver->mov.vz == 3.0f);
-    CHECK(driver->currentmapinfo.cube == &cube);
-    CHECK(driver->currentmapinfo.entry == &entry);
-    CHECK(driver->currentmapinfo.poly == &poly);
+    CHECK(driver->mapinfo.cube == &cube);
+    CHECK(driver->mapinfo.entry == &entry);
+    CHECK(driver->mapinfo.poly == &poly);
 
     player->pFlags = UINT32_C(0x00000200);
     driver->pos.vx = -1.0f;

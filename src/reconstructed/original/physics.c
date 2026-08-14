@@ -3414,7 +3414,8 @@ static void checkdriving(int player_index)
         p0->pos = driven->pos;
         p0->angle = driven->angle;
         p0->mov = driven->mov;
-        p0->currentmapinfo = driven->currentmapinfo;
+        /* Exact checkdriving RVAs 0xDF429..0xDF461 copy mapinfo. */
+        p0->mapinfo = driven->mapinfo;
     }
 }
 

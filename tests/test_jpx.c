@@ -211,6 +211,7 @@ int main(void)
     JPBJpxLoadConfig config;
     JPBJpxView view;
     JPBSoftwareJpxScene software_scene;
+    JPBSoftwareOwnedLevelMesh owned_level_mesh;
     JPBSoftwareFramebuffer framebuffer;
     JPBSoftwareDepthBuffer depth_buffer;
     JPBSoftwareRenderStats render_stats;
@@ -361,6 +362,23 @@ int main(void)
     CHECK(jpb_SoftwarePrepareJpxScene(
               &view, &software_scene) ==
           JPB_SOFTWARE_RENDER_OK);
+    memset(&owned_level_mesh, 0, sizeof(owned_level_mesh));
+    CHECK(jpb_SoftwareBuildJpxLevelMesh(
+              &software_scene, &owned_level_mesh) ==
+          JPB_SOFTWARE_RENDER_OK);
+    CHECK(owned_level_mesh.mesh.batchCount > 0);
+    CHECK(owned_level_mesh.mesh.batchCount <= software_scene.strips);
+    CHECK(owned_level_mesh.mesh.triangles > 0);
+    CHECK(owned_level_mesh.mesh.vertices ==
+          owned_level_mesh.mesh.triangles * 3);
+    CHECK(owned_level_mesh.mesh.batches == owned_level_mesh.batches);
+    CHECK(owned_level_mesh.mesh.batches[0].vertices != NULL);
+    CHECK(owned_level_mesh.mesh.batches[0].vertexCount >= 3);
+    CHECK(owned_level_mesh.mesh.batches[0].meshCount ==
+          software_scene.strips);
+    jpb_SoftwareFreeOwnedLevelMesh(&owned_level_mesh);
+    CHECK(owned_level_mesh.mesh.batches == NULL);
+    CHECK(owned_level_mesh.vertices == NULL);
     camera_focus.vx = 0.25f;
     camera_focus.vy = 50.0f;
     camera_focus.vz = 0.25f;

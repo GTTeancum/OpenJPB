@@ -160,7 +160,6 @@ static int pc_fbx_count_scene(
 }
 
 static int pc_fbx_write_vertex(
-    const ufbx_node *node,
     const ufbx_mesh *mesh,
     uint32_t index,
     int level_index,
@@ -168,16 +167,19 @@ static int pc_fbx_write_vertex(
 {
     ufbx_vec3 local =
         ufbx_get_vertex_vec3(&mesh->vertex_position, index);
-    ufbx_vec3 world = ufbx_transform_position(
-        &node->geometry_to_world, local);
     ufbx_vec2 uv = {0.0, 0.0};
     ufbx_vec4 color = {0.0, 0.0, 0.0, 0.0};
 
+    /*
+     * CD3DApplication::InitFBXLevelData copies vertex_position.values to the
+     * GPU buffer. It stores geometry_to_world, but the three DrawLevel passes
+     * use one global WVP and never multiply that per-node matrix.
+     */
     if (!jpb_LevelTransformFbxVertex(
             level_index,
-            (float)(world.x / 2.54),
-            (float)(-world.z / 2.54),
-            (float)(world.y / 2.54),
+            (float)local.x,
+            (float)local.y,
+            (float)local.z,
             &destination->position)) {
         return 0;
     }
@@ -205,6 +207,7 @@ int jpb_PCLoadFbxLevel(
     size_t error_text_capacity)
 {
     ufbx_error error;
+    ufbx_load_opts load_opts;
     ufbx_scene *scene = NULL;
     size_t batch_count;
     size_t vertex_count;
@@ -223,7 +226,13 @@ int jpb_PCLoadFbxLevel(
     }
     memset(level, 0, sizeof(*level));
     memset(&error, 0, sizeof(error));
-    scene = ufbx_load_file(path, NULL, &error);
+    memset(&load_opts, 0, sizeof(load_opts));
+    /* Exact loader_LevelLoad stores at matched-PC RVA 0xBC8F2..0xBC925. */
+    load_opts.target_axes.right = UFBX_COORDINATE_AXIS_POSITIVE_X;
+    load_opts.target_axes.up = UFBX_COORDINATE_AXIS_POSITIVE_Y;
+    load_opts.target_axes.front = UFBX_COORDINATE_AXIS_NEGATIVE_Z;
+    load_opts.target_unit_meters = 1.0f;
+    scene = ufbx_load_file(path, &load_opts, &error);
     if (scene == NULL) {
         if (error_text != NULL && error_text_capacity != 0) {
             snprintf(
@@ -330,7 +339,6 @@ int jpb_PCLoadFbxLevel(
                     for (corner = 0; corner < 3; ++corner) {
                         if (vertex_index >= vertex_count ||
                             !pc_fbx_write_vertex(
-                                node,
                                 mesh,
                                 triangle_indices[triangle * 3 + corner],
                                 level_index,

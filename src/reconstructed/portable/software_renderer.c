@@ -270,6 +270,193 @@ int jpb_SoftwarePrepareJpxLevelScene(
     return JPB_SOFTWARE_RENDER_OK;
 }
 
+typedef struct SoftwareJpxMeshBuild {
+    const JPBSoftwareJpxScene *scene;
+    JPBSoftwareOwnedLevelMesh *owned;
+    size_t batchCount;
+    size_t vertexCount;
+    size_t triangleCount;
+    size_t siteIndex;
+    int write;
+} SoftwareJpxMeshBuild;
+
+static int software_jpx_vertex_same(
+    const JPBJpxVertex *left, const JPBJpxVertex *right)
+{
+    return left->x == right->x &&
+           left->y == right->y &&
+           left->z == right->z;
+}
+
+static JPBLevelFbxMeshPass software_jpx_level_pass(
+    const JPBSoftwareJpxScene *scene,
+    uint16_t material_index)
+{
+    const char *name = jpx_GetMaterialName(
+        scene->view, material_index);
+    int transparent = scene->fbxMaterialMatches != 0
+        ? jpb_IsTextureTransparentForJpxMirror(
+              name, scene->levelIndex)
+        : jpx_GetMaterialListType(
+              scene->view, material_index) == 8;
+
+    if (!transparent) {
+        return JPB_LEVEL_FBX_PASS_OPAQUE;
+    }
+    return (scene->fbxMaterialMatches != 0
+                ? jpb_IsTextureGlassForJpxMirror(
+                      name, scene->levelIndex)
+                : jpb_IsGlassTextureForJpxMirror(name))
+        ? JPB_LEVEL_FBX_PASS_GLASS
+        : JPB_LEVEL_FBX_PASS_TRANSPARENT;
+}
+
+static void software_jpx_write_level_vertex(
+    const JPBSoftwareJpxScene *scene,
+    const JPBJpxVertex *source,
+    JPBSoftwareLevelVertex *destination)
+{
+    software_jpx_world_vertex(scene, source, &destination->position);
+    destination->u = source->u;
+    destination->v = source->v;
+    destination->red = (float)(source->attributes & UINT32_C(0xff));
+    destination->green =
+        (float)((source->attributes >> 8) & UINT32_C(0xff));
+    destination->blue =
+        (float)((source->attributes >> 16) & UINT32_C(0xff));
+    destination->alpha = (float)(source->attributes >> 24);
+}
+
+static int software_build_jpx_level_strip(
+    const JPBJpxPatchSite *site, void *user_data)
+{
+    static const char mesh_name[] = "jpx_world";
+    SoftwareJpxMeshBuild *build =
+        (SoftwareJpxMeshBuild *)user_data;
+    JPBJpxVertex first;
+    JPBJpxVertex second;
+    size_t strip_vertex_start = build->vertexCount;
+    uint16_t index;
+
+    if (site->vertexCount < 3) {
+        ++build->siteIndex;
+        return 0;
+    }
+    if (jpx_DecodeVertex(site, 0, &first) != JPB_JPX_OK ||
+        jpx_DecodeVertex(site, 1, &second) != JPB_JPX_OK) {
+        return 1;
+    }
+    for (index = 2; index < site->vertexCount; ++index) {
+        JPBJpxVertex third;
+
+        if (jpx_DecodeVertex(site, index, &third) != JPB_JPX_OK) {
+            return 1;
+        }
+        if (!software_jpx_vertex_same(&first, &second) &&
+            !software_jpx_vertex_same(&second, &third) &&
+            !software_jpx_vertex_same(&first, &third)) {
+            if (build->write) {
+                const JPBJpxVertex *sources[3];
+                size_t corner;
+
+                sources[0] = (index & 1U) != 0 ? &second : &first;
+                sources[1] = (index & 1U) != 0 ? &first : &second;
+                sources[2] = &third;
+                for (corner = 0; corner < 3; ++corner) {
+                    software_jpx_write_level_vertex(
+                        build->scene, sources[corner],
+                        &build->owned->vertices[
+                            build->vertexCount + corner]);
+                }
+            }
+            build->vertexCount += 3;
+            ++build->triangleCount;
+        }
+        first = second;
+        second = third;
+    }
+    if (build->vertexCount != strip_vertex_start) {
+        if (build->write) {
+            JPBSoftwareLevelBatch *batch =
+                &build->owned->batches[build->batchCount];
+
+            batch->vertices =
+                &build->owned->vertices[strip_vertex_start];
+            batch->vertexCount =
+                build->vertexCount - strip_vertex_start;
+            batch->textureName = jpx_GetMaterialName(
+                build->scene->view,
+                (uint16_t)site->materialIndex);
+            batch->meshName = mesh_name;
+            batch->pass = software_jpx_level_pass(
+                build->scene, (uint16_t)site->materialIndex);
+            batch->meshIndex = build->siteIndex;
+            batch->meshCount = build->scene->strips;
+        }
+        ++build->batchCount;
+    }
+    ++build->siteIndex;
+    return 0;
+}
+
+int jpb_SoftwareBuildJpxLevelMesh(
+    const JPBSoftwareJpxScene *scene,
+    JPBSoftwareOwnedLevelMesh *mesh)
+{
+    SoftwareJpxMeshBuild build;
+    int result;
+
+    if (scene == NULL || scene->view == NULL || mesh == NULL) {
+        return JPB_SOFTWARE_RENDER_INVALID_ARGUMENT;
+    }
+    memset(mesh, 0, sizeof(*mesh));
+    memset(&build, 0, sizeof(build));
+    build.scene = scene;
+    result = jpx_ForEachPatchSite(
+        scene->view, software_build_jpx_level_strip, &build);
+    if (result != JPB_JPX_OK || build.batchCount == 0 ||
+        build.vertexCount == 0) {
+        return result == JPB_JPX_OK
+            ? JPB_SOFTWARE_RENDER_EMPTY_MESH
+            : JPB_SOFTWARE_RENDER_JPX_ERROR;
+    }
+    mesh->batches = (JPBSoftwareLevelBatch *)calloc(
+        build.batchCount, sizeof(*mesh->batches));
+    mesh->vertices = (JPBSoftwareLevelVertex *)malloc(
+        build.vertexCount * sizeof(*mesh->vertices));
+    if (mesh->batches == NULL || mesh->vertices == NULL) {
+        jpb_SoftwareFreeOwnedLevelMesh(mesh);
+        return JPB_SOFTWARE_RENDER_MODEL_TOO_LARGE;
+    }
+    memset(&build, 0, sizeof(build));
+    build.scene = scene;
+    build.owned = mesh;
+    build.write = 1;
+    result = jpx_ForEachPatchSite(
+        scene->view, software_build_jpx_level_strip, &build);
+    if (result != JPB_JPX_OK) {
+        jpb_SoftwareFreeOwnedLevelMesh(mesh);
+        return JPB_SOFTWARE_RENDER_JPX_ERROR;
+    }
+    mesh->mesh.batches = mesh->batches;
+    mesh->mesh.batchCount = build.batchCount;
+    mesh->mesh.levelIndex = scene->levelIndex;
+    mesh->mesh.vertices = build.vertexCount;
+    mesh->mesh.triangles = build.triangleCount;
+    return JPB_SOFTWARE_RENDER_OK;
+}
+
+void jpb_SoftwareFreeOwnedLevelMesh(
+    JPBSoftwareOwnedLevelMesh *mesh)
+{
+    if (mesh == NULL) {
+        return;
+    }
+    free(mesh->batches);
+    free(mesh->vertices);
+    memset(mesh, 0, sizeof(*mesh));
+}
+
 typedef struct SoftwareCameraClip {
     const JPBSoftwareJpxScene *scene;
     FVECTOR origin;

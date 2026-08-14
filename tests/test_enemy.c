@@ -1626,8 +1626,7 @@ static void test_authored_opcode_traversal_boundary(void)
     placement.pLastEnemy =
         (uint32_t)addPtr(
             &vehicle_enemy,
-            JPB_POINTER_ARRAY_ENEMY) +
-        1U;
+            JPB_POINTER_ARRAY_ENEMY);
     variables[0].si = 0;
     variables[1].si = 0;
     enemy.currAIMode = 0;
@@ -1658,8 +1657,11 @@ static void test_authored_opcode_traversal_boundary(void)
     CHECK(tankID == 7);
     CHECK((gaPlayerData[0].pFlags & 0x80U) != 0);
     CHECK(
-        (vehicle_player.pFlags &
+        (vehicle_enemy.enemyFlags &
          UINT32_C(1) << 26) != 0);
+    CHECK(
+        (vehicle_player.pFlags &
+         (UINT32_C(1) << 26)) == 0);
     CHECK(jumpheld[0] == 1);
     CHECK(tankdrivers[0] == &gaPlayerData[0]);
     CHECK(
@@ -2644,10 +2646,10 @@ static void test_ai_bap_evaluators(void)
     memset(vars, 0, sizeof(vars));
     vars[0].si = 0;
     vars[1].si = 2;
-    vars[2].f = 20.0f;
+    vars[2].f = 0.05f;
     CHECK(aisub_handleRangeFunction(
               &fixture.enemy, vars) == 1);
-    vars[2].f = 5.0f;
+    vars[2].f = 0.03f;
     CHECK(aisub_handleRangeFunction(
               &fixture.enemy, vars) == 0);
 

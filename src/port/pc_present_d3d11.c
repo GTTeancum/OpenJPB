@@ -90,6 +90,7 @@ struct JPBPCD3D11Presenter {
     ID3D11Texture2D *worldLinearDepth;
     ID3D11RenderTargetView *worldLinearDepthTarget;
     ID3D11ShaderResourceView *worldLinearDepthView;
+    ID3D11Texture2D *worldLinearDepthSnapshot;
     ID3D11Texture2D *worldLinearDepthReadback;
     ID3D11Texture2D *worldDepth;
     ID3D11DepthStencilView *worldDepthTarget;
@@ -323,6 +324,10 @@ static void pc_present_release_world_targets(
     if (presenter->worldLinearDepthReadback != NULL) {
         ID3D11Texture2D_Release(presenter->worldLinearDepthReadback);
         presenter->worldLinearDepthReadback = NULL;
+    }
+    if (presenter->worldLinearDepthSnapshot != NULL) {
+        ID3D11Texture2D_Release(presenter->worldLinearDepthSnapshot);
+        presenter->worldLinearDepthSnapshot = NULL;
     }
     if (presenter->worldLinearDepthTarget != NULL) {
         ID3D11RenderTargetView_Release(presenter->worldLinearDepthTarget);
@@ -1077,6 +1082,12 @@ static HRESULT pc_present_create_world_targets(
             presenter->device,
             (ID3D11Resource *)presenter->worldLinearDepth,
             NULL, &presenter->worldLinearDepthView);
+    }
+    desc.BindFlags = 0;
+    if (SUCCEEDED(result)) {
+        result = ID3D11Device_CreateTexture2D(
+            presenter->device, &desc, NULL,
+            &presenter->worldLinearDepthSnapshot);
     }
     desc.Usage = D3D11_USAGE_STAGING;
     desc.BindFlags = 0;
@@ -2725,6 +2736,10 @@ int jpb_PCD3D11PresenterRenderLevel(
         presenter->lastError = result;
         return -1;
     }
+    ID3D11DeviceContext_CopyResource(
+        presenter->context,
+        (ID3D11Resource *)presenter->worldLinearDepthSnapshot,
+        (ID3D11Resource *)presenter->worldLinearDepth);
     QueryPerformanceCounter(&submitted);
     QueryPerformanceCounter(&finished);
     ++presenter->worldTimingFrames;
@@ -2739,6 +2754,51 @@ int jpb_PCD3D11PresenterRenderLevel(
         (double)frequency.QuadPart;
     presenter->lastError = result;
     return SUCCEEDED(result) ? 0 : -1;
+}
+
+int jpb_PCD3D11PresenterFinalWorldCoverage(
+    JPBPCD3D11Presenter *presenter,
+    size_t *covered_pixels)
+{
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    size_t covered = 0;
+    int y;
+    HRESULT result;
+
+    if (presenter == NULL || covered_pixels == NULL ||
+        presenter->worldLinearDepthSnapshot == NULL ||
+        presenter->worldLinearDepthReadback == NULL ||
+        presenter->worldWidth <= 0 || presenter->worldHeight <= 0) {
+        return 0;
+    }
+    ID3D11DeviceContext_CopyResource(
+        presenter->context,
+        (ID3D11Resource *)presenter->worldLinearDepthReadback,
+        (ID3D11Resource *)presenter->worldLinearDepthSnapshot);
+    result = ID3D11DeviceContext_Map(
+        presenter->context,
+        (ID3D11Resource *)presenter->worldLinearDepthReadback,
+        0, D3D11_MAP_READ, 0, &mapped);
+    if (FAILED(result)) {
+        presenter->lastError = result;
+        return 0;
+    }
+    for (y = 0; y < presenter->worldHeight; ++y) {
+        const float *row = (const float *)(
+            (const uint8_t *)mapped.pData +
+            (size_t)y * mapped.RowPitch);
+        int x;
+
+        for (x = 0; x < presenter->worldWidth; ++x) {
+            if (row[x] < FLT_MAX) ++covered;
+        }
+    }
+    ID3D11DeviceContext_Unmap(
+        presenter->context,
+        (ID3D11Resource *)presenter->worldLinearDepthReadback, 0);
+    *covered_pixels = covered;
+    presenter->lastError = S_OK;
+    return 1;
 }
 
 void jpb_PCD3D11PresenterWorldTiming(

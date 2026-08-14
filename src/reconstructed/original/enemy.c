@@ -144,6 +144,15 @@ static void getintank(
     wsl_ENEMY *enemy, int driver_index);
 static void getonstap(
     wsl_ENEMY *enemy, int driver_index);
+static JPBEnemyVehicleDiagnostics jpb_enemy_vehicle_diagnostics;
+
+void jpb_EnemyGetVehicleDiagnostics(
+    JPBEnemyVehicleDiagnostics *diagnostics)
+{
+    if (diagnostics != NULL) {
+        *diagnostics = jpb_enemy_vehicle_diagnostics;
+    }
+}
 
 /* 0x460F0, 211 bytes, global, 5 named locals
  * _addEnemy
@@ -752,6 +761,7 @@ int aisub_handleRangeFunction(
     int dist1 = 0x8000;
     int branchFlag = 0;
     int posCheck;
+    float compareThreshold = 0.0f;
 
     switch (rangeTarget) {
     case 0: {
@@ -863,10 +873,18 @@ int aisub_handleRangeFunction(
     }
 
     if (compare < 6) {
+        /*
+         * Exact RVAs 0x47560..0x4757F multiply the authored float by the
+         * 256.0 constant at 0x28BA00, truncate to int, then convert back to
+         * float before aisub_compareFVariables. World/physics distances use
+         * the corresponding fixed-unit coordinate space.
+         */
+        compareThreshold =
+            (float)(int)(vars[2].f * 256.0f);
         int first = aisub_compareFVariables(
             (float)dist0,
             compare,
-            vars[2].f);
+            compareThreshold);
 
         posCheck = first;
         if (rangeTarget == 11 &&
@@ -878,7 +896,7 @@ int aisub_handleRangeFunction(
                 aisub_compareFVariables(
                     (float)dist1,
                     compare,
-                    vars[2].f);
+                    compareThreshold);
 
             posCheck = second;
             if (obj_gCheckObjectFlag(
@@ -894,6 +912,7 @@ int aisub_handleRangeFunction(
             (float)bpEnemy->pPlace->aiDf
                 .rangeExt[compare - 6];
 
+        compareThreshold = range;
         posCheck =
             (float)dist0 <= range;
         if (rangeTarget == 11 &&
@@ -917,8 +936,21 @@ int aisub_handleRangeFunction(
     }
 
     if (rangeTarget == 12) {
-        return branchFlag & posCheck;
+        posCheck = branchFlag & posCheck;
     }
+    ++jpb_enemy_vehicle_diagnostics.rangeEvaluationCount;
+    if (posCheck != 0) {
+        ++jpb_enemy_vehicle_diagnostics.rangeSuccessCount;
+    }
+    jpb_enemy_vehicle_diagnostics.lastRangeEnemyID =
+        bpEnemy->enemyID;
+    jpb_enemy_vehicle_diagnostics.lastRangeTarget = rangeTarget;
+    jpb_enemy_vehicle_diagnostics.lastRangeCompare = compare;
+    jpb_enemy_vehicle_diagnostics.lastRangeDistance0 = dist0;
+    jpb_enemy_vehicle_diagnostics.lastRangeDistance1 = dist1;
+    jpb_enemy_vehicle_diagnostics.lastRangeThreshold =
+        compareThreshold;
+    jpb_enemy_vehicle_diagnostics.lastRangeResult = posCheck;
     return posCheck;
 }
 
@@ -1846,6 +1878,10 @@ void enemy_InitEnemies(void)
     int i;
 
     aisub_clearglobalflags();
+    memset(
+        &jpb_enemy_vehicle_diagnostics,
+        0,
+        sizeof(jpb_enemy_vehicle_diagnostics));
     list_InitList(&enemyList[0]);
     list_InitList(&enemyList[1]);
     list_InitList(&enemyFreeList);
@@ -3183,6 +3219,10 @@ jpb_enemy_execute_authored_opcode(
 
         variables = jpb_enemy_resolve_opcode_variables(
             enemy, node, 2);
+        ++jpb_enemy_vehicle_diagnostics.opcode607Count;
+        jpb_enemy_vehicle_diagnostics.lastOpcode607SourceID =
+            enemy->enemyID;
+        jpb_enemy_vehicle_diagnostics.lastOpcode607Stage = 1;
         if (variables == NULL ||
             enemy->pPlace == NULL ||
             gpWorld == NULL ||
@@ -3190,18 +3230,33 @@ jpb_enemy_execute_authored_opcode(
             return JPB_ENEMY_OPCODE_PARSE_INVALID_DATA;
         }
         extension = variables[1].si;
+        jpb_enemy_vehicle_diagnostics.lastOpcode607Extension =
+            extension;
+        jpb_enemy_vehicle_diagnostics.lastOpcode607Stage = 2;
         if (extension < 0 || extension >= 12) {
             return JPB_ENEMY_OPCODE_PARSE_INVALID_DATA;
         }
         enemy_id =
             enemy->pPlace->aiDf.enemyExt[extension];
+        jpb_enemy_vehicle_diagnostics.lastOpcode607LinkedEnemyID =
+            enemy_id;
+        jpb_enemy_vehicle_diagnostics.lastOpcode607Stage = 3;
         if (enemy_id < 0 ||
             enemy_id >= gpWorld->nEnemy ||
             gpWorld->apEnemy[enemy_id] == NULL) {
             return JPB_ENEMY_OPCODE_PARSE_INVALID_DATA;
         }
+        /*
+         * Exact opcode 0x607 RVAs 0x4A922..0x4A946 read the linked
+         * placement's pLastEnemy field and pass it directly to getPtr type
+         * 6. enemy_getPointerIndex is used by other linked-enemy paths, but
+         * its level-specific adjustment does not belong to vehicle entry.
+         */
         pointer_index =
-            enemy_getPointerIndex(enemy_id);
+            (int)gpWorld->apEnemy[enemy_id]->pLastEnemy;
+        jpb_enemy_vehicle_diagnostics.lastOpcode607PointerIndex =
+            pointer_index;
+        jpb_enemy_vehicle_diagnostics.lastOpcode607Stage = 4;
         vehicle_enemy =
             pointer_index < 0
                 ? NULL
@@ -3215,6 +3270,19 @@ jpb_enemy_execute_authored_opcode(
             return JPB_ENEMY_OPCODE_PARSE_COMPLETE;
         }
         vehicle = vehicle_enemy->pPlayer;
+        jpb_enemy_vehicle_diagnostics.lastOpcode607PlayerID =
+            vehicle->playerID;
+        jpb_enemy_vehicle_diagnostics.lastOpcode607CallbackIndex = -1;
+        for (pointer_index = 0;
+             pointer_index < JPB_PLAYER_CALLBACK_CAPACITY;
+             ++pointer_index) {
+            if (vehicle->pMainCallBack == funcArray[pointer_index]) {
+                jpb_enemy_vehicle_diagnostics
+                    .lastOpcode607CallbackIndex = pointer_index;
+                break;
+            }
+        }
+        jpb_enemy_vehicle_diagnostics.lastOpcode607Stage = 5;
         vehicle_scene =
             (sceneObject *)
                 vehicle->playerRoot.pParent;
@@ -3224,6 +3292,7 @@ jpb_enemy_execute_authored_opcode(
         if (vehicle_physics == NULL) {
             return JPB_ENEMY_OPCODE_PARSE_INVALID_DATA;
         }
+        jpb_enemy_vehicle_diagnostics.lastOpcode607Stage = 6;
 
         if (vehicle->playerID == 0x23) {
             int driver_index;
@@ -3274,6 +3343,9 @@ jpb_enemy_execute_authored_opcode(
             vehicle->pMainCallBack !=
                 funcArray[31]) {
             int driver_index;
+
+            ++jpb_enemy_vehicle_diagnostics.stapCandidateCount;
+            jpb_enemy_vehicle_diagnostics.lastOpcode607Stage = 7;
 
             for (driver_index = 0;
                  driver_index < 2;
@@ -3860,7 +3932,8 @@ static void getintank(
     driver_flag =
         UINT32_C(1) <<
         (unsigned)(driver_index + 26);
-    vehicle->pFlags |= driver_flag;
+    /* Exact getintank RVA 0x4B96C stores the rider bit at enemy + 0x28. */
+    enemy->enemyFlags |= driver_flag;
     (void)game_gSetEnergy(
         vehicle->playernum, 0xfe);
     vehicle->pMainCallBack = funcArray[30];
@@ -3889,6 +3962,8 @@ static void getonstap(
     physicsObject *driver_physics;
     physicsObject *vehicle_physics;
     uint32_t driver_flag;
+
+    ++jpb_enemy_vehicle_diagnostics.stapAttachAttemptCount;
 
     if (enemy == NULL ||
         enemy->pPlayer == NULL ||
@@ -3921,6 +3996,9 @@ static void getonstap(
         return;
     }
 
+    jpb_enemy_vehicle_diagnostics.lastStapPositionBeforeAttach =
+        vehicle_physics->pos;
+
     stapbikeindex[driver_index] =
         vehicle->playerRoot.objectID + 1;
     (void)animctrl_MotionNoLock(
@@ -3931,13 +4009,19 @@ static void getonstap(
          UINT32_C(0xffffffe0)) |
         (uint32_t)vehicle->playerRoot.objectID |
         UINT32_C(0x4000a0);
-    vehicle_physics->flags |=
+    /*
+     * Exact getonstap RVAs 0x4BAA0..0x4BAC1 address motion 78 through
+     * driver->paMotions, then OR its motionFlags.  These are animation
+     * ownership bits, not vehicle physics flags.
+     */
+    driver->paMotions[78].motionFlags |=
         UINT32_C(0xc0000000);
     driver_physics->solidgrabbed = NULL;
     driver_flag =
         UINT32_C(1) <<
         (unsigned)(driver_index + 26);
-    vehicle->pFlags |= driver_flag;
+    /* Exact getonstap RVA 0x4BACD stores the rider bit at enemy + 0x28. */
+    enemy->enemyFlags |= driver_flag;
     vehicle_physics->flags |=
         UINT32_C(0x400000);
     (void)game_gSetEnergy(
@@ -3945,4 +4029,7 @@ static void getonstap(
     vehicle_physics->airTime = 0;
     vehicle->pMainCallBack = funcArray[31];
     stapsound = 0;
+    jpb_enemy_vehicle_diagnostics.lastStapPositionAfterAttach =
+        vehicle_physics->pos;
+    ++jpb_enemy_vehicle_diagnostics.stapAttachSuccessCount;
 }

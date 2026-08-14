@@ -155,7 +155,7 @@ static int camera_player_active(playerObject *player)
         player->playerRoot.objectID != -1 &&
         obj_gCheckObjectFlag(
             &player->playerRoot, 0, UINT32_C(0x20)) == 0 &&
-        (player->playerRoot.flags & UINT32_C(0x40200)) == 0;
+        (player->pFlags & UINT32_C(0x40200)) == 0;
 }
 
 static physicsObject *camera_player_physics(playerObject *player)
@@ -896,16 +896,6 @@ void camera_SetCurrentCameraType(int type)
     if (jpb_current_camera_type != type) {
         jpb_current_camera_type = type;
         if (type == 5) {
-            uint32_t player_y_bits;
-
-            /*
-             * The reference copies the raw pos.vy word into VECTOR.vy,
-             * rather than performing a float-to-integer conversion.
-             */
-            memcpy(
-                &player_y_bits,
-                &maPhysicsData[0].pos.vy,
-                sizeof(player_y_bits));
             Camera *camera =
                 jpb_current_camera != NULL
                     ? jpb_current_camera
@@ -913,7 +903,9 @@ void camera_SetCurrentCameraType(int type)
 
             streetcampos.vx =
                 (int32_t)camera->focus.vx - 0x100;
-            streetcampos.vy = (int32_t)player_y_bits;
+            /* Exact RVA 0x248E4 uses CVTTSS2SI on player 0's pos.vy. */
+            streetcampos.vy =
+                (int32_t)maPhysicsData[0].pos.vy;
             streetcampos.vz =
                 (int32_t)camera->focus.vz;
         }

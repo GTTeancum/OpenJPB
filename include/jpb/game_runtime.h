@@ -31,6 +31,9 @@ enum JPBGameRuntimeResult {
     JPB_GAME_RUNTIME_RENDER_FAILED = -4
 };
 
+const char *jpb_GameRuntimeLastFailureStage(void);
+const char *jpb_GameRuntimeLastFailureDetail(void);
+
 enum {
     JPB_GAME_RUNTIME_ENEMY_CAPACITY =
         JPB_PLAYER_CAPACITY - 2,
@@ -254,6 +257,7 @@ typedef struct JPBGameRuntime {
     animObject *animation;
     playerObject *player;
     objectRoot inactivePlayerActorRoot;
+    modelObject inactivePlayerModel;
     sceneObject *inactivePlayerScene;
     physicsObject *inactivePlayerPhysics;
     playerObject *inactivePlayer;
@@ -326,6 +330,7 @@ typedef struct JPBGameRuntime {
     int16_t enemyMinimumEnergy;
     float lastEnemyRecoil;
     size_t worldLoadedTextures;
+    size_t worldDeclaredTextures;
     size_t worldRenderedPixels;
     size_t playerRenderedTriangles;
     size_t playerRenderedPixels;
