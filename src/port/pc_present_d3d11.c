@@ -101,6 +101,7 @@ struct JPBPCD3D11Presenter {
     ID3D11DepthStencilState *worldDepthWrite;
     ID3D11DepthStencilState *worldDepthRead;
     ID3D11RasterizerState *worldRasterizer;
+    ID3D11RasterizerState *worldScissorRasterizer;
     ID3D11SamplerState *worldSampler;
     ID3D11ShaderResourceView *worldWhiteView;
     ID3D11VertexShader *modelVertexShader;
@@ -897,6 +898,11 @@ static HRESULT pc_present_create_world_states(
         presenter->device, &raster_desc,
         &presenter->worldRasterizer);
     if (FAILED(result)) return result;
+    raster_desc.ScissorEnable = TRUE;
+    result = ID3D11Device_CreateRasterizerState(
+        presenter->device, &raster_desc,
+        &presenter->worldScissorRasterizer);
+    if (FAILED(result)) return result;
 
     memset(&depth_desc, 0, sizeof(depth_desc));
     depth_desc.DepthEnable = TRUE;
@@ -1193,7 +1199,7 @@ static ID3D11ShaderResourceView *pc_present_world_texture(
         source->width == 0 || source->height == 0 ||
         source->stridePixels < source->width ||
         source->width > UINT_MAX || source->height > UINT_MAX) {
-        return presenter->worldWhiteView;
+        return NULL;
     }
     for (index = 0; index < presenter->worldTextureCount; ++index) {
         cached = &presenter->worldTextures[index];
@@ -1371,8 +1377,11 @@ int jpb_PCD3D11PresenterPrewarmLevel(
         if (name == NULL || name[0] == '\0') continue;
         memset(&texture, 0, sizeof(texture));
         texture.colorOverride = -1;
-        if (resolve_texture(texture_user_data, name, &texture) &&
-            pc_present_world_texture(presenter, &texture) == NULL) {
+        if (!resolve_texture(texture_user_data, name, &texture)) {
+            presenter->lastError = E_INVALIDARG;
+            return 0;
+        }
+        if (pc_present_world_texture(presenter, &texture) == NULL) {
             presenter->lastError = E_OUTOFMEMORY;
             return 0;
         }
@@ -1478,16 +1487,63 @@ int jpb_PCD3D11PresenterScreenPolyTriangle(
         texture != NULL ? texture->materialType : 0);
 }
 
+static void pc_present_gameplay_scissor_rect(
+    const JPBSoftwareFramebuffer *framebuffer,
+    D3D11_RECT *rect)
+{
+    float viewport_x;
+    float viewport_y;
+    float viewport_width;
+    float viewport_height;
+    LONG left;
+    LONG top;
+    LONG right;
+    LONG bottom;
+
+    if (rect == NULL) {
+        return;
+    }
+    memset(rect, 0, sizeof(*rect));
+    if (framebuffer == NULL ||
+        framebuffer->width <= 0 ||
+        framebuffer->height <= 0) {
+        return;
+    }
+    jpb_PcGameplayViewport(
+        (float)framebuffer->width,
+        (float)framebuffer->height,
+        &viewport_x,
+        &viewport_y,
+        &viewport_width,
+        &viewport_height);
+    left = (LONG)floorf(viewport_x);
+    top = (LONG)floorf(viewport_y);
+    right = (LONG)ceilf(viewport_x + viewport_width);
+    bottom = (LONG)ceilf(viewport_y + viewport_height);
+    if (left < 0) left = 0;
+    if (top < 0) top = 0;
+    if (right > framebuffer->width) right = (LONG)framebuffer->width;
+    if (bottom > framebuffer->height) bottom = (LONG)framebuffer->height;
+    if (right < left) right = left;
+    if (bottom < top) bottom = top;
+    rect->left = left;
+    rect->top = top;
+    rect->right = right;
+    rect->bottom = bottom;
+}
+
 static HRESULT pc_present_submit_material_triangles(
     JPBPCD3D11Presenter *presenter,
     JPBSoftwareFramebuffer *framebuffer,
     int screen_polys,
+    int gameplay_scissor,
     double *upload_seconds,
     double *submit_seconds)
 {
     D3D11_BUFFER_DESC desc;
     D3D11_MAPPED_SUBRESOURCE mapped;
     D3D11_VIEWPORT viewport;
+    D3D11_RECT scissor_rect;
     ID3D11RenderTargetView *targets[2];
     ID3D11ShaderResourceView *null_view = NULL;
     UINT stride = sizeof(JPBSoftwareMaterialVertex);
@@ -1510,13 +1566,20 @@ static HRESULT pc_present_submit_material_triangles(
         }
         if (presenter->modelVertexCount >
             presenter->modelGpuVertexCapacity) {
+            size_t gpu_capacity = presenter->modelVertexCapacity;
+
+            if (gpu_capacity < presenter->modelVertexCount) {
+                gpu_capacity = presenter->modelVertexCount;
+            }
+            if (gpu_capacity > UINT_MAX / stride) {
+                return 0;
+            }
             if (presenter->modelVertexBuffer != NULL) {
                 ID3D11Buffer_Release(presenter->modelVertexBuffer);
                 presenter->modelVertexBuffer = NULL;
             }
             memset(&desc, 0, sizeof(desc));
-            desc.ByteWidth = (UINT)(
-                presenter->modelVertexCount * stride);
+            desc.ByteWidth = (UINT)(gpu_capacity * stride);
             desc.Usage = D3D11_USAGE_DYNAMIC;
             desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
             desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
@@ -1524,8 +1587,7 @@ static HRESULT pc_present_submit_material_triangles(
                 presenter->device, &desc, NULL,
                 &presenter->modelVertexBuffer);
             if (FAILED(result)) goto finish;
-            presenter->modelGpuVertexCapacity =
-                presenter->modelVertexCount;
+            presenter->modelGpuVertexCapacity = gpu_capacity;
         }
         result = ID3D11DeviceContext_Map(
             presenter->context,
@@ -1556,6 +1618,11 @@ static HRESULT pc_present_submit_material_triangles(
         viewport.MaxDepth = 1.0f;
         ID3D11DeviceContext_RSSetViewports(
             presenter->context, 1, &viewport);
+        if (gameplay_scissor) {
+            pc_present_gameplay_scissor_rect(framebuffer, &scissor_rect);
+            ID3D11DeviceContext_RSSetScissorRects(
+                presenter->context, 1, &scissor_rect);
+        }
         targets[0] = presenter->worldColorTarget;
         targets[1] = presenter->worldLinearDepthTarget;
         ID3D11DeviceContext_OMSetRenderTargets(
@@ -1567,7 +1634,10 @@ static HRESULT pc_present_submit_material_triangles(
         ID3D11DeviceContext_OMSetDepthStencilState(
             presenter->context, presenter->worldDepthWrite, 0);
         ID3D11DeviceContext_RSSetState(
-            presenter->context, presenter->worldRasterizer);
+            presenter->context,
+            gameplay_scissor
+                ? presenter->worldScissorRasterizer
+                : presenter->worldRasterizer);
         ID3D11DeviceContext_IASetInputLayout(
             presenter->context, presenter->modelInputLayout);
         ID3D11DeviceContext_IASetPrimitiveTopology(
@@ -1626,6 +1696,8 @@ static HRESULT pc_present_submit_material_triangles(
             presenter->context, 0, 1, &null_view);
         ID3D11DeviceContext_OMSetRenderTargets(
             presenter->context, 0, NULL, NULL);
+        ID3D11DeviceContext_RSSetState(
+            presenter->context, presenter->worldRasterizer);
     }
     QueryPerformanceCounter(&submitted);
  finish:
@@ -1654,7 +1726,7 @@ int jpb_PCD3D11PresenterEndModels(
     if (presenter == NULL || framebuffer == NULL ||
         depth_buffer == NULL) return 0;
     result = pc_present_submit_material_triangles(
-        presenter, framebuffer, 0,
+        presenter, framebuffer, 0, 1,
         &upload_seconds, &submit_seconds);
     ++presenter->modelTimingFrames;
     presenter->modelUploadSeconds += upload_seconds;
@@ -1690,7 +1762,7 @@ int jpb_PCD3D11PresenterEndScreenPolys(
     if (presenter == NULL || framebuffer == NULL ||
         depth_buffer == NULL) return 0;
     result = pc_present_submit_material_triangles(
-        presenter, framebuffer, 1, NULL, NULL);
+        presenter, framebuffer, 1, 1, NULL, NULL);
     if (SUCCEEDED(result)) {
         for (y = 0; y < framebuffer->height; ++y) {
             memset(
@@ -1808,12 +1880,12 @@ static int pc_present_glow_constants(
     world_end.vx = (float)draw->end.vx;
     world_end.vy = (float)draw->end.vy;
     world_end.vz = (float)draw->end.vz;
-    if (jpb_ProjectPcToViewport(
+    if (jpb_ProjectPcGameplayToViewport(
             view, &world_start,
             (float)framebuffer->width,
             (float)framebuffer->height,
             &screen_start) != 0 ||
-        jpb_ProjectPcToViewport(
+        jpb_ProjectPcGameplayToViewport(
             view, &world_end,
             (float)framebuffer->width,
             (float)framebuffer->height,
@@ -1829,7 +1901,7 @@ static int pc_present_glow_constants(
     radius_point.vz = world_start.vz +
         view->m[0][2] * ((float)draw->radius * 0.5f);
     if (draw->radius > 0 &&
-        jpb_ProjectPcToViewport(
+        jpb_ProjectPcGameplayToViewport(
             view, &radius_point,
             (float)framebuffer->width,
             (float)framebuffer->height,
@@ -1840,7 +1912,20 @@ static int pc_present_glow_constants(
             radius_x * radius_x + radius_y * radius_y);
     }
     if (radius_pixels < 1.0f) radius_pixels = 1.0f;
-    if (radius_pixels > 48.0f) radius_pixels = 48.0f;
+    /*
+     * fx_screenGlow's width is the command's visible radius budget. Projecting
+     * a world-space half-width keeps distant glows from becoming too thin, but
+     * close camera tracks must not magnify the blade beyond the authored
+     * radius and turn normal sabers into fat bars.
+     */
+    {
+        float radius_limit =
+            draw->radius > 0 ? (float)draw->radius : 1.0f;
+
+        if (radius_pixels > radius_limit) {
+            radius_pixels = radius_limit;
+        }
+    }
     memset(constants, 0, sizeof(*constants));
     constants->endpoints[0] = screen_start.vx;
     constants->endpoints[1] = screen_start.vy;
@@ -1874,12 +1959,14 @@ static HRESULT pc_present_submit_glows(
 {
     D3D11_MAPPED_SUBRESOURCE mapped;
     D3D11_VIEWPORT viewport;
+    D3D11_RECT scissor_rect;
     ID3D11ShaderResourceView *null_view = NULL;
     size_t draw_index;
     memset(&viewport, 0, sizeof(viewport));
     viewport.Width = (float)framebuffer->width;
     viewport.Height = (float)framebuffer->height;
     viewport.MaxDepth = 1.0f;
+    pc_present_gameplay_scissor_rect(framebuffer, &scissor_rect);
     ID3D11DeviceContext_OMSetRenderTargets(
         presenter->context, 1,
         &presenter->gameplayCompositeTarget,
@@ -1888,9 +1975,12 @@ static HRESULT pc_present_submit_glows(
         presenter->context, presenter->worldAdditiveBlend,
         NULL, UINT_MAX);
     ID3D11DeviceContext_RSSetState(
-        presenter->context, presenter->worldRasterizer);
+        presenter->context,
+        presenter->worldScissorRasterizer);
     ID3D11DeviceContext_RSSetViewports(
         presenter->context, 1, &viewport);
+    ID3D11DeviceContext_RSSetScissorRects(
+        presenter->context, 1, &scissor_rect);
     ID3D11DeviceContext_IASetInputLayout(
         presenter->context, NULL);
     ID3D11DeviceContext_IASetPrimitiveTopology(
@@ -1929,6 +2019,8 @@ static HRESULT pc_present_submit_glows(
         presenter->context, 0, 1, &null_view);
     ID3D11DeviceContext_OMSetRenderTargets(
         presenter->context, 0, NULL, NULL);
+    ID3D11DeviceContext_RSSetState(
+        presenter->context, presenter->worldRasterizer);
     if (stats != NULL) {
         stats->lines += draw_count;
         stats->modelLines += draw_count;
@@ -2150,7 +2242,7 @@ int jpb_PCD3D11PresenterRenderTitleScreenDraws(
     }
     QueryPerformanceCounter(&prepared);
     result = pc_present_submit_material_triangles(
-        presenter, framebuffer, 1, NULL, NULL);
+        presenter, framebuffer, 1, 0, NULL, NULL);
     QueryPerformanceCounter(&submitted);
     if (SUCCEEDED(result)) {
         ID3D11DeviceContext_CopyResource(
@@ -2317,6 +2409,7 @@ void jpb_PCD3D11PresenterDestroy(JPBPCD3D11Presenter *presenter)
     if (presenter->modelVertexShader != NULL) ID3D11VertexShader_Release(presenter->modelVertexShader);
     if (presenter->worldWhiteView != NULL) ID3D11ShaderResourceView_Release(presenter->worldWhiteView);
     if (presenter->worldSampler != NULL) ID3D11SamplerState_Release(presenter->worldSampler);
+    if (presenter->worldScissorRasterizer != NULL) ID3D11RasterizerState_Release(presenter->worldScissorRasterizer);
     if (presenter->worldRasterizer != NULL) ID3D11RasterizerState_Release(presenter->worldRasterizer);
     if (presenter->worldDepthRead != NULL) ID3D11DepthStencilState_Release(presenter->worldDepthRead);
     if (presenter->worldDepthWrite != NULL) ID3D11DepthStencilState_Release(presenter->worldDepthWrite);
@@ -2474,7 +2567,12 @@ int jpb_PCD3D11PresenterPresent(
     ID3D11DeviceContext_Draw(presenter->context, 3, 0);
     ID3D11DeviceContext_PSSetShaderResources(
         presenter->context, 0, 1, &null_view);
-    result = IDXGISwapChain_Present(presenter->swapChain, 0, 0);
+    result = IDXGISwapChain_Present(
+        presenter->swapChain, 0, DXGI_PRESENT_DO_NOT_WAIT);
+    if (result == DXGI_ERROR_WAS_STILL_DRAWING) {
+        presenter->lastError = S_OK;
+        return 1;
+    }
     presenter->lastError = result;
     return SUCCEEDED(result);
 }
@@ -2491,9 +2589,11 @@ long jpb_PCD3D11PresenterLastError(
     return presenter != NULL ? (long)presenter->lastError : (long)E_POINTER;
 }
 
-int jpb_PCD3D11PresenterRenderLevel(
+static int pc_present_render_level_range(
     JPBPCD3D11Presenter *presenter,
     const JPBSoftwareLevelMesh *mesh,
+    int first_pass,
+    int last_pass,
     const JPBSoftwareJpxScene *world_scene,
     MATRIX *view_matrix,
     JPBSoftwareFramebuffer *framebuffer,
@@ -2515,6 +2615,10 @@ int jpb_PCD3D11PresenterRenderLevel(
         1.0f
     };
     float depth_clear[4] = {FLT_MAX, 0.0f, 0.0f, 0.0f};
+    float gameplay_viewport_x;
+    float gameplay_viewport_y;
+    float gameplay_viewport_width;
+    float gameplay_viewport_height;
     UINT stride = sizeof(JPBSoftwareLevelVertex);
     UINT offset = 0;
     size_t vertex_offset = 0;
@@ -2538,8 +2642,20 @@ int jpb_PCD3D11PresenterRenderLevel(
         depth_buffer->strideValues < (size_t)framebuffer->width) {
         return -1;
     }
+    if (first_pass < JPB_LEVEL_FBX_PASS_OPAQUE ||
+        last_pass > JPB_LEVEL_FBX_PASS_GLASS ||
+        first_pass > last_pass) {
+        return -1;
+    }
     QueryPerformanceFrequency(&frequency);
     QueryPerformanceCounter(&started);
+    jpb_PcGameplayViewport(
+        (float)framebuffer->width,
+        (float)framebuffer->height,
+        &gameplay_viewport_x,
+        &gameplay_viewport_y,
+        &gameplay_viewport_width,
+        &gameplay_viewport_height);
     result = pc_present_create_world_targets(
         presenter, framebuffer->width, framebuffer->height);
     if (SUCCEEDED(result)) {
@@ -2575,7 +2691,7 @@ int jpb_PCD3D11PresenterRenderLevel(
         1.0f / tanf(0.9250245094299316f * 0.5f);
     constants->projection[0] =
         constants->projection[1] *
-        (float)framebuffer->height / (float)framebuffer->width;
+        gameplay_viewport_height / gameplay_viewport_width;
     constants->projection[2] = 10000.0f / 9999.0f;
     constants->projection[3] = -10000.0f / 9999.0f;
     memset(constants->transparentPass, 0,
@@ -2586,19 +2702,23 @@ int jpb_PCD3D11PresenterRenderLevel(
 
     targets[0] = presenter->worldColorTarget;
     targets[1] = presenter->worldLinearDepthTarget;
-    ID3D11DeviceContext_ClearRenderTargetView(
-        presenter->context, targets[0], color_clear);
-    ID3D11DeviceContext_ClearRenderTargetView(
-        presenter->context, targets[1], depth_clear);
-    ID3D11DeviceContext_ClearDepthStencilView(
-        presenter->context, presenter->worldDepthTarget,
-        D3D11_CLEAR_DEPTH, 1.0f, 0);
+    if (first_pass == JPB_LEVEL_FBX_PASS_OPAQUE) {
+        ID3D11DeviceContext_ClearRenderTargetView(
+            presenter->context, targets[0], color_clear);
+        ID3D11DeviceContext_ClearRenderTargetView(
+            presenter->context, targets[1], depth_clear);
+        ID3D11DeviceContext_ClearDepthStencilView(
+            presenter->context, presenter->worldDepthTarget,
+            D3D11_CLEAR_DEPTH, 1.0f, 0);
+    }
     ID3D11DeviceContext_OMSetRenderTargets(
         presenter->context, 2, targets,
         presenter->worldDepthTarget);
     memset(&viewport, 0, sizeof(viewport));
-    viewport.Width = (float)framebuffer->width;
-    viewport.Height = (float)framebuffer->height;
+    viewport.TopLeftX = gameplay_viewport_x;
+    viewport.TopLeftY = gameplay_viewport_y;
+    viewport.Width = gameplay_viewport_width;
+    viewport.Height = gameplay_viewport_height;
     viewport.MaxDepth = 1.0f;
     ID3D11DeviceContext_RSSetViewports(
         presenter->context, 1, &viewport);
@@ -2622,8 +2742,8 @@ int jpb_PCD3D11PresenterRenderLevel(
     ID3D11DeviceContext_PSSetSamplers(
         presenter->context, 0, 1, &presenter->worldSampler);
 
-    for (pass = JPB_LEVEL_FBX_PASS_OPAQUE;
-         pass <= JPB_LEVEL_FBX_PASS_GLASS; ++pass) {
+    for (pass = first_pass;
+         pass <= last_pass; ++pass) {
         ID3D11BlendState *blend =
             pass == JPB_LEVEL_FBX_PASS_OPAQUE
                 ? presenter->worldOpaqueBlend
@@ -2656,7 +2776,7 @@ int jpb_PCD3D11PresenterRenderLevel(
         constants->projection[1] =
             1.0f / tanf(0.9250245094299316f * 0.5f);
         constants->projection[0] = constants->projection[1] *
-            (float)framebuffer->height / (float)framebuffer->width;
+            gameplay_viewport_height / gameplay_viewport_width;
         constants->projection[2] = 10000.0f / 9999.0f;
         constants->projection[3] = -10000.0f / 9999.0f;
         constants->transparentPass[0] =
@@ -2692,10 +2812,15 @@ int jpb_PCD3D11PresenterRenderLevel(
                 memset(&texture, 0, sizeof(texture));
                 texture.colorOverride = -1;
                 if (batch->textureName != NULL &&
-                    resolve_texture != NULL &&
-                    resolve_texture(
-                        texture_user_data, batch->textureName,
-                        &texture)) {
+                    batch->textureName[0] != '\0') {
+                    if (resolve_texture == NULL ||
+                        !resolve_texture(
+                            texture_user_data,
+                            batch->textureName,
+                            &texture)) {
+                        result = E_INVALIDARG;
+                        break;
+                    }
                     view = pc_present_world_texture(
                         presenter, &texture);
                 }
@@ -2736,13 +2861,17 @@ int jpb_PCD3D11PresenterRenderLevel(
         presenter->lastError = result;
         return -1;
     }
-    ID3D11DeviceContext_CopyResource(
-        presenter->context,
-        (ID3D11Resource *)presenter->worldLinearDepthSnapshot,
-        (ID3D11Resource *)presenter->worldLinearDepth);
+    if (last_pass == JPB_LEVEL_FBX_PASS_GLASS) {
+        ID3D11DeviceContext_CopyResource(
+            presenter->context,
+            (ID3D11Resource *)presenter->worldLinearDepthSnapshot,
+            (ID3D11Resource *)presenter->worldLinearDepth);
+    }
     QueryPerformanceCounter(&submitted);
     QueryPerformanceCounter(&finished);
-    ++presenter->worldTimingFrames;
+    if (last_pass == JPB_LEVEL_FBX_PASS_GLASS) {
+        ++presenter->worldTimingFrames;
+    }
     presenter->worldPrepareSeconds +=
         (double)(prepared.QuadPart - started.QuadPart) /
         (double)frequency.QuadPart;
@@ -2754,6 +2883,61 @@ int jpb_PCD3D11PresenterRenderLevel(
         (double)frequency.QuadPart;
     presenter->lastError = result;
     return SUCCEEDED(result) ? 0 : -1;
+}
+
+int jpb_PCD3D11PresenterRenderLevelPass(
+    JPBPCD3D11Presenter *presenter,
+    const JPBSoftwareLevelMesh *mesh,
+    JPBLevelFbxMeshPass pass,
+    const JPBSoftwareJpxScene *world_scene,
+    MATRIX *view_matrix,
+    JPBSoftwareFramebuffer *framebuffer,
+    uint32_t clear_color,
+    JPBPCPresentTextureResolver resolve_texture,
+    void *texture_user_data,
+    JPBSoftwareDepthBuffer *depth_buffer,
+    JPBSoftwareRenderStats *stats)
+{
+    return pc_present_render_level_range(
+        presenter,
+        mesh,
+        (int)pass,
+        (int)pass,
+        world_scene,
+        view_matrix,
+        framebuffer,
+        clear_color,
+        resolve_texture,
+        texture_user_data,
+        depth_buffer,
+        stats);
+}
+
+int jpb_PCD3D11PresenterRenderLevel(
+    JPBPCD3D11Presenter *presenter,
+    const JPBSoftwareLevelMesh *mesh,
+    const JPBSoftwareJpxScene *world_scene,
+    MATRIX *view_matrix,
+    JPBSoftwareFramebuffer *framebuffer,
+    uint32_t clear_color,
+    JPBPCPresentTextureResolver resolve_texture,
+    void *texture_user_data,
+    JPBSoftwareDepthBuffer *depth_buffer,
+    JPBSoftwareRenderStats *stats)
+{
+    return pc_present_render_level_range(
+        presenter,
+        mesh,
+        JPB_LEVEL_FBX_PASS_OPAQUE,
+        JPB_LEVEL_FBX_PASS_GLASS,
+        world_scene,
+        view_matrix,
+        framebuffer,
+        clear_color,
+        resolve_texture,
+        texture_user_data,
+        depth_buffer,
+        stats);
 }
 
 int jpb_PCD3D11PresenterFinalWorldCoverage(

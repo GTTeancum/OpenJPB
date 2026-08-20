@@ -85,27 +85,27 @@ CVECTOR gJediColourLegacy[JPB_JEDI_COLOUR_STORAGE_COUNT] = {
     {0x00, 0x00, 0x00, 0x00},
 };
 CVECTOR gJediColourCanon[JPB_JEDI_COLOUR_STORAGE_COUNT] = {
-    {0xf8, 0x80, 0x38, 0x1b},
+    {0xff, 0xa6, 0x45, 0x1b},
     {0x3c, 0xc0, 0x01, 0x00},
-    {0xfe, 0x6e, 0xa7, 0x00},
-    {0xf8, 0x80, 0x38, 0x1b},
-    {0xf8, 0x80, 0x38, 0x1b},
-    {0x10, 0x10, 0xc0, 0x01},
+    {0xff, 0x70, 0xd8, 0x00},
+    {0xff, 0xa6, 0x45, 0x1b},
+    {0xff, 0xa6, 0x45, 0x1b},
+    {0x34, 0x34, 0xff, 0x01},
     {0x01, 0xf0, 0x58, 0x00},
-    {0xf8, 0x80, 0x38, 0x1b},
-    {0xf8, 0x80, 0x38, 0x1b},
+    {0xff, 0xa6, 0x45, 0x1b},
+    {0xff, 0xa6, 0x45, 0x1b},
     {0x00, 0x00, 0x00, 0x00},
 };
 CVECTOR gJediColourCurrent[JPB_JEDI_COLOUR_STORAGE_COUNT] = {
-    {0xf8, 0x80, 0x38, 0x1b},
+    {0xff, 0xa6, 0x45, 0x1b},
     {0x3c, 0xc0, 0x01, 0x00},
-    {0xfe, 0x6e, 0xa7, 0x00},
-    {0xf8, 0x80, 0x38, 0x1b},
-    {0xf8, 0x80, 0x38, 0x1b},
-    {0x10, 0x10, 0xc0, 0x01},
+    {0xff, 0x70, 0xd8, 0x00},
+    {0xff, 0xa6, 0x45, 0x1b},
+    {0xff, 0xa6, 0x45, 0x1b},
+    {0x34, 0x34, 0xff, 0x01},
     {0x01, 0xf0, 0x58, 0x00},
-    {0xf8, 0x80, 0x38, 0x1b},
-    {0xf8, 0x80, 0x38, 0x1b},
+    {0xff, 0xa6, 0x45, 0x1b},
+    {0xff, 0xa6, 0x45, 0x1b},
     {0x00, 0x00, 0x00, 0x00},
 };
 int *gJediColorSprite = gJediColorSpriteCurrent;
@@ -829,6 +829,18 @@ static int jedi_sabre_dir = 1;
 static int jedi_sabre_dir2 = 1;
 static int jedi_sabre_height = 2;
 
+enum {
+    JPB_SABRE_NORMAL_EXTENT = 0x70,
+    JPB_SABRE_NORMAL_OUTER_MIN = 0x0e,
+    JPB_SABRE_NORMAL_OUTER_SPREAD = 6,
+    JPB_SABRE_NORMAL_CORE_WIDTH = 2,
+    JPB_SABRE_LONG_EXTENT = 0xc4,
+    JPB_SABRE_LONG_OUTER_MIN = 0x18,
+    JPB_SABRE_LONG_OUTER_SPREAD = 8,
+    JPB_SABRE_LONG_CORE_WIDTH = 6,
+    JPB_SABRE_POWER_GLOW_WIDTH = 0x10
+};
+
 static int16_t jedi_sabre_scaled_component(
     int component, int scale)
 {
@@ -948,7 +960,7 @@ static void jedi_draw_sabre_blade(
     if (!jedi_sabre_endpoints(
             base,
             tip,
-            0x70,
+            JPB_SABRE_NORMAL_EXTENT,
             second_blade ? 1 : -1,
             second_blade ? 0x20 : 0,
             &outer,
@@ -958,10 +970,12 @@ static void jedi_draw_sabre_blade(
     fx_screenGlow(
         &outer,
         &inner,
-        rand() % 6 + 0xe,
+        rand() % JPB_SABRE_NORMAL_OUTER_SPREAD +
+            JPB_SABRE_NORMAL_OUTER_MIN,
         blade_color);
     fx_screenGlow(
-        &outer, &inner, 2, UINT32_C(0xffffffff));
+        &outer, &inner,
+        JPB_SABRE_NORMAL_CORE_WIDTH, UINT32_C(0xffffffff));
     if (player->subOffset != 0 && player->pMotion != NULL &&
         *player->pMotion != NULL &&
         (*player->pMotion)->Damage > 1) {
@@ -1022,7 +1036,7 @@ static void jedi_draw_power_sabre(
     end.vz = (int16_t)tip->v3RotCenter.vz;
     end.pad = 0;
     fx_screenGlow(
-        &start, &end, 0x10,
+        &start, &end, JPB_SABRE_POWER_GLOW_WIDTH,
         color | UINT32_C(0xff000000));
     (void)normalize(
         base->v3RotCenter.vx - tip->v3RotCenter.vx,
@@ -1098,13 +1112,19 @@ static void jedi_draw_long_sabre(
     uint32_t blade_color = color | UINT32_C(0x7f000000);
 
     if (!jedi_sabre_endpoints(
-            base, tip, 0xc4, -1, 0, &outer, &inner)) {
+            base, tip, JPB_SABRE_LONG_EXTENT, -1, 0,
+            &outer, &inner)) {
         return;
     }
     fx_screenGlow(
-        &outer, &inner, (rand() & 7) + 0x18, blade_color);
+        &outer,
+        &inner,
+        (rand() & (JPB_SABRE_LONG_OUTER_SPREAD - 1)) +
+            JPB_SABRE_LONG_OUTER_MIN,
+        blade_color);
     fx_screenGlow(
-        &outer, &inner, 6, UINT32_C(0xffffffff));
+        &outer, &inner,
+        JPB_SABRE_LONG_CORE_WIDTH, UINT32_C(0xffffffff));
     if (player->subOffset != 0 && player->pMotion != NULL &&
         *player->pMotion != NULL &&
         (*player->pMotion)->Damage > 1) {

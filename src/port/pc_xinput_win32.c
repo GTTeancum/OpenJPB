@@ -6,8 +6,42 @@
 #include <string.h>
 
 enum {
-    JPB_PC_XINPUT_MAX_USERS = 4
+    JPB_PC_XINPUT_MAX_USERS = 4,
+    JPB_PC_XINPUT_LEFT_THUMB_DEADZONE = 7849
 };
+
+static void jpb_pc_xinput_condition_left_stick(
+    JPBPCXInputGamepad *gamepad)
+{
+    float x;
+    float y;
+    float magnitude;
+    float normalized_magnitude;
+    float scale;
+
+    if (gamepad == NULL) {
+        return;
+    }
+    x = (float)gamepad->thumbLX;
+    y = (float)gamepad->thumbLY;
+    magnitude = sqrtf(x * x + y * y);
+    if (magnitude <= (float)JPB_PC_XINPUT_LEFT_THUMB_DEADZONE) {
+        gamepad->thumbLX = 0;
+        gamepad->thumbLY = 0;
+        return;
+    }
+
+    if (magnitude > 32767.0f) {
+        magnitude = 32767.0f;
+    }
+    normalized_magnitude =
+        (magnitude - (float)JPB_PC_XINPUT_LEFT_THUMB_DEADZONE) /
+        (32767.0f - (float)JPB_PC_XINPUT_LEFT_THUMB_DEADZONE);
+    scale = normalized_magnitude * 32767.0f /
+            sqrtf(x * x + y * y);
+    gamepad->thumbLX = (int16_t)(x * scale);
+    gamepad->thumbLY = (int16_t)(y * scale);
+}
 
 static float jpb_pc_xinput_limit(uint8_t percentage)
 {
@@ -63,7 +97,9 @@ uint32_t jpb_PCXInputMapGamepad(
         x = 0.0f;
         y = 0.0f;
     }
-    if (sqrtf(raw_x * raw_x + raw_y * raw_y) > run_threshold) {
+    if ((bits & (JPB_PAD_UP | JPB_PAD_LEFT |
+                 JPB_PAD_DOWN | JPB_PAD_RIGHT)) != 0 &&
+        sqrtf(raw_x * raw_x + raw_y * raw_y) > run_threshold) {
         bits |= JPB_PAD_ANALOG_MOVEMENT;
     }
 
@@ -243,6 +279,10 @@ int jpb_PCXInputReadUser(
         xinput->connectedMask &= ~(UINT32_C(1) << user_index);
         return 0;
     }
+    /* XInput reports raw stick values and defines this deadzone for the left
+     * thumbstick. Condition at the backend boundary before applying the
+     * recovered game's authored walk/run thresholds. */
+    jpb_pc_xinput_condition_left_stick(&state.gamepad);
     if (pad_bits != NULL) {
         *pad_bits = jpb_PCXInputMapGamepad(
             &state.gamepad,

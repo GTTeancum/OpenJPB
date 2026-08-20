@@ -105,6 +105,33 @@ typedef void (*JPBPlayerProcessObserver)(
     const int32_t *cpad,
     void *user_data);
 
+typedef struct JPBPlayerFrameProfile {
+    double lastTotalSeconds;
+    double lastCollisionsSeconds;
+    double lastGlobalBitsSeconds;
+    double lastMapTriggersSeconds;
+    double lastLifeTileSeconds;
+    double lastDebugSeconds;
+    double lastInputSeconds;
+    double lastDamageTrackerSeconds;
+    double lastPauseSeconds;
+    double lastControlSeconds;
+    double maxTotalSeconds;
+    double maxCollisionsSeconds;
+    double maxGlobalBitsSeconds;
+    double maxMapTriggersSeconds;
+    double maxLifeTileSeconds;
+    double maxDebugSeconds;
+    double maxInputSeconds;
+    double maxDamageTrackerSeconds;
+    double maxPauseSeconds;
+    double maxControlSeconds;
+    uint32_t lastActivePlayers;
+    uint32_t maxActivePlayers;
+    int32_t maxControlPlayerIndex;
+    int32_t maxControlPlayerId;
+} JPBPlayerFrameProfile;
+
 /*
  * Portable realization seam for exact PDB procedure _DrawTile. Geometry is
  * still authored and scheduled by player.c; a platform renderer consumes
@@ -270,6 +297,8 @@ playerObject *player_gGetNewPlayerObject(int ID);
 playerObject *player_gGetPlayerPtr(int index);
 void player_gInitPlayers(int start);
 void player_gProcessPlayers(void);
+void jpb_PlayerGetFrameProfile(JPBPlayerFrameProfile *profile);
+void jpb_PlayerSetFrameProfileEnabled(int enabled);
 void jpb_PlayerSetProcessObserver(
     JPBPlayerProcessObserver observer,
     void *user_data);

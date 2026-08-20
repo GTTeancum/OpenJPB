@@ -2066,7 +2066,7 @@ Completed:
   interactive report.
 - Closed the automated coverage gap behind that report without replacing the
   installed executable. The PC host now supports dependency-free
-  `--hidden-window` and `--scripted-input` diagnostics, with presentation-safe
+  `--hidden-window` and `--control-harness` diagnostics, with presentation-safe
   `--input-phase*` aliases. The former constructs the real Win32 window but
   deliberately neither shows it nor enables persistence; the latter drives
   the ordinary menu/input provider in the non-headless loop. A new serialized

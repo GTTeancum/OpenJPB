@@ -12,6 +12,7 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CHECK(condition)                                                     \
@@ -26,15 +27,12 @@
 
 static int test_lerp(void)
 {
-    CHECK(camLerp(10, 30, 0.0) == 10);
-    CHECK(camLerp(10, 30, 0.5) == 20);
-    CHECK(camLerp(10, 30, 1.0) == 30);
-    CHECK(camLerp(30, 10, 0.25) == 25);
-    CHECK(camLerp(-10, 11, 0.5) == 0);
-    CHECK(camLerp(10, 30, -0.5) == 0);
-    CHECK(camLerp(10, 30, 2.0) == 50);
-    CHECK(camLerp(0, 1, NAN) == 0);
-    CHECK(camLerp(0, INT16_MAX, 2.0) == -2);
+    CHECK(camLerp(10, 30, 0.0) == 610);
+    CHECK(camLerp(10, 30, 1.0) == 610);
+    CHECK(camLerp(30, 10, 0.25) == -170);
+    CHECK(camLerp(-10, 11, 0.5) == 221);
+    CHECK(camLerp(0, 1, NAN) == 1);
+    CHECK(camLerp(0, INT16_MAX, 2.0) == 1);
     CHECK(lerp(10.0, 30.0, 0.0) == 10.0);
     CHECK(lerp(10.0, 30.0, 0.5) == 20.0);
     CHECK(lerp(10.0, 30.0, 1.0) == 30.0);
@@ -297,14 +295,34 @@ static int test_gameplay_camera_owner(void)
     CHECK(gCamera.focusDest.vy == 220);
     CHECK(gCamera.focusDest.vz == 330);
 
+    memset(dolly, 0, sizeof(*dolly));
+    fixture.physics[0].mov.vx = 2.0f;
+    fixture.physics[0].mov.vy = 0.0f;
+    fixture.physics[0].mov.vz = 0.0f;
+    fixture.physics[1].mov.vx = -0.9f;
+    fixture.physics[1].mov.vy = 0.0f;
+    fixture.physics[1].mov.vz = 0.0f;
+    GameStruct.NumPlayers = 2;
+    gGlobalFrameRate = 0x800;
+    CHECK(camera_SetCameraPos(0) == 1);
+    {
+        _svector averaged_lead;
+
+        camera_GetLeadDiagnostics(&averaged_lead, NULL);
+        CHECK(averaged_lead.vx == 0);
+        CHECK(averaged_lead.vy == 0);
+        CHECK(averaged_lead.vz == 0);
+    }
+
     /*
      * camera_StuffCamera samples and normalizes the prior lead before it
      * advances the vector. With yaw zero, sustained +Z movement therefore
      * feeds the second frame's forward lead back into its acceleration.
      */
     memset(dolly, 0, sizeof(*dolly));
+    GameStruct.NumPlayers = 1;
+    fixture.physics[0].mov.vx = 0.0f;
     fixture.physics[0].mov.vz = 100.0f;
-    gGlobalFrameRate = 0x800;
     CHECK(camera_SetCameraPos(1) == 1);
     CHECK(gCamera.focusDest.vx == 1000);
     CHECK(gCamera.focusDest.vy == 2000);
@@ -313,6 +331,139 @@ static int test_gameplay_camera_owner(void)
     CHECK(gCamera.focusDest.vx == 1000);
     CHECK(gCamera.focusDest.vy == 2000);
     CHECK(gCamera.focusDest.vz == 3612);
+
+    {
+        _svector movement = {-100, 0, 1, 0};
+        _svector lead_before;
+        _svector lead_after;
+        _svector normalized_lead;
+        int32_t camera_lead;
+        int speed = normalize_svector(&movement, &movement);
+        int lead_speed;
+        int scale;
+        int decay;
+        int expected_x;
+
+        camera_GetLeadDiagnostics(&lead_before, NULL);
+        (void)normalize_svector(&lead_before, &normalized_lead);
+        camera_lead = DOT12(
+            &(_svector){0, 0, 4096, 0}, &normalized_lead);
+        lead_speed = flexmul(0x24a, gGlobalFrameRate);
+        if (camera_lead > 0) {
+            lead_speed += camera_lead / 16;
+        }
+        scale = speed * lead_speed /
+            flexmul(0x100, gGlobalFrameRate);
+        decay = 0x1000 - flexmul(0x18c, gGlobalFrameRate);
+        expected_x = flexmul(
+            lead_before.vx + flexmul12(movement.vx, scale), decay);
+
+        fixture.physics[0].mov.vx = -100.0f;
+        fixture.physics[0].mov.vz = 1.0f;
+        CHECK(camera_SetCameraPos(1) == 1);
+        camera_GetLeadDiagnostics(&lead_after, NULL);
+        CHECK(lead_after.vx == expected_x);
+    }
+
+    {
+        _svector movement = {INT16_MIN, 0, 0, 0};
+        _svector lead_before;
+        _svector lead_after;
+        _svector normalized_lead;
+        int32_t camera_lead;
+        int speed = normalize_svector(&movement, &movement);
+        int lead_speed;
+        int scale;
+        int decay;
+        int16_t accumulated_x;
+        int expected_x;
+        int expected_z;
+
+        camera_GetLeadDiagnostics(&lead_before, NULL);
+        (void)normalize_svector(&lead_before, &normalized_lead);
+        camera_lead = DOT12(
+            &(_svector){0, 0, 4096, 0}, &normalized_lead);
+        lead_speed = flexmul(0x24a, gGlobalFrameRate);
+        if (camera_lead > 0) {
+            lead_speed += camera_lead / 16;
+        }
+        scale = speed * lead_speed /
+            flexmul(0x100, gGlobalFrameRate);
+        decay = 0x1000 - flexmul(0x18c, gGlobalFrameRate);
+        accumulated_x = (int16_t)(
+            lead_before.vx + flexmul12(movement.vx, scale));
+        expected_x = flexmul(accumulated_x, decay);
+        expected_z = flexmul(lead_before.vz, decay);
+
+        fixture.physics[0].mov.vx = -32768.0f;
+        fixture.physics[0].mov.vz = 0.0f;
+        CHECK(camera_SetCameraPos(1) == 1);
+        camera_GetLeadDiagnostics(&lead_after, NULL);
+        CHECK(speed == 16384);
+        CHECK(lead_after.vx == expected_x);
+        CHECK(lead_after.vz == expected_z);
+    }
+
+    {
+        _svector lead_before;
+        _svector lead_after;
+
+        camera_GetLeadDiagnostics(&lead_before, NULL);
+        dolly->flags = UINT32_C(0x400);
+        dolly->offset.vx = 22267;
+        dolly->offset.vy = 3328;
+        dolly->offset.vz = -14364;
+        dolly->slackx = 249;
+        dolly->slackz = -491;
+        dolly->offx = 544;
+        fixture.physics[0].mov.vx = 500.0f;
+        fixture.physics[0].mov.vz = -500.0f;
+        CHECK(camera_SetCameraPos(1) == 1);
+        camera_GetLeadDiagnostics(&lead_after, NULL);
+        CHECK(lead_after.vx == lead_before.vx);
+        CHECK(lead_after.vy == lead_before.vy);
+        CHECK(lead_after.vz == lead_before.vz);
+        CHECK(gCamera.focusDest.vx == 22516);
+        CHECK(gCamera.focusDest.vy == 3872);
+        CHECK(gCamera.focusDest.vz == -14855);
+        CHECK(fixture.world.location.vx == 22267);
+        CHECK(fixture.world.location.vy == 3328);
+        CHECK(fixture.world.location.vz == -14364);
+    }
+
+    {
+        /* Exact FED camera 8 state from the shipped fed.cam record. */
+        dolly->flags = UINT32_C(0x103a);
+        dolly->pitch = 192;
+        dolly->yaw = 1024;
+        dolly->slacky = 96;
+        dolly->offy = 480;
+        dolly->slackx = 0;
+        dolly->offx = 960;
+        dolly->offset.vx = 8099;
+        dolly->offset.vy = 4576;
+        dolly->offset.vz = -9276;
+        dolly->slackz = 1024;
+        dolly->offz = 28;
+        fixture.physics[0].vpos.vx = 7040;
+        fixture.physics[0].vpos.vy = 4096;
+        fixture.physics[0].vpos.vz = -6400;
+        fixture.physics[0].pos.vx = 7040.0f;
+        fixture.physics[0].pos.vy = 4096.0f;
+        fixture.physics[0].pos.vz = -6400.0f;
+        fixture.physics[0].mov.vx = 0.0f;
+        fixture.physics[0].mov.vz = 0.0f;
+        gGlobalFrameRate = 0;
+        CHECK(camera_SetCameraPos(1) == 1);
+        CHECK(gCamera.focusDest.vx == 8099);
+        CHECK(gCamera.focusDest.vy == 4576);
+        CHECK(gCamera.focusDest.vz == -8252);
+        CHECK(gCamera.angleDest.vx == 220);
+        CHECK(gCamera.angleDest.vy == 1024);
+        CHECK(fixture.world.location.vx == 7040);
+        CHECK(fixture.world.location.vy == 4096);
+        CHECK(fixture.world.location.vz == -6400);
+    }
 
     fixture.world.aBkDolly[3].flags = UINT32_C(0xaabbccdd);
     fixture.world.aDolly[3].flags = 0;
@@ -338,11 +489,167 @@ static int test_gameplay_camera_owner(void)
     return 0;
 }
 
+static int test_camera_dolly_comes_from_collision_cube(void)
+{
+    enum {
+        MAP_WORDS = 32700,
+        CELL_INDEX = 128 + 127 * 256,
+        CUBE_INDEX = 32,
+        LIB_INDEX = 64,
+        NORMAL_INDEX = 100,
+        CUBE_CAMERA = 3
+    };
+    CameraGameplayFixture fixture;
+    int32_t *storage =
+        (int32_t *)calloc(MAP_WORDS + 4, sizeof(*storage));
+    int32_t *mapbase;
+    WorldData *saved_world = gpWorld;
+    int32_t *saved_leveldata = leveldata;
+    gamestruct saved_game = GameStruct;
+    char saved_level = LevelSelect;
+
+    CHECK(storage != NULL);
+    camera_gameplay_fixture_init(&fixture);
+    mapbase = storage + 4;
+    mapbase[-2] = 128 << 10;
+    mapbase[CELL_INDEX] =
+        (int32_t)(UINT32_C(0x80000000) | CUBE_INDEX);
+    mapbase[CUBE_INDEX] = (int32_t)UINT32_C(0x48000001);
+    mapbase[CUBE_INDEX + 1] = CUBE_CAMERA << 24;
+    mapbase[CUBE_INDEX + 2] =
+        (int32_t)(UINT32_C(0x40000000) | LIB_INDEX);
+    mapbase[LIB_INDEX + 2] =
+        (int32_t)(UINT32_C(0x40000000) | NORMAL_INDEX);
+    mapbase[LIB_INDEX + 3] =
+        UINT32_C(3) |
+        (UINT32_C(1) << 5) |
+        (UINT32_C(2) << 10) |
+        UINT32_C(0x00100000);
+    mapbase[NORMAL_INDEX + 1] = 256 << 10;
+
+    gpWorld = &fixture.world;
+    leveldata = mapbase;
+    LevelSelect = 1;
+    GameStruct.NumPlayers = 1;
+    fixture.world.currentDolly = 1;
+    fixture.world.overRideDolly = 0;
+    fixture.physics[0].vpos.vx = 128;
+    fixture.physics[0].vpos.vy = 300;
+    fixture.physics[0].vpos.vz = 128;
+    fixture.physics[0].pos.vx = 128.0f;
+    fixture.physics[0].pos.vy = 300.0f;
+    fixture.physics[0].pos.vz = 128.0f;
+    fixture.physics[0].validairground = 256.0f;
+    fixture.physics[1] = fixture.physics[0];
+    fixture.players[1].playerRoot.objectID = -1;
+    memset(&gCamera, 0, sizeof(gCamera));
+    gCamera.viewType = JPB_CAMERA_VIEW_ABSOLUTE_FOCUS;
+    gGlobalFrameRate = 0;
+    newcameraflag = 1;
+
+    camera_SetCurrentCameraType(5);
+    CHECK(camera_SetCameraPos(5) == 1);
+    CHECK(fixture.world.currentDolly == CUBE_CAMERA);
+
+    gpWorld = saved_world;
+    leveldata = saved_leveldata;
+    GameStruct = saved_game;
+    LevelSelect = saved_level;
+    gGlobalFrameRate = 0;
+    free(storage);
+    return 0;
+}
+
+static int test_camera_preserves_retail_transition_mask(void)
+{
+    enum {
+        MAP_WORDS = 32700,
+        CELL_INDEX = 128 + 127 * 256,
+        CUBE_INDEX = 32,
+        LIB_INDEX = 64,
+        NORMAL_INDEX = 100,
+        CANDIDATE_CAMERA = 3
+    };
+    CameraGameplayFixture fixture;
+    JPBCameraSelectionDiagnostics diagnostics;
+    int32_t *storage =
+        (int32_t *)calloc(MAP_WORDS + 4, sizeof(*storage));
+    int32_t *mapbase;
+    WorldData *saved_world = gpWorld;
+    int32_t *saved_leveldata = leveldata;
+    gamestruct saved_game = GameStruct;
+    char saved_level = LevelSelect;
+
+    CHECK(storage != NULL);
+    camera_gameplay_fixture_init(&fixture);
+    mapbase = storage + 4;
+    mapbase[-2] = 128 << 10;
+    mapbase[CELL_INDEX] =
+        (int32_t)(UINT32_C(0x80000000) | CUBE_INDEX);
+    mapbase[CUBE_INDEX] = (int32_t)UINT32_C(0x48000001);
+    mapbase[CUBE_INDEX + 1] = CANDIDATE_CAMERA << 24;
+    mapbase[CUBE_INDEX + 2] =
+        (int32_t)(UINT32_C(0x40000000) | LIB_INDEX);
+    mapbase[LIB_INDEX + 2] =
+        (int32_t)(UINT32_C(0x40000000) | NORMAL_INDEX);
+    mapbase[LIB_INDEX + 3] =
+        UINT32_C(3) |
+        (UINT32_C(1) << 5) |
+        (UINT32_C(2) << 10) |
+        UINT32_C(0x00100000);
+    mapbase[NORMAL_INDEX + 1] = 256 << 10;
+
+    gpWorld = &fixture.world;
+    leveldata = mapbase;
+    LevelSelect = 1;
+    GameStruct.NumPlayers = 1;
+    fixture.world.currentDolly = 1;
+    fixture.world.overRideDolly = 0;
+    fixture.world.aDolly[CANDIDATE_CAMERA].flags = UINT32_C(0x400);
+    fixture.world.aDolly[CANDIDATE_CAMERA].offset.vx = 12000;
+    fixture.world.aDolly[CANDIDATE_CAMERA].offset.vy = 12000;
+    fixture.world.aDolly[CANDIDATE_CAMERA].offset.vz = 12000;
+    fixture.physics[0].vpos.vx = 128;
+    fixture.physics[0].vpos.vy = 300;
+    fixture.physics[0].vpos.vz = 128;
+    fixture.physics[0].pos.vx = 128.0f;
+    fixture.physics[0].pos.vy = 300.0f;
+    fixture.physics[0].pos.vz = 128.0f;
+    fixture.physics[0].validairground = 256.0f;
+    fixture.physics[1] = fixture.physics[0];
+    fixture.players[1].playerRoot.objectID = -1;
+    memset(&gCamera, 0, sizeof(gCamera));
+    gCamera.viewType = JPB_CAMERA_VIEW_ABSOLUTE_FOCUS;
+    gGlobalFrameRate = 0;
+    newcameraflag = 1;
+
+    camera_SetCurrentCameraType(1);
+    CHECK(camera_SetCameraPos(1) == 1);
+    camera_GetSelectionDiagnostics(&diagnostics);
+    CHECK(diagnostics.valid == 1);
+    CHECK(diagnostics.previousDolly == 1);
+    CHECK(diagnostics.candidateDolly == CANDIDATE_CAMERA);
+    CHECK(diagnostics.player0Clip != 0);
+    CHECK(diagnostics.boxMask == 0x10);
+    CHECK(diagnostics.offscreen == 0);
+    CHECK(diagnostics.accepted == 1);
+    CHECK(fixture.world.currentDolly == CANDIDATE_CAMERA);
+
+    gpWorld = saved_world;
+    leveldata = saved_leveldata;
+    GameStruct = saved_game;
+    LevelSelect = saved_level;
+    gGlobalFrameRate = 0;
+    free(storage);
+    return 0;
+}
+
 static int test_camera_console_and_focus(void)
 {
     WorldData world;
     WorldData *saved_world = gpWorld;
     int32_t saved_totalframes = totalframes;
+    uint32_t saved_global_timer = gGlobalTimer;
     char *shake_arguments[2] = {"ShAkE", "7"};
     char *set_arguments[2] = {"SET", "12"};
     int integer_arguments[2] = {0, 7};
@@ -366,7 +673,7 @@ static int test_camera_console_and_focus(void)
               NULL) == 0);
     CHECK(world.overRideDolly == 12);
 
-    totalframes = 100;
+    gGlobalTimer = 100;
     camera_SetFocusedCameraFocus(4, &focus, 2);
     CHECK(camera_GetCurrentCameraType() == 4);
     CHECK(gCamera.cameraTimer == 1124U);
@@ -378,6 +685,7 @@ static int test_camera_console_and_focus(void)
 
     gpWorld = saved_world;
     totalframes = saved_totalframes;
+    gGlobalTimer = saved_global_timer;
     screenshake = 0;
     return 0;
 }
@@ -587,6 +895,8 @@ int main(void)
     CHECK(test_state_and_snap() == 0);
     CHECK(test_scroll_camera() == 0);
     CHECK(test_gameplay_camera_owner() == 0);
+    CHECK(test_camera_dolly_comes_from_collision_cube() == 0);
+    CHECK(test_camera_preserves_retail_transition_mask() == 0);
     CHECK(test_camera_console_and_focus() == 0);
     CHECK(test_camera_to_view() == 0);
     CHECK(test_camera_slide() == 0);

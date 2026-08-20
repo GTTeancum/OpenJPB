@@ -64,6 +64,24 @@ int jpb_ProjectPcCameraToViewport(
     float viewport_width,
     float viewport_height,
     FVECTOR *screen);
+void jpb_PcGameplayViewport(
+    float framebuffer_width,
+    float framebuffer_height,
+    float *viewport_x,
+    float *viewport_y,
+    float *viewport_width,
+    float *viewport_height);
+int jpb_ProjectPcGameplayToViewport(
+    MATRIX *view,
+    const FVECTOR *world,
+    float framebuffer_width,
+    float framebuffer_height,
+    FVECTOR *screen);
+int jpb_ProjectPcGameplayCameraToViewport(
+    const FVECTOR *camera,
+    float framebuffer_width,
+    float framebuffer_height,
+    FVECTOR *screen);
 
 /*
  * Exact gameplay-camera conversion and world-to-screen matrix construction,

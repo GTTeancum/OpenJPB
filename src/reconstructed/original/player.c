@@ -63,6 +63,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* Direct global at RVA 0x53A600, PDB type 0xA618. */
 playerObject gaPlayerData[JPB_PLAYER_CAPACITY];
@@ -78,6 +79,65 @@ static void *player_process_observer_user_data;
 static JPBPlayerTileHook player_tile_hook;
 static void *player_tile_hook_user_data;
 static float player_tile_projection_depth;
+static JPBPlayerFrameProfile jpb_player_frame_profile;
+static int jpb_player_frame_profile_enabled;
+
+static double jpb_player_profile_seconds(void)
+{
+    if (!jpb_player_frame_profile_enabled) {
+        return 0.0;
+    }
+    return (double)clock() / (double)CLOCKS_PER_SEC;
+}
+
+static void jpb_player_profile_record(
+    double *last_seconds,
+    double *max_seconds,
+    double seconds)
+{
+    if (!jpb_player_frame_profile_enabled) {
+        return;
+    }
+    if (last_seconds != NULL) {
+        *last_seconds += seconds;
+    }
+    if (max_seconds != NULL && *last_seconds > *max_seconds) {
+        *max_seconds = *last_seconds;
+    }
+}
+
+static void jpb_player_profile_begin_frame(void)
+{
+    if (!jpb_player_frame_profile_enabled) {
+        return;
+    }
+    jpb_player_frame_profile.lastTotalSeconds = 0.0;
+    jpb_player_frame_profile.lastCollisionsSeconds = 0.0;
+    jpb_player_frame_profile.lastGlobalBitsSeconds = 0.0;
+    jpb_player_frame_profile.lastMapTriggersSeconds = 0.0;
+    jpb_player_frame_profile.lastLifeTileSeconds = 0.0;
+    jpb_player_frame_profile.lastDebugSeconds = 0.0;
+    jpb_player_frame_profile.lastInputSeconds = 0.0;
+    jpb_player_frame_profile.lastDamageTrackerSeconds = 0.0;
+    jpb_player_frame_profile.lastPauseSeconds = 0.0;
+    jpb_player_frame_profile.lastControlSeconds = 0.0;
+    jpb_player_frame_profile.lastActivePlayers = 0;
+}
+
+void jpb_PlayerGetFrameProfile(JPBPlayerFrameProfile *profile)
+{
+    if (profile != NULL) {
+        *profile = jpb_player_frame_profile;
+    }
+}
+
+void jpb_PlayerSetFrameProfileEnabled(int enabled)
+{
+    jpb_player_frame_profile_enabled = enabled != 0;
+    memset(&jpb_player_frame_profile, 0, sizeof(jpb_player_frame_profile));
+    jpb_player_frame_profile.maxControlPlayerIndex = -1;
+    jpb_player_frame_profile.maxControlPlayerId = -1;
+}
 
 void jpb_PlayerSetProcessObserver(
     JPBPlayerProcessObserver observer,
@@ -1183,10 +1243,20 @@ void player_gInitPlayers(int start)
 void player_gProcessPlayers(void)
 {
     int index;
+    double frame_started;
+    double stage_started;
 
+    jpb_player_profile_begin_frame();
+    frame_started = jpb_player_profile_seconds();
+    stage_started = jpb_player_profile_seconds();
     (void)player_DoCollisions();
+    jpb_player_profile_record(
+        &jpb_player_frame_profile.lastCollisionsSeconds,
+        &jpb_player_frame_profile.maxCollisionsSeconds,
+        jpb_player_profile_seconds() - stage_started);
     PushMatrix();
 
+    stage_started = jpb_player_profile_seconds();
     if (GameStruct.NumPlayers == 2 &&
         gpWorld != NULL &&
         gpWorld->player0 != NULL &&
@@ -1203,6 +1273,10 @@ void player_gProcessPlayers(void)
     } else {
         game_CLR_GLOBALBIT(0x10U);
     }
+    jpb_player_profile_record(
+        &jpb_player_frame_profile.lastGlobalBitsSeconds,
+        &jpb_player_frame_profile.maxGlobalBitsSeconds,
+        jpb_player_profile_seconds() - stage_started);
 
     for (index = 0; index < JPB_PLAYER_CAPACITY; ++index) {
         playerObject *player = &gaPlayerData[index];
@@ -1219,12 +1293,25 @@ void player_gProcessPlayers(void)
             continue;
         }
         physics = (physicsObject *)scene->pPhysics;
+        if (jpb_player_frame_profile_enabled) {
+            ++jpb_player_frame_profile.lastActivePlayers;
+            if (jpb_player_frame_profile.lastActivePlayers >
+                jpb_player_frame_profile.maxActivePlayers) {
+                jpb_player_frame_profile.maxActivePlayers =
+                    jpb_player_frame_profile.lastActivePlayers;
+            }
+        }
 
         if (index < 2) {
             player->numAttackers = 2;
             if (physics->currentmapinfo.cube != NULL) {
+                stage_started = jpb_player_profile_seconds();
                 enemy_HandleMapTriggers(
                     physics->currentmapinfo.cube);
+                jpb_player_profile_record(
+                    &jpb_player_frame_profile.lastMapTriggersSeconds,
+                    &jpb_player_frame_profile.maxMapTriggersSeconds,
+                    jpb_player_profile_seconds() - stage_started);
             }
         } else {
             player->numAttackers = 20;
@@ -1238,12 +1325,18 @@ void player_gProcessPlayers(void)
             (player->pFlags & UINT32_C(0x80)) == 0 &&
             (physics->flags & UINT32_C(0x20000000)) == 0 &&
             game_gGetEnergy(index) != 255) {
+            stage_started = jpb_player_profile_seconds();
             _AddLifeTile(
                 player,
                 physics_gGetPosition(
                     &player->playerRoot));
+            jpb_player_profile_record(
+                &jpb_player_frame_profile.lastLifeTileSeconds,
+                &jpb_player_frame_profile.maxLifeTileSeconds,
+                jpb_player_profile_seconds() - stage_started);
         }
 
+        stage_started = jpb_player_profile_seconds();
         if (OptionStruct.DebugLevel == 2) {
             const char *attack_state =
                 (player->pFlags & UINT32_C(1)) != 0 ? "LAND" : "";
@@ -1337,8 +1430,13 @@ void player_gProcessPlayers(void)
                 player->pEnemy->aName,
                 state);
         }
+        jpb_player_profile_record(
+            &jpb_player_frame_profile.lastDebugSeconds,
+            &jpb_player_frame_profile.maxDebugSeconds,
+            jpb_player_profile_seconds() - stage_started);
 
         if (index < 2 && player->pEnemy == NULL) {
+            stage_started = jpb_player_profile_seconds();
             mPlayerRead[0] = input_ReadControlPad(
                 index,
                 player->playerPad.mask0,
@@ -1368,7 +1466,17 @@ void player_gProcessPlayers(void)
             if (index == 0) {
                 mCharliePad = player->playerPad.cpad[1];
             }
+            jpb_player_profile_record(
+                &jpb_player_frame_profile.lastInputSeconds,
+                &jpb_player_frame_profile.maxInputSeconds,
+                jpb_player_profile_seconds() - stage_started);
+            stage_started = jpb_player_profile_seconds();
             player_DrawDamageTracker(index, player);
+            jpb_player_profile_record(
+                &jpb_player_frame_profile.lastDamageTrackerSeconds,
+                &jpb_player_frame_profile.maxDamageTrackerSeconds,
+                jpb_player_profile_seconds() - stage_started);
+            stage_started = jpb_player_profile_seconds();
             if (brainutil_PauseControl(
                     (int32_t *)mPlayerRead,
                     player) != 0 ||
@@ -1378,6 +1486,10 @@ void player_gProcessPlayers(void)
                 player->playerPad.cpad[0] = 0;
                 player->playerPad.cpad[1] = 0;
             }
+            jpb_player_profile_record(
+                &jpb_player_frame_profile.lastPauseSeconds,
+                &jpb_player_frame_profile.maxPauseSeconds,
+                jpb_player_profile_seconds() - stage_started);
         } else if (player->pEnemy == NULL ||
                    (player->pEnemy->enemyFlags &
                     UINT32_C(0x0c000000)) == 0) {
@@ -1407,10 +1519,29 @@ void player_gProcessPlayers(void)
                     (const int32_t *)mPlayerRead,
                     player_process_observer_user_data);
             }
+            stage_started = jpb_player_profile_seconds();
             brain_ControlPlayer(
                 (int32_t *)mPlayerRead,
                 player,
                 AI_ON);
+            {
+                double previous_max =
+                    jpb_player_frame_profile.maxControlSeconds;
+                double control_seconds =
+                    jpb_player_profile_seconds() - stage_started;
+
+                jpb_player_profile_record(
+                    &jpb_player_frame_profile.lastControlSeconds,
+                    &jpb_player_frame_profile.maxControlSeconds,
+                    control_seconds);
+                if (jpb_player_frame_profile_enabled &&
+                    jpb_player_frame_profile.maxControlSeconds >
+                        previous_max) {
+                    jpb_player_frame_profile.maxControlPlayerIndex = index;
+                    jpb_player_frame_profile.maxControlPlayerId =
+                        player->playerRoot.objectID;
+                }
+            }
             if (player_process_observer != NULL) {
                 player_process_observer(
                     JPB_PLAYER_PROCESS_AFTER_CONTROL,
@@ -1423,6 +1554,10 @@ void player_gProcessPlayers(void)
         }
     }
     PopMatrix();
+    jpb_player_profile_record(
+        &jpb_player_frame_profile.lastTotalSeconds,
+        &jpb_player_frame_profile.maxTotalSeconds,
+        jpb_player_profile_seconds() - frame_started);
 }
 
 /* 0xE8A80, 254 bytes, global, 0 named locals

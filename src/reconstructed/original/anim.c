@@ -51,12 +51,15 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 /* Direct globals at RVAs 0x4DC680 and 0x4E8980. */
 animObject maAnimationData[JPB_ANIMATION_CAPACITY];
 static animListNode
     aAnimListNodes[JPB_ANIMATION_CAPACITY][JPB_ANIM_QUEUE_NODE_CAPACITY];
 static JPBHuffmanTableSet animationHuffmanTables;
+static JPBAnimForceProfile jpb_anim_force_profile;
+static int jpb_anim_force_profile_enabled;
 
 /*
  * Exact PDB global name at RVA 0x538390. Its PDB type is unresolved; this
@@ -73,6 +76,69 @@ static void anim_SoundStart(
     playerObject *player,
     animObject *animation,
     int channel);
+
+static double jpb_anim_profile_seconds(void)
+{
+    if (!jpb_anim_force_profile_enabled) {
+        return 0.0;
+    }
+    return (double)clock() / (double)CLOCKS_PER_SEC;
+}
+
+static void jpb_anim_profile_record(
+    double *last_seconds,
+    double *max_seconds,
+    double seconds)
+{
+    if (last_seconds != NULL) {
+        *last_seconds = seconds;
+    }
+    if (max_seconds != NULL && seconds > *max_seconds) {
+        *max_seconds = seconds;
+    }
+}
+
+static void jpb_anim_profile_begin_force(void)
+{
+    jpb_anim_force_profile.lastTotalSeconds = 0.0;
+    jpb_anim_force_profile.lastRecoverySeconds = 0.0;
+    jpb_anim_force_profile.lastActivateSeconds = 0.0;
+    jpb_anim_force_profile.lastActivateMotionSeconds = 0.0;
+    jpb_anim_force_profile.lastActivateSoundSeconds = 0.0;
+    jpb_anim_force_profile.lastActivateTweenSeconds = 0.0;
+    jpb_anim_force_profile.lastDecodeStepSeconds = 0.0;
+}
+
+void jpb_AnimGetForceProfile(JPBAnimForceProfile *profile)
+{
+    if (profile != NULL) {
+        *profile = jpb_anim_force_profile;
+    }
+}
+
+void jpb_AnimSetForceProfileEnabled(int enabled)
+{
+    jpb_anim_force_profile_enabled = enabled != 0;
+    memset(&jpb_anim_force_profile, 0, sizeof(jpb_anim_force_profile));
+}
+
+static void jpb_anim_profile_record_force_total(
+    animObject *animation,
+    double seconds)
+{
+    jpb_anim_force_profile.lastTotalSeconds = seconds;
+    if (seconds > jpb_anim_force_profile.maxTotalSeconds) {
+        jpb_anim_force_profile.maxTotalSeconds = seconds;
+        jpb_anim_force_profile.maxObjectId =
+            animation != NULL
+                ? (uint32_t)animation->animRoot.objectID
+                : UINT32_MAX;
+        jpb_anim_force_profile.maxMotionSeq =
+            animation != NULL && animation->pMotion != NULL
+                ? animation->pMotion->Seq
+                : UINT16_MAX;
+    }
+}
 
 /* 0x17750, 310 bytes, global, 5 named locals
  * anim_AddNextAnimSeq
@@ -271,6 +337,7 @@ JPBAnimPartialResult jpb_AnimActivateQueuedMotionState(
     Motion *motion;
     sceneObject *scene;
     playerObject *player;
+    double stage_started;
     int32_t rate;
     int32_t product;
 
@@ -292,6 +359,7 @@ JPBAnimPartialResult jpb_AnimActivateQueuedMotionState(
         return JPB_ANIM_PARTIAL_EMPTY;
     }
 
+    stage_started = jpb_anim_profile_seconds();
     if (animation->pCurrentAnimSeq != NULL &&
         (uint16_t)(animation->pCurrentAnimSeq->Speed + 1) > 1) {
         physics_gModFacing(
@@ -351,10 +419,20 @@ JPBAnimPartialResult jpb_AnimActivateQueuedMotionState(
     } else {
         player->pMotionCallBack = NULL;
     }
+    jpb_anim_profile_record(
+        &jpb_anim_force_profile.lastActivateMotionSeconds,
+        &jpb_anim_force_profile.maxActivateMotionSeconds,
+        jpb_anim_profile_seconds() - stage_started);
+
+    stage_started = jpb_anim_profile_seconds();
     if (shouldPlayAnimSound(player->playerID, animation)) {
         anim_SoundStart(player, animation, 0);
         anim_SoundStart(player, animation, 1);
     }
+    jpb_anim_profile_record(
+        &jpb_anim_force_profile.lastActivateSoundSeconds,
+        &jpb_anim_force_profile.maxActivateSoundSeconds,
+        jpb_anim_profile_seconds() - stage_started);
 
     /*
      * Exact anim_ForceNextAnimSeq enters anim_CreateTweenFrame when a
@@ -371,7 +449,12 @@ JPBAnimPartialResult jpb_AnimActivateQueuedMotionState(
         next->pAnimTemplate->parts <=
             JPB_ANIM_JOINT_CAPACITY &&
         animation->pCurrentAnimFrame != NULL) {
+        stage_started = jpb_anim_profile_seconds();
         (void)anim_CreateTweenFrame(animation);
+        jpb_anim_profile_record(
+            &jpb_anim_force_profile.lastActivateTweenSeconds,
+            &jpb_anim_force_profile.maxActivateTweenSeconds,
+            jpb_anim_profile_seconds() - stage_started);
     }
     return JPB_ANIM_PARTIAL_OK;
 }
@@ -442,10 +525,18 @@ static int anim_MotionRecovery(animObject *animation)
 int anim_ForceNextAnimSeq(animObject *animation, int IsTween)
 {
     JPBAnimPartialResult result;
+    double force_started;
+    double stage_started;
     int tween_requested;
+    int return_value;
 
     (void)IsTween;
+    jpb_anim_profile_begin_force();
+    force_started = jpb_anim_profile_seconds();
     if (animation == NULL) {
+        jpb_anim_profile_record_force_total(
+            animation,
+            jpb_anim_profile_seconds() - force_started);
         return 1;
     }
     if (animation->pCurrentAnimSeq != NULL &&
@@ -456,16 +547,37 @@ int anim_ForceNextAnimSeq(animObject *animation, int IsTween)
     }
     animation->animFlags |= UINT32_C(0x20);
 
-    if (animation->animList.head == NULL &&
-        anim_MotionRecovery(animation) != 0) {
-        return 1;
+    if (animation->animList.head == NULL) {
+        stage_started = jpb_anim_profile_seconds();
+        return_value = anim_MotionRecovery(animation);
+        jpb_anim_profile_record(
+            &jpb_anim_force_profile.lastRecoverySeconds,
+            &jpb_anim_force_profile.maxRecoverySeconds,
+            jpb_anim_profile_seconds() - stage_started);
+        if (return_value != 0) {
+            jpb_anim_profile_record_force_total(
+                animation,
+                jpb_anim_profile_seconds() - force_started);
+            return 1;
+        }
     }
+    stage_started = jpb_anim_profile_seconds();
     result = jpb_AnimActivateQueuedMotionState(animation);
+    jpb_anim_profile_record(
+        &jpb_anim_force_profile.lastActivateSeconds,
+        &jpb_anim_force_profile.maxActivateSeconds,
+        jpb_anim_profile_seconds() - stage_started);
     if (result == JPB_ANIM_PARTIAL_EMPTY) {
+        jpb_anim_profile_record_force_total(
+            animation,
+            jpb_anim_profile_seconds() - force_started);
         return 0;
     }
     if (result != JPB_ANIM_PARTIAL_OK ||
         animation->pMotion == NULL) {
+        jpb_anim_profile_record_force_total(
+            animation,
+            jpb_anim_profile_seconds() - force_started);
         return 1;
     }
     tween_requested =
@@ -476,9 +588,21 @@ int anim_ForceNextAnimSeq(animObject *animation, int IsTween)
         (animation->animFlags & UINT32_C(0x40)) != 0 &&
         animation->pCurrentAnimFrame ==
             &animation->tweenAnimFrame) {
+        jpb_anim_profile_record_force_total(
+            animation,
+            jpb_anim_profile_seconds() - force_started);
         return 0;
     }
-    return anim_GoNextAnimFrame(animation);
+    stage_started = jpb_anim_profile_seconds();
+    return_value = anim_GoNextAnimFrame(animation);
+    jpb_anim_profile_record(
+        &jpb_anim_force_profile.lastDecodeStepSeconds,
+        &jpb_anim_force_profile.maxDecodeStepSeconds,
+        jpb_anim_profile_seconds() - stage_started);
+    jpb_anim_profile_record_force_total(
+        animation,
+        jpb_anim_profile_seconds() - force_started);
+    return return_value;
 }
 
 JPBAnimPartialResult jpb_AnimAdvanceQueuedMotionAtEnd(

@@ -47,10 +47,20 @@ typedef void (*JPBSceneLevelOwnerHook)(
  * without moving gameplay scheduling back into the host.
  */
 typedef struct JPBSceneMiddleRenderHooks {
+    JPBSceneMiddleRenderStageHook afterCameraSetup;
     JPBSceneMiddleRenderStageHook afterAnimations;
+    JPBSceneMiddleRenderStageHook afterOverlay;
     JPBSceneMiddleRenderStageHook afterWorld;
     JPBSceneMiddleRenderStageHook renderModels;
+    JPBSceneMiddleRenderStageHook afterSabre;
     JPBSceneMiddleRenderStageHook beforePlayerProcess;
+    JPBSceneMiddleRenderStageHook afterPlayerProcess;
+    JPBSceneMiddleRenderStageHook afterPowerups;
+    JPBSceneMiddleRenderStageHook afterSprites;
+    JPBSceneMiddleRenderStageHook afterEnemies;
+    JPBSceneMiddleRenderStageHook afterBackdrop;
+    JPBSceneMiddleRenderStageHook afterPhysics;
+    JPBSceneMiddleRenderStageHook afterLevelOwner;
     JPBSceneLevelOwnerHook levelOwner;
 } JPBSceneMiddleRenderHooks;
 

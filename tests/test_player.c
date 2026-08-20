@@ -1582,15 +1582,15 @@ static int test_player_sabre_owner(void)
         uint32_t outerColor;
         int expectedDraws;
     } roster[] = {
-        {0, 0x11, 0x13, 0,    UINT32_C(0x7f3880f8), 2},
+        {0, 0x11, 0x13, 0,    UINT32_C(0x7f45a6ff), 2},
         {1, 0x14, 0x16, 0,    UINT32_C(0x7f01c03c), 2},
-        {2, 0x14, 0x16, 0,    UINT32_C(0x7fa76efe), 2},
-        {3, 0x13, 0x15, 0,    UINT32_C(0x7f3880f8), 2},
-        {4, 0x11, 0x13, 0,    UINT32_C(0x7f3880f8), 2},
-        {5, 0x12, 0x13, 0x17, UINT32_C(0x7fc01010), 4},
+        {2, 0x14, 0x16, 0,    UINT32_C(0x7fd870ff), 2},
+        {3, 0x13, 0x15, 0,    UINT32_C(0x7f45a6ff), 2},
+        {4, 0x11, 0x13, 0,    UINT32_C(0x7f45a6ff), 2},
+        {5, 0x12, 0x13, 0x17, UINT32_C(0x7fff3434), 4},
         {6, 0,    0,    0,    UINT32_C(0),          0},
         {7, 0,    0,    0,    UINT32_C(0),          0},
-        {8, 0x11, 0x13, 0,    UINT32_C(0x7f3880f8), 2},
+        {8, 0x11, 0x13, 0,    UINT32_C(0x7f45a6ff), 2},
     };
     SabreGlowTrace trace;
     SabreCylinderTrace cylinder_trace;
@@ -1640,7 +1640,7 @@ static int test_player_sabre_owner(void)
     CHECK(trace.end[0].vx == 100);
     CHECK(trace.end[0].vy == 200);
     CHECK(trace.end[0].vz == 300);
-    CHECK(trace.width[0] >= 0xe && trace.width[0] <= 0x13);
+    CHECK(trace.width[0] >= 0x0e && trace.width[0] <= 0x13);
     CHECK(trace.color[0] ==
           (jedi_GetColour32(0) | UINT32_C(0x7f000000)));
     CHECK(trace.width[1] == 2);
@@ -1697,7 +1697,7 @@ static int test_player_sabre_owner(void)
         if (trace.count != 0) {
             CHECK(trace.start[0].vx == 212);
             CHECK(trace.end[0].vx == 100);
-            CHECK(trace.width[0] >= 0xe && trace.width[0] <= 0x13);
+            CHECK(trace.width[0] >= 0x0e && trace.width[0] <= 0x13);
             CHECK(trace.color[0] == roster[roster_index].outerColor);
             CHECK(trace.width[1] == 2);
             CHECK(trace.color[1] == UINT32_C(0xffffffff));
@@ -1705,7 +1705,7 @@ static int test_player_sabre_owner(void)
         if (trace.count == 4) {
             CHECK(trace.start[2].vx == 512);
             CHECK(trace.end[2].vx == 432);
-            CHECK(trace.width[2] >= 0xe && trace.width[2] <= 0x13);
+            CHECK(trace.width[2] >= 0x0e && trace.width[2] <= 0x13);
             CHECK(trace.color[2] == roster[roster_index].outerColor);
             CHECK(trace.width[3] == 2);
             CHECK(trace.color[3] == UINT32_C(0xffffffff));
@@ -1743,7 +1743,7 @@ static int test_player_sabre_owner(void)
     CHECK(trace.width[2] == 0x10);
     CHECK(trace.start[2].vx == 100);
     CHECK(trace.end[2].vx == 212);
-    CHECK(trace.color[2] == UINT32_C(0xff3880f8));
+    CHECK(trace.color[2] == UINT32_C(0xff45a6ff));
     CHECK(cylinder_trace.count == 3);
     for (int cylinder = 0; cylinder < cylinder_trace.count; ++cylinder) {
         CHECK(cylinder_trace.radius1[cylinder] == 26.0f);
@@ -1751,9 +1751,9 @@ static int test_player_sabre_owner(void)
         CHECK(cylinder_trace.height2[cylinder] -
               cylinder_trace.height1[cylinder] == 8.0f);
         CHECK(cylinder_trace.color1[cylinder] ==
-              UINT32_C(0x7f3880f8));
+              UINT32_C(0x7f45a6ff));
         CHECK(cylinder_trace.color2[cylinder] ==
-              UINT32_C(0x7f3880f8));
+              UINT32_C(0x7f45a6ff));
     }
     CHECK(cylinder_trace.height1[0] == 4.0f);
     CHECK(cylinder_trace.height1[1] == 36.0f);
@@ -1958,13 +1958,14 @@ static int test_player_damage_tracker_owner(void)
     OptionStruct.ScreenWidth = 960;
     OptionStruct.ScreenHeight = 540;
     scaleAdjustment = getScaleAdjustment();
+    CHECK(scaleAdjustment == 0.5f);
     damageTracking[0].total = 20.0f;
     player_gProcessPlayers();
     CHECK(trace.count == 1);
-    CHECK(trace.destination[0].left == 56);
-    CHECK(trace.destination[0].top == 142);
-    CHECK(trace.destination[0].right == 78);
-    CHECK(trace.destination[0].bottom == 157);
+    CHECK(trace.destination[0].left == 25);
+    CHECK(trace.destination[0].top == 63);
+    CHECK(trace.destination[0].right == 35);
+    CHECK(trace.destination[0].bottom == 70);
     CHECK(trace.color[0].r == UINT8_C(0xfc));
     CHECK(trace.color[0].g == UINT8_C(0xd4));
     CHECK(trace.color[0].b == UINT8_C(0x00));
@@ -2013,22 +2014,23 @@ static int test_player_damage_tracker_owner(void)
     OptionStruct.ScreenWidth = 960;
     OptionStruct.ScreenHeight = 540;
     scaleAdjustment = getScaleAdjustment();
+    CHECK(scaleAdjustment == 0.5f);
     damageTracking[0].total = 20.0f;
     damageTracking[1].total = 30.0f;
     player_gProcessPlayers();
     CHECK(trace.count == 2);
-    CHECK(trace.destination[0].left == 237);
-    CHECK(trace.destination[0].top == 142);
-    CHECK(trace.destination[0].right == 259);
-    CHECK(trace.destination[0].bottom == 157);
+    CHECK(trace.destination[0].left == 105);
+    CHECK(trace.destination[0].top == 63);
+    CHECK(trace.destination[0].right == 115);
+    CHECK(trace.destination[0].bottom == 70);
     CHECK(trace.color[0].r == UINT8_C(0xfc));
     CHECK(trace.color[0].g == UINT8_C(0xd4));
     CHECK(trace.color[0].b == UINT8_C(0x00));
     CHECK(trace.color[0].cd == UINT8_C(0x7f));
-    CHECK(trace.destination[1].left == 688);
-    CHECK(trace.destination[1].top == 142);
-    CHECK(trace.destination[1].right == 722);
-    CHECK(trace.destination[1].bottom == 157);
+    CHECK(trace.destination[1].left == 839);
+    CHECK(trace.destination[1].top == 63);
+    CHECK(trace.destination[1].right == 854);
+    CHECK(trace.destination[1].bottom == 70);
     CHECK(trace.color[1].r == UINT8_C(0xfc));
     CHECK(trace.color[1].g == UINT8_C(0xc0));
     CHECK(trace.color[1].b == UINT8_C(0x00));

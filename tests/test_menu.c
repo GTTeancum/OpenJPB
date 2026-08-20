@@ -2390,7 +2390,8 @@ static int test_character_selection_foundations(void)
     CHECK(gJediColourArrayLength == JPB_JEDI_COLOUR_COUNT);
     CHECK(memcmp(gJediColourCurrent, gJediColourCanon,
                  sizeof(gJediColourCurrent)) == 0);
-    CHECK(gJediColourCurrent[ki_adi_model].r == 0xf8);
+    CHECK((jedi_GetColour32(ki_adi_model) & UINT32_C(0x00ffffff)) ==
+          UINT32_C(0x0045a6ff));
     CHECK(gJediColourCurrent[JPB_JEDI_COLOUR_COUNT].r == 0);
     CHECK(jedi_CanToggleSaber(mace_model) == 1);
     CHECK(jedi_CanToggleSaber(obi_wan_model) == 0);

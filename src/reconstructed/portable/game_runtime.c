@@ -64,12 +64,31 @@ static double game_runtime_wall_seconds(void)
     return (double)now.tv_sec + (double)now.tv_nsec / 1000000000.0;
 }
 
+static void game_runtime_record_duration(
+    double *total_seconds,
+    double *last_seconds,
+    double *max_seconds,
+    double duration)
+{
+    if (total_seconds != NULL) {
+        *total_seconds += duration;
+    }
+    if (last_seconds != NULL) {
+        *last_seconds = duration;
+    }
+    if (max_seconds != NULL && duration > *max_seconds) {
+        *max_seconds = duration;
+    }
+}
+
 enum {
     JPB_GAME_RUNTIME_PATH_CAPACITY = 1024,
     JPB_GAME_RUNTIME_MODEL_TEXTURE_CAPACITY =
         JPB_BMD_NODE_CAPACITY,
     JPB_GAME_RUNTIME_ENEMY_CLASS_CAPACITY =
-        JPB_ACTOR_NAME_COUNT
+        JPB_ACTOR_NAME_COUNT,
+    JPB_GAME_RUNTIME_POWERUP_MODEL_COUNT = 17,
+    JPB_GAME_RUNTIME_POWERUP_DRAW_CAPACITY = 128
 };
 
 static const char *game_runtime_last_failure_stage = "none";
@@ -128,6 +147,32 @@ typedef struct JPBGameRuntimeTexture {
     uint32_t *pixels;
     JPBSoftwareTexture texture;
 } JPBGameRuntimeTexture;
+
+typedef struct JPBGameRuntimePowerupAsset {
+    uint8_t *bmdStorage;
+    JPBBmdView bmdView;
+    JPBGameRuntimeTextureCache *textureCache;
+    modelObject model;
+    Mnode nodes[JPB_MODEL_NODE_CAPACITY];
+    int loaded;
+} JPBGameRuntimePowerupAsset;
+
+typedef struct JPBGameRuntimePowerupDraw {
+    _svector position;
+    unsigned type;
+    _svector rotation;
+    VECTOR scale;
+    _svector offset;
+} JPBGameRuntimePowerupDraw;
+
+typedef struct JPBGameRuntimePowerupState {
+    JPBGameRuntimePowerupAsset
+        assets[JPB_GAME_RUNTIME_POWERUP_MODEL_COUNT];
+    JPBGameRuntimePowerupDraw
+        pending[JPB_GAME_RUNTIME_POWERUP_DRAW_CAPACITY];
+    size_t pendingCount;
+    size_t droppedCount;
+} JPBGameRuntimePowerupState;
 
 static void game_runtime_capture_draw_texture(
     void *user_data,
@@ -517,8 +562,8 @@ static int game_runtime_capture_psx_texture(
 /*
  * Dependency-light PC realization of DrawPowerUp's recovered submission
  * boundary. The original owner still determines type, transform, culling,
- * and lifetime; this renderer draws a small world-space glint until the
- * power-up BMD/immediate-mode path itself is reconstructed.
+ * and lifetime; the portable renderer queues the requested pickup model and
+ * submits it inside the normal model-render bracket.
  */
 static void game_runtime_capture_powerup_draw(
     void *user_data,
@@ -530,46 +575,31 @@ static void game_runtime_capture_powerup_draw(
 {
     JPBGameRuntime *runtime =
         (JPBGameRuntime *)user_data;
-    _svector center;
-    _svector start;
-    _svector end;
-    uint32_t color;
-    int radius;
+    JPBGameRuntimePowerupState *state;
+    JPBGameRuntimePowerupDraw *draw;
 
-    (void)rotation;
     if (runtime == NULL || position == NULL ||
-        scale == NULL || offset == NULL || type >= 17) {
+        rotation == NULL || scale == NULL || offset == NULL ||
+        type >= JPB_GAME_RUNTIME_POWERUP_MODEL_COUNT) {
         return;
     }
     ++runtime->powerupDrawCount;
-    center.vx = (int16_t)(position->vx + offset->vx);
-    center.vy = (int16_t)(position->vy + offset->vy);
-    center.vz = (int16_t)(position->vz + offset->vz);
-    center.pad = 0;
-    radius = scale->vx >= JPB_FIXED_ONE ? 24 : 16;
-    color = UINT32_C(0xff000000) |
-        ((uint32_t)pwrIcons[type].r << 16) |
-        ((uint32_t)pwrIcons[type].g << 8) |
-        (uint32_t)pwrIcons[type].b;
-
-    start = center;
-    end = center;
-    start.vx = (int16_t)(start.vx - radius);
-    end.vx = (int16_t)(end.vx + radius);
-    game_runtime_capture_screen_glow(
-        runtime, &start, &end, 3, color);
-    start = center;
-    end = center;
-    start.vy = (int16_t)(start.vy - radius);
-    end.vy = (int16_t)(end.vy + radius);
-    game_runtime_capture_screen_glow(
-        runtime, &start, &end, 3, color);
-    start = center;
-    end = center;
-    start.vz = (int16_t)(start.vz - radius);
-    end.vz = (int16_t)(end.vz + radius);
-    game_runtime_capture_screen_glow(
-        runtime, &start, &end, 3, color);
+    state =
+        (JPBGameRuntimePowerupState *)runtime->powerupModelState;
+    if (state == NULL) {
+        return;
+    }
+    if (state->pendingCount >=
+        JPB_GAME_RUNTIME_POWERUP_DRAW_CAPACITY) {
+        ++state->droppedCount;
+        return;
+    }
+    draw = &state->pending[state->pendingCount++];
+    draw->position = *position;
+    draw->type = type;
+    draw->rotation = *rotation;
+    draw->scale = *scale;
+    draw->offset = *offset;
 }
 
 static uint32_t game_runtime_blend_rgba(
@@ -952,6 +982,201 @@ static void game_runtime_clear_framebuffer(
     }
 }
 
+static uint64_t game_runtime_hash_mix(
+    uint64_t hash,
+    const void *data,
+    size_t size)
+{
+    const uint8_t *bytes = (const uint8_t *)data;
+    size_t index;
+
+    for (index = 0; index < size; ++index) {
+        hash ^= (uint64_t)bytes[index];
+        hash *= UINT64_C(1099511628211);
+    }
+    return hash;
+}
+
+static uint64_t game_runtime_hash_uint64(
+    uint64_t hash,
+    uint64_t value)
+{
+    return game_runtime_hash_mix(hash, &value, sizeof(value));
+}
+
+static uint64_t game_runtime_hash_int(
+    uint64_t hash,
+    int value)
+{
+    return game_runtime_hash_mix(hash, &value, sizeof(value));
+}
+
+static uint64_t game_runtime_hash_float(
+    uint64_t hash,
+    float value)
+{
+    return game_runtime_hash_mix(hash, &value, sizeof(value));
+}
+
+static uint64_t game_runtime_hash_screen_rect(
+    uint64_t hash,
+    SCREENRECT rect)
+{
+    hash = game_runtime_hash_int(hash, rect.left);
+    hash = game_runtime_hash_int(hash, rect.top);
+    hash = game_runtime_hash_int(hash, rect.right);
+    hash = game_runtime_hash_int(hash, rect.bottom);
+    return hash;
+}
+
+static uint64_t game_runtime_hash_color(
+    uint64_t hash,
+    CVECTOR color)
+{
+    hash = game_runtime_hash_mix(hash, &color.r, sizeof(color.r));
+    hash = game_runtime_hash_mix(hash, &color.g, sizeof(color.g));
+    hash = game_runtime_hash_mix(hash, &color.b, sizeof(color.b));
+    hash = game_runtime_hash_mix(hash, &color.cd, sizeof(color.cd));
+    return hash;
+}
+
+static uint64_t game_runtime_hash_hud_draws(
+    const JPBGameRuntime *runtime,
+    const JPBSoftwareFramebuffer *framebuffer)
+{
+    uint64_t hash = UINT64_C(1469598103934665603);
+    size_t draw_index;
+
+    hash = game_runtime_hash_int(hash, framebuffer->width);
+    hash = game_runtime_hash_int(hash, framebuffer->height);
+    hash = game_runtime_hash_uint64(
+        hash, (uint64_t)runtime->screenDrawCount);
+    hash = game_runtime_hash_uint64(
+        hash, (uint64_t)runtime->textDrawCount);
+    for (draw_index = 0;
+         draw_index < runtime->screenDrawCount;
+         ++draw_index) {
+        const JPBGameRuntimeScreenDraw *draw =
+            &runtime->screenDraws[draw_index];
+
+        hash = game_runtime_hash_uint64(hash, draw->order);
+        hash = game_runtime_hash_uint64(
+            hash, (uint64_t)(uintptr_t)draw->texture);
+        if (draw->texture != NULL) {
+            hash = game_runtime_hash_uint64(
+                hash, (uint64_t)(uintptr_t)draw->texture->texture);
+        }
+        hash = game_runtime_hash_screen_rect(hash, draw->destination);
+        hash = game_runtime_hash_screen_rect(hash, draw->source);
+        hash = game_runtime_hash_int(hash, draw->textureWidth);
+        hash = game_runtime_hash_int(hash, draw->textureHeight);
+        hash = game_runtime_hash_color(hash, draw->color);
+        hash = game_runtime_hash_float(hash, draw->layerDepth);
+        hash = game_runtime_hash_int(hash, draw->hasSource);
+        hash = game_runtime_hash_int(hash, draw->isPlayerHudTile);
+    }
+    for (draw_index = 0;
+         draw_index < runtime->textDrawCount;
+         ++draw_index) {
+        const JPBGameRuntimeTextDraw *draw =
+            &runtime->textDraws[draw_index];
+        size_t text_length = wcslen(draw->text);
+
+        hash = game_runtime_hash_uint64(hash, draw->order);
+        hash = game_runtime_hash_int(hash, draw->tint);
+        hash = game_runtime_hash_int(hash, draw->alpha);
+        hash = game_runtime_hash_int(hash, draw->mode);
+        hash = game_runtime_hash_int(hash, draw->x);
+        hash = game_runtime_hash_int(hash, draw->y);
+        hash = game_runtime_hash_float(hash, draw->scale);
+        hash = game_runtime_hash_float(hash, draw->scaleAdjustment);
+        hash = game_runtime_hash_int(hash, draw->fontStyle);
+        hash = game_runtime_hash_int(hash, draw->clipEnabled);
+        hash = game_runtime_hash_int(hash, draw->clipLeft);
+        hash = game_runtime_hash_int(hash, draw->clipTop);
+        hash = game_runtime_hash_int(hash, draw->clipRight);
+        hash = game_runtime_hash_int(hash, draw->clipBottom);
+        hash = game_runtime_hash_uint64(hash, (uint64_t)text_length);
+        hash = game_runtime_hash_mix(
+            hash, draw->text, text_length * sizeof(draw->text[0]));
+    }
+    return hash;
+}
+
+static void game_runtime_store_hud_cache_metrics(
+    JPBGameRuntime *runtime,
+    uint64_t hash,
+    const JPBSoftwareFramebuffer *framebuffer,
+    size_t base_screen_pixels,
+    size_t base_player_hud_pixels,
+    size_t base_text_pixels,
+    size_t base_alpha_pixels,
+    size_t base_item_alpha_pixels,
+    size_t base_credit_alpha_pixels,
+    size_t base_rescue_alpha_pixels,
+    const size_t *base_text_draw_pixels)
+{
+    size_t draw_index;
+
+    runtime->gameplayHudCacheHash = hash;
+    runtime->gameplayHudCacheValid = 1;
+    runtime->gameplayHudCacheWidth = framebuffer->width;
+    runtime->gameplayHudCacheHeight = framebuffer->height;
+    runtime->gameplayHudCacheScreenPixels =
+        runtime->screenDrawCompositePixelCount - base_screen_pixels;
+    runtime->gameplayHudCachePlayerHudPixels =
+        runtime->playerHudTileCompositePixelCount -
+            base_player_hud_pixels;
+    runtime->gameplayHudCacheTextPixels =
+        runtime->textDrawCompositePixelCount - base_text_pixels;
+    runtime->gameplayHudCacheAlphaPixels =
+        runtime->screenDrawTextureAlphaModulatedPixelCount -
+            base_alpha_pixels;
+    runtime->gameplayHudCacheItemAlphaPixels =
+        runtime->itemHudTextureAlphaModulatedPixelCount -
+            base_item_alpha_pixels;
+    runtime->gameplayHudCacheCreditAlphaPixels =
+        runtime->creditHudTextureAlphaModulatedPixelCount -
+            base_credit_alpha_pixels;
+    runtime->gameplayHudCacheRescueAlphaPixels =
+        runtime->rescueHudTextureAlphaModulatedPixelCount -
+            base_rescue_alpha_pixels;
+    for (draw_index = 0;
+         draw_index < runtime->textDrawCount;
+         ++draw_index) {
+        runtime->gameplayHudCacheTextDrawPixels[draw_index] =
+            runtime->textDraws[draw_index].compositePixels -
+                base_text_draw_pixels[draw_index];
+    }
+}
+
+static void game_runtime_apply_hud_cache_metrics(
+    JPBGameRuntime *runtime)
+{
+    size_t draw_index;
+
+    runtime->screenDrawCompositePixelCount +=
+        runtime->gameplayHudCacheScreenPixels;
+    runtime->playerHudTileCompositePixelCount +=
+        runtime->gameplayHudCachePlayerHudPixels;
+    runtime->textDrawCompositePixelCount +=
+        runtime->gameplayHudCacheTextPixels;
+    runtime->screenDrawTextureAlphaModulatedPixelCount +=
+        runtime->gameplayHudCacheAlphaPixels;
+    runtime->itemHudTextureAlphaModulatedPixelCount +=
+        runtime->gameplayHudCacheItemAlphaPixels;
+    runtime->creditHudTextureAlphaModulatedPixelCount +=
+        runtime->gameplayHudCacheCreditAlphaPixels;
+    runtime->rescueHudTextureAlphaModulatedPixelCount +=
+        runtime->gameplayHudCacheRescueAlphaPixels;
+    for (draw_index = 0;
+         draw_index < runtime->textDrawCount;
+         ++draw_index) {
+        runtime->textDraws[draw_index].compositePixels +=
+            runtime->gameplayHudCacheTextDrawPixels[draw_index];
+    }
+}
+
 /* Compact dependency-light glyphs used by the recovered in-game HUD. */
 static uint8_t game_runtime_glyph_row(wchar_t glyph, int row)
 {
@@ -1289,13 +1514,37 @@ static void *game_runtime_load_material_texture(
     int material_type,
     int16_t *width,
     int16_t *height);
+static int game_runtime_preload_bmd_textures(
+    JPBGameRuntimeTextureCache *cache,
+    const JPBBmdView *view,
+    const char *model_name);
 static void game_runtime_scene_after_animations(
+    void *user_data, MATRIX *view);
+static void game_runtime_scene_after_camera_setup(
+    void *user_data, MATRIX *view);
+static void game_runtime_scene_after_overlay(
     void *user_data, MATRIX *view);
 static void game_runtime_scene_after_world(
     void *user_data, MATRIX *view);
 static void game_runtime_scene_after_models(
     void *user_data, MATRIX *view);
+static void game_runtime_scene_after_sabre(
+    void *user_data, MATRIX *view);
 static void game_runtime_scene_before_player_process(
+    void *user_data, MATRIX *view);
+static void game_runtime_scene_after_player_process(
+    void *user_data, MATRIX *view);
+static void game_runtime_scene_after_powerups(
+    void *user_data, MATRIX *view);
+static void game_runtime_scene_after_sprites(
+    void *user_data, MATRIX *view);
+static void game_runtime_scene_after_enemies(
+    void *user_data, MATRIX *view);
+static void game_runtime_scene_after_backdrop(
+    void *user_data, MATRIX *view);
+static void game_runtime_scene_after_physics(
+    void *user_data, MATRIX *view);
+static void game_runtime_scene_after_level_owner(
     void *user_data, MATRIX *view);
 static void game_runtime_scene_level_owner(
     void *user_data,
@@ -1864,8 +2113,16 @@ static int game_runtime_load_authored_cameras(
         runtime->world->aBkDolly,
         runtime->world->aDolly,
         sizeof(runtime->world->aDolly));
-    runtime->world->currentDolly = 0;
-    runtime->authoredCameraDolly = 0;
+    /*
+     * Hangar's exact startPos is framed by authored dolly 80.  The local
+     * floor collision record resolves to camera 1, which frames the
+     * waterfall terrace and drops the player out of the gameplay view at
+     * startup.
+     */
+    runtime->world->currentDolly =
+        level_index == 9 ? 80 : 0;
+    runtime->authoredCameraDolly =
+        runtime->world->currentDolly;
     return 1;
 }
 
@@ -2150,6 +2407,53 @@ static int game_runtime_texture_path(
     return 1;
 }
 
+static int game_runtime_is_default_white_texture(
+    const char *texture_name)
+{
+    const char *slash;
+    const char *backslash;
+    const char *base_name;
+    const char *previous_separator;
+    const char *segment_start;
+    size_t segment_bytes;
+
+    if (texture_name == NULL) {
+        return 0;
+    }
+    slash = strrchr(texture_name, '/');
+    backslash = strrchr(texture_name, '\\');
+    base_name = texture_name;
+    if (slash != NULL) base_name = slash + 1;
+    if (backslash != NULL && backslash + 1 > base_name) {
+        base_name = backslash + 1;
+    }
+    if (base_name == texture_name &&
+        strcmp(base_name, "white.png") == 0) {
+        return 1;
+    }
+    if (strcmp(base_name, "white.tga") != 0) {
+        return 0;
+    }
+    if (base_name <= texture_name + 1) {
+        return 0;
+    }
+    previous_separator = base_name - 1;
+    if (*previous_separator != '/' &&
+        *previous_separator != '\\') {
+        return 0;
+    }
+    segment_start = texture_name;
+    for (const char *cursor = texture_name;
+         cursor < previous_separator;
+         ++cursor) {
+        if (*cursor == '/' || *cursor == '\\') {
+            segment_start = cursor + 1;
+        }
+    }
+    segment_bytes = (size_t)(previous_separator - segment_start);
+    return segment_bytes == 1 && segment_start[0] == 's';
+}
+
 static int game_runtime_load_texture(
     JPBGameRuntimeTextureCache *cache,
     JPBGameRuntimeTexture *entry,
@@ -2176,6 +2480,7 @@ static int game_runtime_load_texture(
         return 0;
     }
     memcpy(entry->name, texture_name, name_bytes + 1);
+    texture_name = entry->name;
     memcpy(local_path, path, strlen(path) + 1);
     if (!file_OPEN(path, &file)) {
         const char *slash = strrchr(texture_name, '/');
@@ -2197,7 +2502,28 @@ static int game_runtime_load_texture(
             return 0;
         }
         resource_path = NULL;
-        if (cache->retailLevelTextureLookup &&
+        if (game_runtime_is_default_white_texture(texture_name)) {
+            resource_path = resource_getPath(
+                "white.tga", JPB_RESOURCE_DEFAULT);
+            if (resource_path == NULL ||
+                strlen(resource_path) >= sizeof(path)) {
+                fprintf(
+                    stderr,
+                    "texture_load_failed=(name=%s,local=%s,"
+                    "retail=<unresolved>,reason=resource-path)\n",
+                    texture_name, local_path);
+                return 0;
+            }
+            memcpy(path, resource_path, strlen(resource_path) + 1);
+            if (!file_OPEN(path, &file)) {
+                fprintf(
+                    stderr,
+                    "texture_load_failed=(name=%s,local=%s,"
+                    "retail=%s,reason=file-not-found)\n",
+                    texture_name, local_path, path);
+                return 0;
+            }
+        } else if (cache->retailLevelTextureLookup &&
             cache->levelIndex != JPB_LEVEL_INDEX_NONE) {
             const char *level_name = sLevelNames[cache->levelIndex];
             size_t level_bytes;
@@ -2373,10 +2699,111 @@ static int game_runtime_resolve_texture(
     memset(entry, 0, sizeof(*entry));
     if (!game_runtime_load_texture(
             cache, entry, texture_name)) {
+        memset(entry, 0, sizeof(*entry));
+        --cache->textureCount;
         return 0;
     }
     ++cache->loadedTextureCount;
     *texture = entry->texture;
+    return 1;
+}
+
+static void game_runtime_free_powerup_models(
+    JPBGameRuntime *runtime)
+{
+    JPBGameRuntimePowerupState *state;
+    size_t index;
+
+    if (runtime == NULL || runtime->powerupModelState == NULL) {
+        return;
+    }
+    state =
+        (JPBGameRuntimePowerupState *)runtime->powerupModelState;
+    for (index = 0;
+         index < JPB_GAME_RUNTIME_POWERUP_MODEL_COUNT;
+         ++index) {
+        JPBGameRuntimePowerupAsset *asset =
+            &state->assets[index];
+
+        free(asset->bmdStorage);
+        game_runtime_free_texture_cache(asset->textureCache);
+        asset->bmdStorage = NULL;
+        asset->textureCache = NULL;
+        asset->loaded = 0;
+    }
+    free(state);
+    runtime->powerupModelState = NULL;
+}
+
+static int game_runtime_load_powerup_models(
+    JPBGameRuntime *runtime)
+{
+    JPBGameRuntimePowerupState *state;
+    unsigned type;
+
+    if (runtime == NULL) {
+        return 0;
+    }
+    state = (JPBGameRuntimePowerupState *)calloc(1, sizeof(*state));
+    if (state == NULL) {
+        return 0;
+    }
+    runtime->powerupModelState = state;
+    for (type = 0;
+         type < JPB_GAME_RUNTIME_POWERUP_MODEL_COUNT;
+         ++type) {
+        JPBGameRuntimePowerupAsset *asset =
+            &state->assets[type];
+        const char *path;
+
+        if (powerUpFiles[type] == NULL ||
+            powerUpFiles[type][0] == '\0') {
+            continue;
+        }
+        path = resource_getPathWithExtension(
+            powerUpFiles[type], JPB_RESOURCE_MODEL, "bmd");
+        if (path == NULL) {
+            continue;
+        }
+        asset->textureCache = game_runtime_create_texture_cache(
+            JPB_GAME_RUNTIME_MODEL_TEXTURE_CAPACITY,
+            JPB_LEVEL_INDEX_NONE);
+        asset->bmdStorage =
+            (uint8_t *)malloc(JPB_BMD_REFERENCE_CAPACITY);
+        if (asset->textureCache == NULL ||
+            asset->bmdStorage == NULL ||
+            !game_runtime_texture_directory(
+                path,
+                asset->textureCache->directory,
+                sizeof(asset->textureCache->directory))) {
+            free(asset->bmdStorage);
+            game_runtime_free_texture_cache(asset->textureCache);
+            asset->bmdStorage = NULL;
+            asset->textureCache = NULL;
+            continue;
+        }
+        if (jpb_BmdLoadFile(
+                path,
+                asset->bmdStorage,
+                JPB_BMD_REFERENCE_CAPACITY,
+                &asset->bmdView) != JPB_BMD_OK ||
+            jpb_BmdBuildModel(
+                &asset->bmdView,
+                &asset->model,
+                asset->nodes,
+                JPB_MODEL_NODE_CAPACITY,
+                -1) != JPB_BMD_OK) {
+            free(asset->bmdStorage);
+            game_runtime_free_texture_cache(asset->textureCache);
+            asset->bmdStorage = NULL;
+            asset->textureCache = NULL;
+            memset(&asset->bmdView, 0, sizeof(asset->bmdView));
+            memset(&asset->model, 0, sizeof(asset->model));
+            memset(asset->nodes, 0, sizeof(asset->nodes));
+            continue;
+        }
+        asset->loaded = 1;
+    }
     return 1;
 }
 
@@ -2449,6 +2876,8 @@ static int32_t game_runtime_radians_to_angle(float radians)
 static int game_runtime_build_authored_camera(
     JPBGameRuntime *runtime)
 {
+    int16_t dolly;
+
     if (runtime == NULL || runtime->world == NULL ||
         !runtime->collisionReady) {
         return 0;
@@ -2456,8 +2885,37 @@ static int game_runtime_build_authored_camera(
     gCamera = runtime->camera;
     camera_SetCameras();
     runtime->camera = gCamera;
-    runtime->authoredCameraDolly =
-        runtime->world->currentDolly;
+    {
+        _svector lead = {0};
+        int32_t camera_lead = 0;
+
+        camera_GetLeadDiagnostics(&lead, &camera_lead);
+        runtime->authoredCameraLeadX = lead.vx;
+        runtime->authoredCameraLeadY = lead.vy;
+        runtime->authoredCameraLeadZ = lead.vz;
+        runtime->authoredCameraLeadDot = camera_lead;
+    }
+    dolly = runtime->world->currentDolly;
+    if (runtime->authoredCameraDollyObserved == 0) {
+        runtime->initialAuthoredCameraDolly = dolly;
+        runtime->authoredCameraDollyObserved = 1;
+    } else if (runtime->authoredCameraDolly != dolly) {
+        ++runtime->authoredCameraDollyTransitionCount;
+    }
+    runtime->authoredCameraDolly = dolly;
+    runtime->authoredCameraDollyFlags =
+        (dolly >= 0 && dolly < 256)
+            ? runtime->world->aDolly[dolly].flags
+            : 0;
+    if (dolly >= 0 && dolly < 256) {
+        unsigned word = (unsigned)dolly >> 5;
+        uint32_t bit = UINT32_C(1) << ((unsigned)dolly & 31u);
+
+        if ((runtime->authoredCameraDollySeen[word] & bit) == 0) {
+            runtime->authoredCameraDollySeen[word] |= bit;
+            ++runtime->authoredCameraUniqueDollyCount;
+        }
+    }
     runtime->cameraCollisionFraction = 1.0f;
     ++runtime->authoredCameraFrameCount;
     return 1;
@@ -3280,6 +3738,11 @@ int jpb_GameRuntimeInitWithPlayerAssets(
     anim_InitAnimations(0);
     player_gInitPlayers(0);
     model_InitModels();
+    if (!game_runtime_load_powerup_models(runtime)) {
+        return game_runtime_fail(
+            runtime, "init:powerup-models",
+            JPB_GAME_RUNTIME_OUT_OF_MEMORY);
+    }
     runtime->actorScene = scene_gGetNewSceneObject(0);
     runtime->physics = physics_gGetNewObject(0);
     runtime->player = NULL;
@@ -3545,15 +4008,17 @@ int jpb_GameRuntimeInitWithPlayerAssets(
     initialLevelPauseDelay = 0;
     memset(&runtime->camera, 0, sizeof(runtime->camera));
     /*
-     * scene_middleRender calls camera_SetCameras before building the view
-     * matrix. Publish the exact scene-init defaults here and let that owner
-     * resolve the player's authored collision dolly on the first frame.
+     * game_OneGameLoop calls camera_SetCameras before scene_middleRender on
+     * FED. Publish the exact scene-init defaults here and let the portable
+     * frame owner resolve the authored collision dolly on the first frame.
      */
     runtime->camera.viewType = UINT32_C(0x0901);
     gCamera = runtime->camera;
     newcameraflag = 1;
     camera_SetCurrentCameraType(1);
-    gSCENE_READY = runtime->collisionReady != 0;
+    /* scene_gInitRoot leaves this clear; retail scene_postRender promotes it
+     * only after the second rendered frame. */
+    gSCENE_READY = 0;
     /*
      * loader_LevelLoad owns fx_Init in the reference. The portable runtime
      * currently enters after that loader boundary, so install the matching
@@ -3611,12 +4076,32 @@ int jpb_GameRuntimeInitWithPlayerAssets(
         JPBSceneMiddleRenderHooks hooks;
 
         memset(&hooks, 0, sizeof(hooks));
+        hooks.afterCameraSetup =
+            game_runtime_scene_after_camera_setup;
         hooks.afterAnimations =
             game_runtime_scene_after_animations;
+        hooks.afterOverlay =
+            game_runtime_scene_after_overlay;
         hooks.afterWorld = game_runtime_scene_after_world;
         hooks.renderModels = game_runtime_scene_after_models;
+        hooks.afterSabre =
+            game_runtime_scene_after_sabre;
         hooks.beforePlayerProcess =
             game_runtime_scene_before_player_process;
+        hooks.afterPlayerProcess =
+            game_runtime_scene_after_player_process;
+        hooks.afterPowerups =
+            game_runtime_scene_after_powerups;
+        hooks.afterSprites =
+            game_runtime_scene_after_sprites;
+        hooks.afterEnemies =
+            game_runtime_scene_after_enemies;
+        hooks.afterBackdrop =
+            game_runtime_scene_after_backdrop;
+        hooks.afterPhysics =
+            game_runtime_scene_after_physics;
+        hooks.afterLevelOwner =
+            game_runtime_scene_after_level_owner;
         hooks.levelOwner = game_runtime_scene_level_owner;
         jpb_SceneSetMiddleRenderHooks(&hooks, runtime);
         runtime->sceneMiddleRenderHooksReady = 1;
@@ -3914,29 +4399,6 @@ static void game_runtime_observe_player_process(
             }
             runtime->playerAuthoredAiObserved = attached;
         }
-    }
-    if (phase == JPB_PLAYER_PROCESS_AFTER_CONTROL &&
-        player->pEnemy != NULL &&
-        gpWorld != NULL &&
-        gpWorld->currentDolly >= 0 &&
-        gpWorld->currentDolly < 256 &&
-        (gpWorld->aDolly[gpWorld->currentDolly].flags &
-         UINT32_C(0x400)) != 0 &&
-        player->pMotion != NULL &&
-        *player->pMotion != NULL) {
-        /*
-         * braindmg_DamageControl returns the authored-camera sentinel 0x400
-         * while a dolly owns the scene. brain_ControlPlayer consequently
-         * publishes logical motion 1 even though it did not activate that
-         * animation or its velocity. The retail loader's actor lifecycle
-         * does not expose that transient mismatch to BAP AI; restore the
-         * animation-owned motion for every BAP-driven player, including a
-         * live P1/P2 temporarily attached by enemy_ParseOpcodes 0x60f.
-         * Restricting this adapter to separately allocated enemy actors left
-         * FED's player proxy unable to turn toward its authored waypoint.
-         */
-        player->currentMotion =
-            (int16_t)(*player->pMotion)->Seq;
     }
     if (player == runtime->player) {
         if (phase == JPB_PLAYER_PROCESS_AFTER_CONTROL &&
@@ -4406,9 +4868,88 @@ static int game_runtime_load_enemy_class(
         game_runtime_release_enemy_class(asset_class);
         return JPB_GAME_RUNTIME_LOAD_FAILED;
     }
+    jpb_TextureSetPlatformHooks(
+        game_runtime_load_material_texture,
+        NULL,
+        asset_class->textureCache);
+    jpb_ModelSetGeometryBounds(
+        asset_class->bmdView.payload,
+        asset_class->bmdView.payload_size);
+    if (!jpb_ModelPrepareRegisteredGeometry(
+            (geomData *)(void *)asset_class->bmdView.payload,
+            asset_class->modelName)) {
+        game_runtime_set_failure_detail(
+            "enemy-assets:model-prepare",
+            "actor=%s actor_num=%d model=%s path=%s",
+            spec->actorStem,
+            actor_num,
+            spec->modelName,
+            bmd_path);
+        game_runtime_release_enemy_class(asset_class);
+        return JPB_GAME_RUNTIME_LOAD_FAILED;
+    }
+    asset_class->bmdView.geometry_streams_relocated = 1;
+    asset_class->bmdView.material_handles_relocated = 1;
     maModelID[actor_num][0] = spec->modelId;
     ++state->classCount;
     return JPB_GAME_RUNTIME_OK;
+}
+
+static int game_runtime_preload_bmd_textures(
+    JPBGameRuntimeTextureCache *cache,
+    const JPBBmdView *view,
+    const char *model_name)
+{
+    size_t index;
+
+    if (cache == NULL || view == NULL || view->root == NULL ||
+        model_name == NULL) {
+        return 0;
+    }
+    for (index = 1; index < view->node_count; ++index) {
+        const geomData *geometry = &view->root[index];
+        JPBSoftwareTexture texture;
+        char texture_name[sizeof(geometry->t.Texture)];
+        size_t texture_length;
+
+        if (memchr(
+                geometry->t.Texture,
+                '\0',
+                sizeof(geometry->t.Texture)) == NULL) {
+            game_runtime_set_failure_detail(
+                "enemy-assets:texture-name",
+                "model=%s node=%zu",
+                model_name,
+                index);
+            return 0;
+        }
+        texture_length = strlen(geometry->t.Texture);
+        if (texture_length < 2) {
+            continue;
+        }
+        memcpy(
+            texture_name,
+            geometry->t.Texture,
+            texture_length + 1);
+        if (EndsWith(texture_name, "saber.bmp") ||
+            EndsWith(texture_name, "sabr.bmp")) {
+            memcpy(
+                texture_name,
+                "transabr.bmp",
+                sizeof("transabr.bmp"));
+        }
+        if (!game_runtime_resolve_texture(
+                cache, texture_name, &texture)) {
+            game_runtime_set_failure_detail(
+                "enemy-assets:texture-load",
+                "model=%s node=%zu texture=%s",
+                model_name,
+                index,
+                texture_name);
+            return 0;
+        }
+    }
+    return 1;
 }
 
 static void game_runtime_release_enemy_actor(
@@ -4505,6 +5046,20 @@ static int game_runtime_prepare_enemy_actor_pools(
     return 1;
 }
 
+static void game_runtime_record_enemy_create_phase(
+    double duration,
+    double *last,
+    double *maximum)
+{
+    if (last == NULL || maximum == NULL) {
+        return;
+    }
+    *last += duration;
+    if (*last > *maximum) {
+        *maximum = *last;
+    }
+}
+
 static int game_runtime_create_enemy(
     wsl_ENEMY *enemy, void *user_data)
 {
@@ -4516,11 +5071,14 @@ static int game_runtime_create_enemy(
     wsl_BAP_PLACEMENT *placement;
     aiData *enemy_ai;
     int object_id;
+    double create_started;
+    double phase_started;
 
     if (runtime == NULL || runtime->enemyState == NULL ||
         enemy == NULL || enemy->pPlace == NULL) {
         return 0;
     }
+    create_started = game_runtime_wall_seconds();
     state = runtime->enemyState;
     placement = enemy->pPlace;
     asset_class = game_runtime_find_enemy_class(
@@ -4528,18 +5086,29 @@ static int game_runtime_create_enemy(
     if (asset_class == NULL) {
         return 0;
     }
+    phase_started = game_runtime_wall_seconds();
     enemy_ai =
         game_runtime_get_enemy_ai(
             asset_class, enemy->aiLevel);
+    game_runtime_record_enemy_create_phase(
+        game_runtime_wall_seconds() - phase_started,
+        &runtime->profileLastEnemyCreateAiSeconds,
+        &runtime->profileMaxEnemyCreateAiSeconds);
     if (enemy_ai == NULL) {
         return 0;
     }
+    phase_started = game_runtime_wall_seconds();
     actor = game_runtime_find_enemy_actor_slot(runtime);
     if (actor == NULL ||
         !game_runtime_prepare_enemy_actor_pools(actor)) {
         game_runtime_release_enemy_actor(actor);
         return 0;
     }
+    game_runtime_record_enemy_create_phase(
+        game_runtime_wall_seconds() - phase_started,
+        &runtime->profileLastEnemyCreatePoolSeconds,
+        &runtime->profileMaxEnemyCreatePoolSeconds);
+    phase_started = game_runtime_wall_seconds();
     object_id = actor->scene->sceneRoot.objectID;
     actor->assetClass = asset_class;
     actor->actorRoot.objectID = object_id;
@@ -4569,19 +5138,33 @@ static int game_runtime_create_enemy(
         game_runtime_release_enemy_actor(actor);
         return 0;
     }
+    game_runtime_record_enemy_create_phase(
+        game_runtime_wall_seconds() - phase_started,
+        &runtime->profileLastEnemyCreateModelSeconds,
+        &runtime->profileMaxEnemyCreateModelSeconds);
+    phase_started = game_runtime_wall_seconds();
     actor->animation = anim_CreateObject(
         actor->scene,
         asset_class->cadView.payload,
         NULL,
         0);
+    game_runtime_record_enemy_create_phase(
+        game_runtime_wall_seconds() - phase_started,
+        &runtime->profileLastEnemyCreateAnimSeconds,
+        &runtime->profileMaxEnemyCreateAnimSeconds);
     if (actor->animation == NULL) {
         game_runtime_release_enemy_actor(actor);
         return 0;
     }
+    phase_started = game_runtime_wall_seconds();
     actor->player = player_gCreateObject(
         actor->scene,
         asset_class->modelId,
         ai_InitPlayer);
+    game_runtime_record_enemy_create_phase(
+        game_runtime_wall_seconds() - phase_started,
+        &runtime->profileLastEnemyCreatePlayerSeconds,
+        &runtime->profileMaxEnemyCreatePlayerSeconds);
     if (actor->player == NULL) {
         game_runtime_release_enemy_actor(actor);
         return 0;
@@ -4617,7 +5200,12 @@ static int game_runtime_create_enemy(
      * motion zero directly leaves non-combat scene directors in their model's
      * motion 3, which prevents their BAP camera script from advancing.
      */
+    phase_started = game_runtime_wall_seconds();
     player_RefreshPlayer(actor->player);
+    game_runtime_record_enemy_create_phase(
+        game_runtime_wall_seconds() - phase_started,
+        &runtime->profileLastEnemyCreateRefreshSeconds,
+        &runtime->profileMaxEnemyCreateRefreshSeconds);
 
     /*
      * The dependency-light host assembles loader_CreateCharacter's component
@@ -4663,6 +5251,10 @@ static int game_runtime_create_enemy(
             runtime->enemyActorCount;
     }
     game_runtime_publish_primary_enemy(runtime);
+    game_runtime_record_enemy_create_phase(
+        game_runtime_wall_seconds() - create_started,
+        &runtime->profileLastEnemyCreateTotalSeconds,
+        &runtime->profileMaxEnemyCreateTotalSeconds);
     return 1;
 }
 
@@ -4777,7 +5369,27 @@ int jpb_GameRuntimeAddEnemyAssets(
         runtime->enemyTextureCache =
             state->classes[0].textureCache;
     }
+    for (spec_index = 0;
+         spec_index < state->classCount;
+         ++spec_index) {
+        JPBGameRuntimeEnemyClass *asset_class =
+            &state->classes[spec_index];
 
+        for (index = 0;
+             index < runtime->world->nEnemy;
+             ++index) {
+            wsl_BAP_PLACEMENT *candidate =
+                runtime->world->apEnemy[index];
+
+            if (candidate == NULL ||
+                candidate->actorNum != asset_class->actorNum) {
+                continue;
+            }
+            (void)game_runtime_get_enemy_ai(
+                asset_class,
+                candidate->aiDf.skillLevel / 5);
+        }
+    }
     enemy_InitEnemies();
     shaolin_InitKungfu();
     jpb_LoaderSetEnemyCreateProvider(
@@ -5160,6 +5772,7 @@ void jpb_GameRuntimeSetGameplayCompositeHook(
     if (runtime != NULL) {
         runtime->gameplayCompositeHook = hook;
         runtime->gameplayCompositeUserData = user_data;
+        runtime->gameplayHudCacheValid = 0;
     }
 }
 
@@ -5201,12 +5814,342 @@ typedef struct JPBGameRuntimeFrameContext {
     JPBSoftwareDepthBuffer depthBuffer;
     JPBSoftwareDepthBuffer glowDepthBuffer;
     int32_t previousAnimationIndices[JPB_ANIMATION_CAPACITY];
+    double sceneStageStarted;
     int sharedDepthReady;
     int glowDepthReady;
     int result;
 } JPBGameRuntimeFrameContext;
 
 static JPBGameRuntimeFrameContext *game_runtime_active_frame;
+
+static int game_runtime_render_level_mesh_pass(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeFrameContext *context,
+    MATRIX *view,
+    JPBLevelFbxMeshPass pass,
+    uint32_t clear_color);
+
+static void game_runtime_record_scene_stage(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeFrameContext *context,
+    double *last,
+    double *maximum)
+{
+    double now;
+    double duration;
+
+    if (runtime == NULL || context == NULL ||
+        context->runtime != runtime ||
+        context->result != JPB_GAME_RUNTIME_OK ||
+        last == NULL || maximum == NULL) {
+        return;
+    }
+    now = game_runtime_wall_seconds();
+    duration = now - context->sceneStageStarted;
+    *last = duration;
+    if (duration > *maximum) {
+        *maximum = duration;
+    }
+    context->sceneStageStarted = now;
+}
+
+static void game_runtime_scene_after_camera_setup(
+    void *user_data, MATRIX *view)
+{
+    JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
+
+    (void)view;
+    game_runtime_record_scene_stage(
+        runtime,
+        game_runtime_active_frame,
+        &runtime->profileLastSceneSetupSeconds,
+        &runtime->profileMaxSceneSetupSeconds);
+}
+
+static void game_runtime_scene_after_overlay(
+    void *user_data, MATRIX *view)
+{
+    JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
+
+    (void)view;
+    game_runtime_record_scene_stage(
+        runtime,
+        game_runtime_active_frame,
+        &runtime->profileLastSceneOverlaySeconds,
+        &runtime->profileMaxSceneOverlaySeconds);
+}
+
+static void game_runtime_scene_after_sabre(
+    void *user_data, MATRIX *view)
+{
+    JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
+
+    (void)view;
+    game_runtime_record_scene_stage(
+        runtime,
+        game_runtime_active_frame,
+        &runtime->profileLastSceneSabreSeconds,
+        &runtime->profileMaxSceneSabreSeconds);
+}
+
+static void game_runtime_scene_after_player_process(
+    void *user_data, MATRIX *view)
+{
+    JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
+
+    (void)view;
+    game_runtime_record_scene_stage(
+        runtime,
+        game_runtime_active_frame,
+        &runtime->profileLastScenePlayerSeconds,
+        &runtime->profileMaxScenePlayerSeconds);
+}
+
+static void game_runtime_scene_after_powerups(
+    void *user_data, MATRIX *view)
+{
+    JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
+
+    (void)view;
+    game_runtime_record_scene_stage(
+        runtime,
+        game_runtime_active_frame,
+        &runtime->profileLastScenePowerupsSeconds,
+        &runtime->profileMaxScenePowerupsSeconds);
+}
+
+static void game_runtime_scene_after_sprites(
+    void *user_data, MATRIX *view)
+{
+    JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
+
+    (void)view;
+    game_runtime_record_scene_stage(
+        runtime,
+        game_runtime_active_frame,
+        &runtime->profileLastSceneSpritesSeconds,
+        &runtime->profileMaxSceneSpritesSeconds);
+}
+
+static void game_runtime_scene_after_enemies(
+    void *user_data, MATRIX *view)
+{
+    JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
+
+    (void)view;
+    game_runtime_record_scene_stage(
+        runtime,
+        game_runtime_active_frame,
+        &runtime->profileLastSceneEnemiesSeconds,
+        &runtime->profileMaxSceneEnemiesSeconds);
+}
+
+static void game_runtime_scene_after_backdrop(
+    void *user_data, MATRIX *view)
+{
+    JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
+
+    (void)view;
+    game_runtime_record_scene_stage(
+        runtime,
+        game_runtime_active_frame,
+        &runtime->profileLastSceneBackdropSeconds,
+        &runtime->profileMaxSceneBackdropSeconds);
+}
+
+static void game_runtime_scene_after_physics(
+    void *user_data, MATRIX *view)
+{
+    JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
+
+    (void)view;
+    game_runtime_record_scene_stage(
+        runtime,
+        game_runtime_active_frame,
+        &runtime->profileLastScenePhysicsSeconds,
+        &runtime->profileMaxScenePhysicsSeconds);
+}
+
+static void game_runtime_scene_after_level_owner(
+    void *user_data, MATRIX *view)
+{
+    JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
+    JPBGameRuntimeFrameContext *context =
+        game_runtime_active_frame;
+
+    if (context != NULL && context->runtime == runtime &&
+        context->result == JPB_GAME_RUNTIME_OK &&
+        context->sharedDepthReady && !runtime->topView &&
+        runtime->levelRenderMesh != NULL) {
+        size_t pixels_before = context->stats != NULL
+            ? context->stats->pixels
+            : 0;
+        double started = game_runtime_wall_seconds();
+        int pass;
+
+        for (pass = JPB_LEVEL_FBX_PASS_TRANSPARENT;
+             pass <= JPB_LEVEL_FBX_PASS_GLASS;
+             ++pass) {
+            int render_result = game_runtime_render_level_mesh_pass(
+                runtime,
+                context,
+                view,
+                (JPBLevelFbxMeshPass)pass,
+                0);
+
+            if (render_result != JPB_SOFTWARE_RENDER_OK) {
+                game_runtime_set_failure_detail(
+                    "frame:level-deferred",
+                    "level pass=%d renderer status=%d",
+                    pass,
+                    render_result);
+                context->result = JPB_GAME_RUNTIME_RENDER_FAILED;
+                break;
+            }
+        }
+        {
+            double duration = game_runtime_wall_seconds() - started;
+
+            runtime->profileWorldSeconds += duration;
+            runtime->profileLastWorldSeconds += duration;
+            if (runtime->profileLastWorldSeconds >
+                runtime->profileMaxWorldSeconds) {
+                runtime->profileMaxWorldSeconds =
+                    runtime->profileLastWorldSeconds;
+            }
+        }
+        runtime->worldLoadedTextures =
+            runtime->worldTextureCache->loadedTextureCount;
+        if (context->stats != NULL &&
+            context->stats->pixels >= pixels_before) {
+            runtime->worldRenderedPixels +=
+                context->stats->pixels - pixels_before;
+        }
+    }
+    game_runtime_record_scene_stage(
+        runtime,
+        context,
+        &runtime->profileLastSceneLevelOwnerSeconds,
+        &runtime->profileMaxSceneLevelOwnerSeconds);
+}
+
+static void game_runtime_observe_player_lifecycle(
+    JPBGameRuntime *runtime)
+{
+    enum {
+        death_flag = 0x00000200,
+        scene_afterlife_flag = 0x00000020,
+        player_exit_flag = 0x00040000,
+        level_exit_state = 0x02000000
+    };
+    uint32_t frame;
+    uint32_t player_game_exit_flag;
+    int energy;
+    int overlay_samples_player;
+    _svector world_position;
+    union {
+        int packed;
+        int16_t component[2];
+    } projected;
+    union {
+        int packed;
+        int16_t component[2];
+    } original;
+
+    if (runtime == NULL || runtime->player == NULL ||
+        runtime->physics == NULL) {
+        return;
+    }
+    frame = runtime->profileFrameCount;
+    energy = game_gGetEnergy(runtime->player->playernum);
+    if (runtime->playerEnergyObserved == 0) {
+        runtime->playerInitialEnergy = (int16_t)energy;
+        runtime->playerMinimumEnergy = (int16_t)energy;
+        runtime->playerEnergyObserved = 1;
+    } else if (energy < runtime->playerMinimumEnergy) {
+        runtime->playerMinimumEnergy = (int16_t)energy;
+    }
+    if (energy < 1 && runtime->playerEnergyZeroFrame == 0) {
+        runtime->playerEnergyZeroFrame = frame;
+    }
+    if ((runtime->player->pFlags & death_flag) != 0 &&
+        runtime->playerDeathFlagFrame == 0) {
+        runtime->playerDeathFlagFrame = frame;
+    }
+    if (obj_gCheckObjectFlag(
+            &runtime->player->playerRoot,
+            0,
+            scene_afterlife_flag) != 0 &&
+        runtime->playerAfterlifeFlagFrame == 0) {
+        runtime->playerAfterlifeFlagFrame = frame;
+    }
+    if ((runtime->player->pFlags & player_exit_flag) != 0 &&
+        runtime->playerExitFlagFrame == 0) {
+        runtime->playerExitFlagFrame = frame;
+    }
+    player_game_exit_flag =
+        UINT32_C(0x20) <<
+        ((unsigned)(uint16_t)runtime->player->playernum & 31u);
+    if ((GameStruct.GameState & player_game_exit_flag) != 0 &&
+        runtime->playerDeathGameFlagFrame == 0) {
+        runtime->playerDeathGameFlagFrame = frame;
+    }
+    if ((GameStruct.GameState & level_exit_state) != 0 &&
+        runtime->levelExitStateFrame == 0) {
+        runtime->levelExitStateFrame = frame;
+    }
+
+    overlay_samples_player =
+        GameStruct.screenShotFlag != 2 &&
+        OptionStruct.AIDebug < 2 &&
+        (GameStruct.GameState & level_exit_state) == 0 &&
+        refreshHUDCounter == 0 &&
+        gGlobalTimer > UINT32_C(0x2000) &&
+        runtime->world != NULL &&
+        runtime->world->currentDolly >= 0 &&
+        runtime->world->currentDolly < 256 &&
+        (runtime->world->aDolly[
+            runtime->world->currentDolly].flags &
+            UINT32_C(0x400)) == 0 &&
+        (runtime->player->pFlags & UINT32_C(2)) == 0;
+    if (overlay_samples_player) {
+        uint8_t onscreen = playeronscreen[0] != 0;
+        int alpha;
+
+        world_position.vx =
+            (int16_t)(int32_t)runtime->physics->pos.vx;
+        world_position.vy =
+            (int16_t)((int32_t)runtime->physics->pos.vy + 0x60);
+        world_position.vz =
+            (int16_t)(int32_t)runtime->physics->pos.vz;
+        world_position.pad = 0;
+        (void)TransformPoints(
+            &world_position, &projected.packed, 1);
+        original.packed = projected.packed;
+        alpha = cliptoscreen(projected.component);
+        runtime->playerOffscreenWorldX = world_position.vx;
+        runtime->playerOffscreenWorldY = world_position.vy;
+        runtime->playerOffscreenWorldZ = world_position.vz;
+        runtime->playerOffscreenScreenX = original.component[0];
+        runtime->playerOffscreenScreenY = original.component[1];
+        runtime->playerOffscreenClippedX = projected.component[0];
+        runtime->playerOffscreenClippedY = projected.component[1];
+        runtime->playerOffscreenAlpha = (int16_t)alpha;
+
+        ++runtime->playerOnscreenSampleCount;
+        if (onscreen) {
+            ++runtime->playerOnscreenFrameCount;
+        } else {
+            ++runtime->playerOffscreenFrameCount;
+        }
+        if (runtime->playerOnscreenObserved != 0 &&
+            runtime->lastPlayerOnscreen != onscreen) {
+            ++runtime->playerOnscreenTransitionCount;
+        }
+        runtime->playerOnscreenObserved = 1;
+        runtime->lastPlayerOnscreen = onscreen;
+    }
+}
 
 static void game_runtime_capture_screen_poly(
     void *user_data,
@@ -5435,6 +6378,10 @@ static void game_runtime_scene_after_animations(
                 !game_runtime_enemy_is_active(actor->enemy)) {
                 continue;
             }
+            if (actor->animation == NULL ||
+                actor->animation->pCurrentAnimSeq == NULL) {
+                continue;
+            }
             animation_index =
                 actor->animation->animRoot.objectID;
             if ((uint32_t)animation_index >=
@@ -5443,6 +6390,21 @@ static void game_runtime_scene_after_animations(
                     actor,
                     context->previousAnimationIndices[
                         animation_index])) {
+                game_runtime_set_failure_detail(
+                    "frame:enemy-publish",
+                    "actor=%zu enemy=%d animation=%d seq=%p frame=%p root=%d",
+                    enemy_index,
+                    actor->enemy != NULL
+                        ? actor->enemy->enemyID : -1,
+                    animation_index,
+                    actor->animation != NULL
+                        ? (void *)actor->animation->pCurrentAnimSeq
+                        : NULL,
+                    actor->animation != NULL
+                        ? (void *)actor->animation->pCurrentAnimFrame
+                        : NULL,
+                    actor->model.pRootNode != NULL
+                        ? (int)actor->model.pRootNode->id : -1);
                 context->result =
                     JPB_GAME_RUNTIME_RENDER_FAILED;
                 return;
@@ -5450,6 +6412,44 @@ static void game_runtime_scene_after_animations(
         }
         game_runtime_publish_primary_enemy(runtime);
     }
+    game_runtime_record_scene_stage(
+        runtime,
+        context,
+        &runtime->profileLastSceneAnimationsSeconds,
+        &runtime->profileMaxSceneAnimationsSeconds);
+}
+
+static int game_runtime_render_level_mesh_pass(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeFrameContext *context,
+    MATRIX *view,
+    JPBLevelFbxMeshPass pass,
+    uint32_t clear_color)
+{
+    return runtime->levelRenderHook != NULL
+        ? runtime->levelRenderHook(
+              runtime->levelRenderUserData,
+              runtime->levelRenderMesh,
+              pass,
+              &runtime->scene,
+              view,
+              context->framebuffer,
+              clear_color,
+              game_runtime_resolve_texture,
+              runtime->worldTextureCache,
+              &context->depthBuffer,
+              context->stats)
+        : jpb_SoftwareRenderLevelMeshPass(
+              runtime->levelRenderMesh,
+              pass,
+              &runtime->scene,
+              view,
+              context->framebuffer,
+              clear_color,
+              game_runtime_resolve_texture,
+              runtime->worldTextureCache,
+              &context->depthBuffer,
+              context->stats);
 }
 
 static void game_runtime_scene_after_world(
@@ -5490,30 +6490,13 @@ static void game_runtime_scene_after_world(
         return;
     }
     context->result =
-        (runtime->levelRenderMesh != NULL &&
-                 runtime->levelRenderHook != NULL
-             ? runtime->levelRenderHook(
-                   runtime->levelRenderUserData,
-                   runtime->levelRenderMesh,
-                   &runtime->scene,
+        (runtime->levelRenderMesh != NULL
+             ? game_runtime_render_level_mesh_pass(
+                   runtime,
+                   context,
                    view,
-                   context->framebuffer,
-                   clear_color,
-                   game_runtime_resolve_texture,
-                   runtime->worldTextureCache,
-                   &context->depthBuffer,
-                   context->stats)
-             : runtime->levelRenderMesh != NULL
-             ? jpb_SoftwareRenderLevelMesh(
-                   runtime->levelRenderMesh,
-                   &runtime->scene,
-                   view,
-                   context->framebuffer,
-                   clear_color,
-                   game_runtime_resolve_texture,
-                   runtime->worldTextureCache,
-                   &context->depthBuffer,
-                   context->stats)
+                   JPB_LEVEL_FBX_PASS_OPAQUE,
+                   clear_color)
              : jpb_SoftwareRenderJpxMaterialized(
                    &runtime->scene,
                    view,
@@ -5527,8 +6510,11 @@ static void game_runtime_scene_after_world(
             : JPB_GAME_RUNTIME_RENDER_FAILED;
     context->sharedDepthReady =
         context->result == JPB_GAME_RUNTIME_OK;
-    runtime->profileWorldSeconds +=
-        game_runtime_wall_seconds() - started;
+    game_runtime_record_duration(
+        &runtime->profileWorldSeconds,
+        &runtime->profileLastWorldSeconds,
+        &runtime->profileMaxWorldSeconds,
+        game_runtime_wall_seconds() - started);
     if (context->sharedDepthReady) {
         runtime->worldLoadedTextures =
             runtime->worldTextureCache->loadedTextureCount;
@@ -5537,6 +6523,11 @@ static void game_runtime_scene_after_world(
                 ? context->stats->pixels
                 : 0;
     }
+    game_runtime_record_scene_stage(
+        runtime,
+        context,
+        &runtime->profileLastWorldSeconds,
+        &runtime->profileMaxWorldSeconds);
 }
 
 static int game_runtime_scene_render_model(
@@ -5586,6 +6577,273 @@ static int game_runtime_scene_render_model(
             context->stats);
 
     return result;
+}
+
+static int game_runtime_scene_render_powerup_geometry(
+    JPBGameRuntimeFrameContext *context,
+    JPBGameRuntimePowerupAsset *asset,
+    const JPBGameRuntimePowerupDraw *draw)
+{
+    JPBGameRuntime *runtime = context->runtime;
+    JPBBmdGeometryView geometry;
+    FVECTOR transformed[JPB_SOFTWARE_MODEL_VERTEX_CAPACITY];
+    MATRIX local;
+    MATRIX *view;
+    FVECTOR position;
+    JPBSoftwareTexture texture;
+    _Material material;
+    size_t vertex;
+    size_t face;
+    size_t pixels_before;
+    size_t pixels_added;
+
+    if (asset == NULL || draw == NULL || !asset->loaded ||
+        asset->bmdView.root == NULL) {
+        game_runtime_set_failure_detail(
+            "frame:powerup",
+            "powerup asset not loaded type=%u", draw != NULL
+                ? draw->type : UINT_MAX);
+        return 0;
+    }
+    if (jpb_BmdGetGeometry(
+            &asset->bmdView,
+            asset->bmdView.root,
+            &geometry) != JPB_BMD_OK ||
+        geometry.shared_vertex_count != 0 ||
+        geometry.total_vertex_count >
+            JPB_SOFTWARE_MODEL_VERTEX_CAPACITY) {
+        game_runtime_set_failure_detail(
+            "frame:powerup",
+            "powerup geometry invalid type=%u shared=%zu vertices=%zu",
+            draw->type, geometry.shared_vertex_count,
+            geometry.total_vertex_count);
+        return 0;
+    }
+    memset(&texture, 0, sizeof(texture));
+    if (!game_runtime_resolve_texture(
+            asset->textureCache,
+            geometry.geometry->t.Texture,
+            &texture)) {
+        game_runtime_set_failure_detail(
+            "frame:powerup",
+            "powerup texture unresolved type=%u texture=%s",
+            draw->type, geometry.geometry->t.Texture);
+        return 0;
+    }
+    memset(&material, 0, sizeof(material));
+    material.texture = &texture;
+    material.flags = texture.materialFlags;
+    material.samplerType = texture.samplerType;
+    material.colorOverride = texture.colorOverride;
+    (void)snprintf(
+        material.filename,
+        sizeof(material.filename),
+        "%s",
+        geometry.geometry->t.Texture);
+
+    fRotMatrix((_svector *)(void *)&draw->rotation, &local);
+    fScaleMatrix(&local, (VECTOR *)(void *)&draw->scale);
+    position.vx = (float)((int32_t)draw->position.vx +
+                          (int32_t)draw->offset.vx);
+    position.vy = (float)((int32_t)draw->position.vy +
+                          (int32_t)draw->offset.vy);
+    position.vz = (float)((int32_t)draw->position.vz +
+                          (int32_t)draw->offset.vz);
+    view = scene_GetSceneMatrix();
+    for (vertex = 0;
+         vertex < geometry.local_vertex_count;
+         ++vertex) {
+        FVECTOR decoded;
+        FVECTOR world;
+        FVECTOR camera;
+
+        jpb_BmdDecodePackedVertex(
+            geometry.packed_vertices[vertex], &decoded);
+        fApplyMatrixFV(&local, &decoded, &world);
+        world.vx += position.vx;
+        world.vy += position.vy;
+        world.vz += position.vz;
+        fApplyMatrixFV(view, &world, &camera);
+        camera.vx += (float)view->t[0];
+        camera.vy += (float)view->t[1];
+        camera.vz += (float)view->t[2];
+        transformed[geometry.shared_vertex_count + vertex] =
+            camera;
+    }
+
+    pixels_before = context->stats != NULL
+        ? context->stats->pixels
+        : 0;
+    for (face = 0; face < geometry.face_count; ++face) {
+        size_t corners =
+            jpb_BmdFaceCornerCount(&geometry, face);
+        JPBScreenPolyVertex vertices[4];
+        size_t corner;
+        int render_result;
+
+        if (corners < 3 || corners > 4) {
+            game_runtime_set_failure_detail(
+                "frame:powerup",
+                "powerup face invalid type=%u face=%zu corners=%zu",
+                draw->type, face, corners);
+            return 0;
+        }
+        for (corner = 0; corner < corners; ++corner) {
+            size_t index;
+            const pairUV *uv;
+            const CVECTOR *color;
+            uint8_t r;
+            uint8_t g;
+            uint8_t b;
+
+            if (!jpb_BmdFaceVertexIndex(
+                    &geometry, face, corner, &index) ||
+                index >= JPB_SOFTWARE_MODEL_VERTEX_CAPACITY) {
+                game_runtime_set_failure_detail(
+                    "frame:powerup",
+                    "powerup vertex invalid type=%u face=%zu corner=%zu",
+                    draw->type, face, corner);
+                return 0;
+            }
+            uv = jpb_BmdFaceUv(&geometry, face, corner);
+            color = jpb_BmdFaceColor(&geometry, face, corner);
+            if (uv == NULL || color == NULL) {
+                game_runtime_set_failure_detail(
+                    "frame:powerup",
+                    "powerup attributes invalid type=%u face=%zu corner=%zu",
+                    draw->type, face, corner);
+                return 0;
+            }
+            r = color->r;
+            g = color->g;
+            b = color->b;
+            if (material.colorOverride >= 0) {
+                r = (uint8_t)material.colorOverride;
+                g = (uint8_t)material.colorOverride;
+                b = (uint8_t)material.colorOverride;
+            } else if (material.colorOverride == -1000 &&
+                       r < 3) {
+                r = UINT8_C(0x12);
+                g = UINT8_C(0x12);
+                b = UINT8_C(0x12);
+            }
+            vertices[corner].x = transformed[index].vx;
+            vertices[corner].y = transformed[index].vy;
+            vertices[corner].z = transformed[index].vz;
+            vertices[corner].argb =
+                UINT32_C(0xff000000) |
+                ((uint32_t)r << 16) |
+                ((uint32_t)g << 8) |
+                (uint32_t)b;
+            vertices[corner].tu = uv->u;
+            vertices[corner].tv = uv->v;
+        }
+        render_result =
+            runtime->screenPolyTriangleSink != NULL &&
+                    runtime->screenPolyRenderBeginHook != NULL &&
+                    runtime->screenPolyRenderEndHook != NULL
+            ? jpb_SoftwareDrawScreenPolyToSink(
+                  &material, (int)corners, vertices, 1,
+                  context->framebuffer, &context->depthBuffer,
+                  runtime->screenPolyTriangleSink,
+                  runtime->screenPolyRenderUserData,
+                  context->stats)
+            : jpb_SoftwareDrawScreenPoly(
+                  &material, (int)corners, vertices, 1,
+                  context->framebuffer, &context->depthBuffer,
+                  context->stats);
+        if (render_result != JPB_SOFTWARE_RENDER_OK) {
+            game_runtime_set_failure_detail(
+                "frame:powerup",
+                "powerup draw failed type=%u face=%zu status=%d",
+                draw->type, face, render_result);
+            return 0;
+        }
+    }
+    pixels_added = context->stats != NULL
+        ? context->stats->pixels - pixels_before
+        : 0;
+    if (pixels_added != 0) {
+        ++runtime->powerupModelDrawCount;
+        runtime->powerupModelPixelCount += pixels_added;
+    }
+    return 1;
+}
+
+static void game_runtime_scene_render_powerups(
+    JPBGameRuntimeFrameContext *context)
+{
+    JPBGameRuntime *runtime;
+    JPBGameRuntimePowerupState *state;
+    size_t draw_index;
+    double started;
+    int hardware_sink;
+
+    if (context == NULL || context->runtime == NULL ||
+        context->result != JPB_GAME_RUNTIME_OK) {
+        return;
+    }
+    runtime = context->runtime;
+    state =
+        (JPBGameRuntimePowerupState *)runtime->powerupModelState;
+    if (state == NULL || state->pendingCount == 0) {
+        return;
+    }
+    started = game_runtime_wall_seconds();
+    hardware_sink =
+        context->sharedDepthReady &&
+        runtime->screenPolyTriangleSink != NULL &&
+        runtime->screenPolyRenderBeginHook != NULL &&
+        runtime->screenPolyRenderEndHook != NULL;
+    if (hardware_sink &&
+        !runtime->screenPolyRenderBeginHook(
+            runtime->screenPolyRenderUserData,
+            context->framebuffer, &context->depthBuffer)) {
+        game_runtime_set_failure_detail(
+            "frame:powerup-begin",
+            "hardware powerup begin hook failed");
+        context->result = JPB_GAME_RUNTIME_RENDER_FAILED;
+        state->pendingCount = 0;
+        return;
+    }
+    for (draw_index = 0;
+         draw_index < state->pendingCount;
+         ++draw_index) {
+        JPBGameRuntimePowerupDraw *draw =
+            &state->pending[draw_index];
+        JPBGameRuntimePowerupAsset *asset;
+
+        if (draw->type >= JPB_GAME_RUNTIME_POWERUP_MODEL_COUNT) {
+            continue;
+        }
+        asset = &state->assets[draw->type];
+        if (!game_runtime_scene_render_powerup_geometry(
+                context, asset, draw)) {
+            context->result = JPB_GAME_RUNTIME_RENDER_FAILED;
+            break;
+        }
+    }
+    if (hardware_sink &&
+        context->result == JPB_GAME_RUNTIME_OK &&
+        !runtime->screenPolyRenderEndHook(
+            runtime->screenPolyRenderUserData,
+            context->framebuffer, &context->depthBuffer)) {
+        game_runtime_set_failure_detail(
+            "frame:powerup-end",
+            "hardware powerup end hook failed");
+        context->result = JPB_GAME_RUNTIME_RENDER_FAILED;
+    }
+    state->pendingCount = 0;
+    {
+        double duration = game_runtime_wall_seconds() - started;
+
+        runtime->profileLastScenePowerupsSeconds += duration;
+        if (runtime->profileLastScenePowerupsSeconds >
+            runtime->profileMaxScenePowerupsSeconds) {
+            runtime->profileMaxScenePowerupsSeconds =
+                runtime->profileLastScenePowerupsSeconds;
+        }
+    }
 }
 
 static void game_runtime_scene_after_models(
@@ -5724,7 +6982,9 @@ static void game_runtime_scene_after_models(
 
             if (!actor->authoredMotionReady ||
                 actor->model.pRootNode == NULL ||
-                actor->assetClass == NULL) {
+                actor->assetClass == NULL ||
+                actor->animation == NULL ||
+                actor->animation->pCurrentAnimSeq == NULL) {
                 continue;
             }
             position.vx = actor->physics->pos.vx;
@@ -5751,11 +7011,22 @@ static void game_runtime_scene_after_models(
                 if (render_result != JPB_SOFTWARE_RENDER_OK) {
                     game_runtime_set_failure_detail(
                         "frame:model-enemy",
-                        "software renderer status=%d actor=%zu id=%d root=%d position=%.1f/%.1f/%.1f",
+                        "software renderer status=%d actor=%zu id=%d owner=%d root=%d seq=%p frame=%p scene_frame=%p position=%.1f/%.1f/%.1f",
                         render_result, index,
                         actor->enemy != NULL
                             ? actor->enemy->enemyID : -1,
+                        actor->enemy != NULL
+                            ? actor->enemy->ownerType : -1,
                         (int)actor->model.pRootNode->id,
+                        actor->animation != NULL
+                            ? (void *)actor->animation->pCurrentAnimSeq
+                            : NULL,
+                        actor->animation != NULL
+                            ? (void *)actor->animation->pCurrentAnimFrame
+                            : NULL,
+                        actor->scene != NULL
+                            ? (void *)actor->scene->pKeyFrameModel
+                            : NULL,
                         position.vx, position.vy, position.vz);
                     context->result =
                         JPB_GAME_RUNTIME_RENDER_FAILED;
@@ -5786,8 +7057,16 @@ static void game_runtime_scene_after_models(
         context->result = JPB_GAME_RUNTIME_RENDER_FAILED;
         return;
     }
-    runtime->profileModelsSeconds +=
-        game_runtime_wall_seconds() - started;
+    game_runtime_record_duration(
+        &runtime->profileModelsSeconds,
+        &runtime->profileLastModelsSeconds,
+        &runtime->profileMaxModelsSeconds,
+        game_runtime_wall_seconds() - started);
+    game_runtime_record_scene_stage(
+        runtime,
+        context,
+        &runtime->profileLastModelsSeconds,
+        &runtime->profileMaxModelsSeconds);
 }
 
 static void game_runtime_scene_before_player_process(
@@ -5903,6 +7182,7 @@ void jpb_GameRuntimeShutdown(JPBGameRuntime *runtime)
         game_runtime_release_enemy_classes(
             runtime->enemyState);
     }
+    game_runtime_free_powerup_models(runtime);
     if (runtime->world != NULL) {
         free(runtime->world->apEnemy);
         free(runtime->world->apAI);
@@ -5965,6 +7245,8 @@ int jpb_GameRuntimeFrame(
     JPBGameRuntimeFrameContext context;
     int animation_index;
     int enemy_frame_processed;
+    double frame_started;
+    double stage_started;
     double effects_started;
 
     if (runtime == NULL || framebuffer == NULL) {
@@ -5974,6 +7256,38 @@ int jpb_GameRuntimeFrame(
         return JPB_GAME_RUNTIME_INVALID_ARGUMENT;
     }
     game_runtime_set_failure_detail("none", NULL);
+    frame_started = game_runtime_wall_seconds();
+    runtime->profileLastFrameSeconds = 0.0;
+    runtime->profileLastCameraSeconds = 0.0;
+    runtime->profileLastSceneSeconds = 0.0;
+    runtime->profileLastWorldSeconds = 0.0;
+    runtime->profileLastModelsSeconds = 0.0;
+    runtime->profileLastEffectsSeconds = 0.0;
+    runtime->profileLastScreenPolySeconds = 0.0;
+    runtime->profileLastDepthSnapshotSeconds = 0.0;
+    runtime->profileLastHudSeconds = 0.0;
+    runtime->profileLastGlowSeconds = 0.0;
+    runtime->profileLastHudReplaySeconds = 0.0;
+    runtime->profileLastCompositeUploadSeconds = 0.0;
+    runtime->profileLastCompositeFinishSeconds = 0.0;
+    runtime->profileLastSceneSetupSeconds = 0.0;
+    runtime->profileLastSceneAnimationsSeconds = 0.0;
+    runtime->profileLastSceneOverlaySeconds = 0.0;
+    runtime->profileLastSceneSabreSeconds = 0.0;
+    runtime->profileLastScenePlayerSeconds = 0.0;
+    runtime->profileLastScenePowerupsSeconds = 0.0;
+    runtime->profileLastSceneSpritesSeconds = 0.0;
+    runtime->profileLastSceneEnemiesSeconds = 0.0;
+    runtime->profileLastSceneBackdropSeconds = 0.0;
+    runtime->profileLastScenePhysicsSeconds = 0.0;
+    runtime->profileLastSceneLevelOwnerSeconds = 0.0;
+    runtime->profileLastEnemyCreateTotalSeconds = 0.0;
+    runtime->profileLastEnemyCreatePoolSeconds = 0.0;
+    runtime->profileLastEnemyCreateAiSeconds = 0.0;
+    runtime->profileLastEnemyCreateModelSeconds = 0.0;
+    runtime->profileLastEnemyCreateAnimSeconds = 0.0;
+    runtime->profileLastEnemyCreatePlayerSeconds = 0.0;
+    runtime->profileLastEnemyCreateRefreshSeconds = 0.0;
     runtime->screenDrawCount = 0;
     runtime->drawOrder = 0;
     runtime->screenDrawDroppedCount = 0;
@@ -6010,6 +7324,8 @@ int jpb_GameRuntimeFrame(
     runtime->waterPolyDrawCount = 0;
     runtime->waterPolyCompositePixelCount = 0;
     runtime->powerupDrawCount = 0;
+    runtime->powerupModelDrawCount = 0;
+    runtime->powerupModelPixelCount = 0;
     OptionStruct.ScreenWidth =
         (uint32_t)(framebuffer->width > 0
                        ? framebuffer->width
@@ -6084,17 +7400,6 @@ int jpb_GameRuntimeFrame(
             (runtime->physics->pos.vz +
              runtime->inactivePlayerPhysics->pos.vz) * 0.5f;
     }
-    if (runtime->world != NULL && runtime->physics != NULL) {
-        /*
-         * The reference scene owner keeps WorldData.location synchronized
-         * with the live gameplay focus before enemy activation/range tests.
-         * The portable camera seam does not yet own that store, so publish
-         * the active single-player position here.
-         */
-        runtime->world->location.vx = (int32_t)runtime->targetX;
-        runtime->world->location.vy = (int32_t)runtime->targetY;
-        runtime->world->location.vz = (int32_t)runtime->targetZ;
-    }
     for (animation_index = 0;
          animation_index < JPB_ANIMATION_CAPACITY;
          ++animation_index) {
@@ -6103,9 +7408,15 @@ int jpb_GameRuntimeFrame(
     }
 
     game_runtime_publish_level_camera_owner(runtime);
+    stage_started = game_runtime_wall_seconds();
     if (!game_runtime_build_camera(runtime)) {
         return JPB_GAME_RUNTIME_RENDER_FAILED;
     }
+    game_runtime_record_duration(
+        NULL,
+        &runtime->profileLastCameraSeconds,
+        &runtime->profileMaxCameraSeconds,
+        game_runtime_wall_seconds() - stage_started);
     gCamera = runtime->camera;
     memset(&context.depthBuffer, 0, sizeof(context.depthBuffer));
     memset(&context.glowDepthBuffer, 0, sizeof(context.glowDepthBuffer));
@@ -6120,12 +7431,21 @@ int jpb_GameRuntimeFrame(
         gSCENE_READY == 0 ||
         initialLevelPauseDelay < 2 ||
         (GameStruct.GameState & UINT32_C(0x02000000)) == 0;
+    stage_started = game_runtime_wall_seconds();
+    context.sceneStageStarted = stage_started;
     scene_middleRender(NULL);
+    game_runtime_scene_render_powerups(&context);
+    game_runtime_record_duration(
+        NULL,
+        &runtime->profileLastSceneSeconds,
+        &runtime->profileMaxSceneSeconds,
+        game_runtime_wall_seconds() - stage_started);
     game_runtime_active_frame = NULL;
     if (context.result != JPB_GAME_RUNTIME_OK) {
         return context.result;
     }
     ++runtime->profileFrameCount;
+    game_runtime_observe_player_lifecycle(runtime);
     /*
      * Exact game_ProcessStatus ordering: scene/input processing completes,
      * then each live world player conforms its authored model nodes.
@@ -6228,8 +7548,11 @@ int jpb_GameRuntimeFrame(
     }
     effects_started = game_runtime_wall_seconds();
     game_runtime_flush_deferred_screen_polys(&context);
-    runtime->profileScreenPolySeconds +=
-        game_runtime_wall_seconds() - effects_started;
+    game_runtime_record_duration(
+        &runtime->profileScreenPolySeconds,
+        &runtime->profileLastScreenPolySeconds,
+        &runtime->profileMaxScreenPolySeconds,
+        game_runtime_wall_seconds() - effects_started);
     if (context.result != JPB_GAME_RUNTIME_OK) {
         return context.result;
     }
@@ -6249,86 +7572,159 @@ int jpb_GameRuntimeFrame(
         if (!context.glowDepthReady) {
             return JPB_GAME_RUNTIME_RENDER_FAILED;
         }
-        runtime->profileDepthSnapshotSeconds +=
-            game_runtime_wall_seconds() - snapshot_started;
+        game_runtime_record_duration(
+            &runtime->profileDepthSnapshotSeconds,
+            &runtime->profileLastDepthSnapshotSeconds,
+            &runtime->profileMaxDepthSnapshotSeconds,
+            game_runtime_wall_seconds() - snapshot_started);
     }
     enemy_CheckTeleport();
-    {
-        double hud_started = game_runtime_wall_seconds();
-
-        game_runtime_flush_ordered_title_draws(runtime, framebuffer);
-        runtime->profileHudSeconds +=
-            game_runtime_wall_seconds() - hud_started;
-    }
     if (runtime->gameplayCompositeHook != NULL) {
-        size_t saved_screen_pixels =
-            runtime->screenDrawCompositePixelCount;
-        size_t saved_player_hud_pixels =
-            runtime->playerHudTileCompositePixelCount;
-        size_t saved_text_pixels =
-            runtime->textDrawCompositePixelCount;
-        size_t saved_alpha_pixels =
-            runtime->screenDrawTextureAlphaModulatedPixelCount;
-        size_t saved_item_alpha_pixels =
-            runtime->itemHudTextureAlphaModulatedPixelCount;
-        size_t saved_credit_alpha_pixels =
-            runtime->creditHudTextureAlphaModulatedPixelCount;
-        size_t saved_rescue_alpha_pixels =
-            runtime->rescueHudTextureAlphaModulatedPixelCount;
+        uint64_t hud_hash =
+            game_runtime_hash_hud_draws(runtime, framebuffer);
+        int hud_cache_hit =
+            runtime->gameplayHudCacheValid &&
+            runtime->gameplayHudCacheHash == hud_hash &&
+            runtime->gameplayHudCacheWidth == framebuffer->width &&
+            runtime->gameplayHudCacheHeight == framebuffer->height;
         size_t saved_text_draw_pixels[
             JPB_GAME_RUNTIME_TEXT_DRAW_CAPACITY];
         size_t draw_index;
         double stage_started;
 
-        for (draw_index = 0;
-             draw_index < runtime->textDrawCount;
-             ++draw_index) {
-            saved_text_draw_pixels[draw_index] =
-                runtime->textDraws[draw_index].compositePixels;
-        }
-        stage_started = game_runtime_wall_seconds();
-        if (!runtime->gameplayCompositeHook(
-                runtime->gameplayCompositeUserData,
-                JPB_GAMEPLAY_COMPOSITE_HUD_BLACK,
-                framebuffer, runtime->glowDraws,
-                runtime->glowDrawCount, view, stats)) {
-            return JPB_GAME_RUNTIME_RENDER_FAILED;
-        }
-        runtime->profileCompositeUploadSeconds +=
-            game_runtime_wall_seconds() - stage_started;
-        stage_started = game_runtime_wall_seconds();
-        game_runtime_clear_framebuffer(
-            framebuffer, UINT32_C(0x00ffffff));
-        game_runtime_flush_ordered_title_draws(runtime, framebuffer);
-        runtime->profileHudReplaySeconds +=
-            game_runtime_wall_seconds() - stage_started;
-        stage_started = game_runtime_wall_seconds();
-        if (!runtime->gameplayCompositeHook(
-                runtime->gameplayCompositeUserData,
-                JPB_GAMEPLAY_COMPOSITE_HUD_WHITE,
-                framebuffer, runtime->glowDraws,
-                runtime->glowDrawCount, view, stats)) {
-            return JPB_GAME_RUNTIME_RENDER_FAILED;
-        }
-        runtime->profileCompositeUploadSeconds +=
-            game_runtime_wall_seconds() - stage_started;
-        runtime->screenDrawCompositePixelCount = saved_screen_pixels;
-        runtime->playerHudTileCompositePixelCount =
-            saved_player_hud_pixels;
-        runtime->textDrawCompositePixelCount = saved_text_pixels;
-        runtime->screenDrawTextureAlphaModulatedPixelCount =
-            saved_alpha_pixels;
-        runtime->itemHudTextureAlphaModulatedPixelCount =
-            saved_item_alpha_pixels;
-        runtime->creditHudTextureAlphaModulatedPixelCount =
-            saved_credit_alpha_pixels;
-        runtime->rescueHudTextureAlphaModulatedPixelCount =
-            saved_rescue_alpha_pixels;
-        for (draw_index = 0;
-             draw_index < runtime->textDrawCount;
-             ++draw_index) {
-            runtime->textDraws[draw_index].compositePixels =
-                saved_text_draw_pixels[draw_index];
+        if (hud_cache_hit) {
+            game_runtime_apply_hud_cache_metrics(runtime);
+        } else {
+            size_t base_screen_pixels =
+                runtime->screenDrawCompositePixelCount;
+            size_t base_player_hud_pixels =
+                runtime->playerHudTileCompositePixelCount;
+            size_t base_text_pixels =
+                runtime->textDrawCompositePixelCount;
+            size_t base_alpha_pixels =
+                runtime->screenDrawTextureAlphaModulatedPixelCount;
+            size_t base_item_alpha_pixels =
+                runtime->itemHudTextureAlphaModulatedPixelCount;
+            size_t base_credit_alpha_pixels =
+                runtime->creditHudTextureAlphaModulatedPixelCount;
+            size_t base_rescue_alpha_pixels =
+                runtime->rescueHudTextureAlphaModulatedPixelCount;
+            size_t base_text_draw_pixels[
+                JPB_GAME_RUNTIME_TEXT_DRAW_CAPACITY];
+            size_t saved_screen_pixels;
+            size_t saved_player_hud_pixels;
+            size_t saved_text_pixels;
+            size_t saved_alpha_pixels;
+            size_t saved_item_alpha_pixels;
+            size_t saved_credit_alpha_pixels;
+            size_t saved_rescue_alpha_pixels;
+
+            for (draw_index = 0;
+                 draw_index < runtime->textDrawCount;
+                 ++draw_index) {
+                base_text_draw_pixels[draw_index] =
+                    runtime->textDraws[draw_index].compositePixels;
+            }
+            stage_started = game_runtime_wall_seconds();
+            game_runtime_flush_ordered_title_draws(runtime, framebuffer);
+            game_runtime_record_duration(
+                &runtime->profileHudSeconds,
+                &runtime->profileLastHudSeconds,
+                &runtime->profileMaxHudSeconds,
+                game_runtime_wall_seconds() - stage_started);
+            saved_screen_pixels =
+                runtime->screenDrawCompositePixelCount;
+            saved_player_hud_pixels =
+                runtime->playerHudTileCompositePixelCount;
+            saved_text_pixels =
+                runtime->textDrawCompositePixelCount;
+            saved_alpha_pixels =
+                runtime->screenDrawTextureAlphaModulatedPixelCount;
+            saved_item_alpha_pixels =
+                runtime->itemHudTextureAlphaModulatedPixelCount;
+            saved_credit_alpha_pixels =
+                runtime->creditHudTextureAlphaModulatedPixelCount;
+            saved_rescue_alpha_pixels =
+                runtime->rescueHudTextureAlphaModulatedPixelCount;
+            for (draw_index = 0;
+                 draw_index < runtime->textDrawCount;
+                 ++draw_index) {
+                saved_text_draw_pixels[draw_index] =
+                    runtime->textDraws[draw_index].compositePixels;
+            }
+            stage_started = game_runtime_wall_seconds();
+            if (!runtime->gameplayCompositeHook(
+                    runtime->gameplayCompositeUserData,
+                    JPB_GAMEPLAY_COMPOSITE_HUD_BLACK,
+                    framebuffer, runtime->glowDraws,
+                    runtime->glowDrawCount, view, stats)) {
+                runtime->gameplayHudCacheValid = 0;
+                return JPB_GAME_RUNTIME_RENDER_FAILED;
+            }
+            game_runtime_record_duration(
+                &runtime->profileCompositeUploadSeconds,
+                &runtime->profileLastCompositeUploadSeconds,
+                &runtime->profileMaxCompositeUploadSeconds,
+                game_runtime_wall_seconds() - stage_started);
+            stage_started = game_runtime_wall_seconds();
+            game_runtime_clear_framebuffer(
+                framebuffer, UINT32_C(0x00ffffff));
+            game_runtime_flush_ordered_title_draws(runtime, framebuffer);
+            game_runtime_record_duration(
+                &runtime->profileHudReplaySeconds,
+                &runtime->profileLastHudReplaySeconds,
+                &runtime->profileMaxHudReplaySeconds,
+                game_runtime_wall_seconds() - stage_started);
+            stage_started = game_runtime_wall_seconds();
+            if (!runtime->gameplayCompositeHook(
+                    runtime->gameplayCompositeUserData,
+                    JPB_GAMEPLAY_COMPOSITE_HUD_WHITE,
+                    framebuffer, runtime->glowDraws,
+                    runtime->glowDrawCount, view, stats)) {
+                runtime->gameplayHudCacheValid = 0;
+                return JPB_GAME_RUNTIME_RENDER_FAILED;
+            }
+            {
+                double duration =
+                    game_runtime_wall_seconds() - stage_started;
+
+                runtime->profileCompositeUploadSeconds += duration;
+                runtime->profileLastCompositeUploadSeconds += duration;
+                if (runtime->profileLastCompositeUploadSeconds >
+                    runtime->profileMaxCompositeUploadSeconds) {
+                    runtime->profileMaxCompositeUploadSeconds =
+                        runtime->profileLastCompositeUploadSeconds;
+                }
+            }
+            runtime->screenDrawCompositePixelCount =
+                saved_screen_pixels;
+            runtime->playerHudTileCompositePixelCount =
+                saved_player_hud_pixels;
+            runtime->textDrawCompositePixelCount = saved_text_pixels;
+            runtime->screenDrawTextureAlphaModulatedPixelCount =
+                saved_alpha_pixels;
+            runtime->itemHudTextureAlphaModulatedPixelCount =
+                saved_item_alpha_pixels;
+            runtime->creditHudTextureAlphaModulatedPixelCount =
+                saved_credit_alpha_pixels;
+            runtime->rescueHudTextureAlphaModulatedPixelCount =
+                saved_rescue_alpha_pixels;
+            for (draw_index = 0;
+                 draw_index < runtime->textDrawCount;
+                 ++draw_index) {
+                runtime->textDraws[draw_index].compositePixels =
+                    saved_text_draw_pixels[draw_index];
+            }
+            game_runtime_store_hud_cache_metrics(
+                runtime, hud_hash, framebuffer,
+                base_screen_pixels,
+                base_player_hud_pixels,
+                base_text_pixels,
+                base_alpha_pixels,
+                base_item_alpha_pixels,
+                base_credit_alpha_pixels,
+                base_rescue_alpha_pixels,
+                base_text_draw_pixels);
         }
         stage_started = game_runtime_wall_seconds();
         if (!runtime->gameplayCompositeHook(
@@ -6338,11 +7734,24 @@ int jpb_GameRuntimeFrame(
                 runtime->glowDrawCount, view, stats)) {
             return JPB_GAME_RUNTIME_RENDER_FAILED;
         }
-        runtime->profileCompositeFinishSeconds +=
-            game_runtime_wall_seconds() - stage_started;
+        game_runtime_record_duration(
+            &runtime->profileCompositeFinishSeconds,
+            &runtime->profileLastCompositeFinishSeconds,
+            &runtime->profileMaxCompositeFinishSeconds,
+            game_runtime_wall_seconds() - stage_started);
         runtime->glowDrawCompositePixelCount =
             runtime->glowDrawCount != 0 ? 1 : 0;
     } else {
+        {
+            double hud_started = game_runtime_wall_seconds();
+
+            game_runtime_flush_ordered_title_draws(runtime, framebuffer);
+            game_runtime_record_duration(
+                &runtime->profileHudSeconds,
+                &runtime->profileLastHudSeconds,
+                &runtime->profileMaxHudSeconds,
+                game_runtime_wall_seconds() - hud_started);
+        }
         double glow_started = game_runtime_wall_seconds();
 
         game_runtime_flush_glow_draws(
@@ -6351,13 +7760,24 @@ int jpb_GameRuntimeFrame(
             framebuffer,
             context.glowDepthReady ? &context.glowDepthBuffer : NULL,
             stats);
-        runtime->profileGlowSeconds +=
-            game_runtime_wall_seconds() - glow_started;
+        game_runtime_record_duration(
+            &runtime->profileGlowSeconds,
+            &runtime->profileLastGlowSeconds,
+            &runtime->profileMaxGlowSeconds,
+            game_runtime_wall_seconds() - glow_started);
     }
-    runtime->profileEffectsSeconds +=
-        game_runtime_wall_seconds() - effects_started;
+    game_runtime_record_duration(
+        &runtime->profileEffectsSeconds,
+        &runtime->profileLastEffectsSeconds,
+        &runtime->profileMaxEffectsSeconds,
+        game_runtime_wall_seconds() - effects_started);
     /* Return post-frame state to its exact PDB-named scene owner. */
     scene_postRender();
+    game_runtime_record_duration(
+        NULL,
+        &runtime->profileLastFrameSeconds,
+        &runtime->profileMaxFrameSeconds,
+        game_runtime_wall_seconds() - frame_started);
     return JPB_GAME_RUNTIME_OK;
 }
 

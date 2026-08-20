@@ -244,6 +244,17 @@ int jpb_SoftwareRenderLevelMesh(
     void *texture_user_data,
     JPBSoftwareDepthBuffer *depth_buffer,
     JPBSoftwareRenderStats *stats);
+int jpb_SoftwareRenderLevelMeshPass(
+    const JPBSoftwareLevelMesh *mesh,
+    JPBLevelFbxMeshPass pass,
+    const JPBSoftwareJpxScene *world_scene,
+    MATRIX *view_matrix,
+    JPBSoftwareFramebuffer *framebuffer,
+    uint32_t clear_color,
+    JPBSoftwareTextureResolver resolve_texture,
+    void *texture_user_data,
+    JPBSoftwareDepthBuffer *depth_buffer,
+    JPBSoftwareRenderStats *stats);
 
 /*
  * Dependency-free diagnostic realization of the PDB model hierarchy and BMD

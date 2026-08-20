@@ -412,6 +412,12 @@ static int test_root_accessors_and_facing_lock(void)
     CHECK(physics_gGetFacing(&actor) == 300);
 
     scene.pPhysics = NULL;
+    CHECK(physics_gGetPosition(&actor) == NULL);
+    CHECK(physics_gGetConstantVector(&actor) == NULL);
+    physics_gClrConstantVector(&actor);
+    CHECK(physics_gGetFacing(&actor) == 0);
+    actor.pParent = NULL;
+    CHECK(physics_gGetPosition(&actor) == NULL);
     CHECK(physics_gGetFacing(&actor) == 0);
     gSCENE_READY = 0;
     return 0;
@@ -2992,6 +2998,17 @@ static int test_target_facing_helpers(void)
     player_physics.angle.vy = 333;
     CHECK(physics_gForceFaceTarget(&player, &target) == 0);
     CHECK(player_physics.angle.vy == 333);
+
+    target_scene.pPhysics = NULL;
+    CHECK(physics_gFaceTarget(&player, &target) == 0);
+    CHECK(physics_gGetFaceTargetDelta(&player, &target) == 333);
+    CHECK(physics_gForceFaceTarget(&player, &target) == 0);
+    CHECK(player_physics.angle.vy == 333);
+
+    player_scene.pPhysics = NULL;
+    CHECK(physics_gFaceTarget(&player, &target) == 0);
+    CHECK(physics_gGetFaceTargetDelta(&player, &target) == 0);
+    CHECK(physics_gForceFaceTarget(&player, &target) == 0);
     return 0;
 }
 

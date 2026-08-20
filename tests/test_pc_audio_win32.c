@@ -121,10 +121,10 @@ static void test_exact_alias_banks(void)
 static void test_two_player_banks(void)
 {
     JPBPCAudio *audio = jpb_PCAudioCreate(
-        "C:\\Game\\res\\level\\jpx\\arena\\arena.jpx",
+        "C:\\Game\\res\\level\\jpx\\fed\\fed.jpx",
         "C:\\Game\\res\\animation\\obi_wan.cad",
         "C:\\Game\\res\\animation\\qui_gon.cad",
-        25,
+        1,
         0);
     char path[1024];
 

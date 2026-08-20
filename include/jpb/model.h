@@ -82,6 +82,8 @@ void model_MakeNode(Mnode *pNew, geomData *pNode, char *modelName);
 int model_RegisterModel(char *name);
 modelObject *model_gInitModelRoot(
     geomData *pRoot, char *name, int id);
+int jpb_ModelPrepareRegisteredGeometry(
+    geomData *pRoot, const char *name);
 int pack_checkPage(
     uint16_t *page, unsigned width, unsigned height);
 int pack_getVRAM(

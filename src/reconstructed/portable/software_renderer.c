@@ -686,7 +686,7 @@ static int software_map_vertex(
     if (draw->view != NULL) {
         FVECTOR screen;
 
-        if (jpb_ProjectPcToViewport(
+        if (jpb_ProjectPcGameplayToViewport(
                 draw->view,
                 &world,
                 (float)draw->framebuffer->width,
@@ -1026,13 +1026,13 @@ int jpb_SoftwareDrawGlowLine(
     world_end.vx = (float)end->vx;
     world_end.vy = (float)end->vy;
     world_end.vz = (float)end->vz;
-    if (jpb_ProjectPcToViewport(
+    if (jpb_ProjectPcGameplayToViewport(
             view_matrix,
             &world_start,
             (float)framebuffer->width,
             (float)framebuffer->height,
             &screen_start) != 0 ||
-        jpb_ProjectPcToViewport(
+        jpb_ProjectPcGameplayToViewport(
             view_matrix,
             &world_end,
             (float)framebuffer->width,
@@ -1054,7 +1054,7 @@ int jpb_SoftwareDrawGlowLine(
             ((float)world_width * 0.5f);
     radius_pixels = 1.0f;
     if (world_width > 0 &&
-        jpb_ProjectPcToViewport(
+        jpb_ProjectPcGameplayToViewport(
             view_matrix,
             &radius_point,
             (float)framebuffer->width,
@@ -1251,8 +1251,6 @@ static int software_draw_screen_poly(
     }
 
     if (no_scale != 0 &&
-        state.materialShader ==
-            SOFTWARE_MATERIAL_SHADER_TRANSPARENCY_PASS &&
         software_no_scale_apply_culling(
             clip_vertices, vertex_count, material_flags)) {
         if (stats != NULL) {
@@ -1540,7 +1538,7 @@ static int software_project_material_vertex(
     if (state->draw.view != NULL) {
         FVECTOR screen;
 
-        if (jpb_ProjectPcToViewport(
+        if (jpb_ProjectPcGameplayToViewport(
                 state->draw.view,
                 world,
                 (float)state->draw.framebuffer->width,
@@ -1717,7 +1715,7 @@ static size_t software_clip_project_material_polygon(
     for (vertex = 0; vertex < clipped_count; ++vertex) {
         FVECTOR screen;
 
-        if (jpb_ProjectPcCameraToViewport(
+        if (jpb_ProjectPcGameplayCameraToViewport(
                 &clipped[vertex].position,
                 (float)state->draw.framebuffer->width,
                 (float)state->draw.framebuffer->height,
@@ -1854,6 +1852,50 @@ static int software_no_scale_apply_culling(
         return outside_count >= vertex_count + 5;
     }
     return outside_count >= vertex_count;
+}
+
+static int software_no_scale_camera_polygon_culled(
+    SoftwareModelDraw *state,
+    const FVECTOR *world,
+    const pairUV *uv,
+    const CVECTOR *color,
+    size_t vertex_count,
+    int material_flags)
+{
+    const float vertical_fov = 0.9250245094299316f;
+    const float near_clip = 1.0f;
+    const float far_clip = 10000.0f;
+    SoftwareNoScaleClipVertex projected[4];
+    float aspect;
+    float focal_scale;
+    size_t vertex;
+
+    if (state == NULL || state->draw.view == NULL ||
+        state->draw.framebuffer == NULL || world == NULL || uv == NULL ||
+        color == NULL || vertex_count < 3 || vertex_count > 4) {
+        return 1;
+    }
+    aspect = (float)state->draw.framebuffer->width /
+        (float)state->draw.framebuffer->height;
+    focal_scale = 1.0f / tanf(vertical_fov * 0.5f);
+    for (vertex = 0; vertex < vertex_count; ++vertex) {
+        SoftwareCameraMaterialVertex camera;
+        float reciprocal_depth;
+
+        software_camera_material_vertex(
+            state, &world[vertex], &uv[vertex], &color[vertex], &camera);
+        reciprocal_depth = 1.0f / camera.position.vz;
+        projected[vertex].x =
+            camera.position.vx * focal_scale * reciprocal_depth / aspect;
+        projected[vertex].y =
+            camera.position.vy * focal_scale * reciprocal_depth;
+        projected[vertex].z =
+            far_clip / (far_clip - near_clip) -
+            (near_clip * far_clip) /
+                (far_clip - near_clip) * reciprocal_depth;
+    }
+    return software_no_scale_apply_culling(
+        projected, (int)vertex_count, material_flags);
 }
 
 static float software_clamp_unit(float value)
@@ -2775,8 +2817,10 @@ int jpb_SoftwareRenderJpxMaterialized(
     return JPB_SOFTWARE_RENDER_OK;
 }
 
-int jpb_SoftwareRenderLevelMesh(
+static int software_render_level_mesh_range(
     const JPBSoftwareLevelMesh *mesh,
+    int first_pass,
+    int last_pass,
     const JPBSoftwareJpxScene *world_scene,
     MATRIX *view_matrix,
     JPBSoftwareFramebuffer *framebuffer,
@@ -2801,20 +2845,31 @@ int jpb_SoftwareRenderLevelMesh(
         depth_buffer->strideValues < (size_t)framebuffer->width) {
         return JPB_SOFTWARE_RENDER_INVALID_ARGUMENT;
     }
-    for (y = 0; y < framebuffer->height; ++y) {
-        uint32_t *row = framebuffer->pixels +
-            (size_t)y * (size_t)framebuffer->stridePixels;
-        int x;
-
-        for (x = 0; x < framebuffer->width; ++x) {
-            row[x] = clear_color;
-        }
-    }
-    if (!jpb_SoftwareClearDepthBuffer(depth_buffer)) {
+    if (first_pass < JPB_LEVEL_FBX_PASS_OPAQUE ||
+        last_pass > JPB_LEVEL_FBX_PASS_GLASS ||
+        first_pass > last_pass) {
         return JPB_SOFTWARE_RENDER_INVALID_ARGUMENT;
+    }
+    if (first_pass == JPB_LEVEL_FBX_PASS_OPAQUE) {
+        for (y = 0; y < framebuffer->height; ++y) {
+            uint32_t *row = framebuffer->pixels +
+                (size_t)y * (size_t)framebuffer->stridePixels;
+            int x;
+
+            for (x = 0; x < framebuffer->width; ++x) {
+                row[x] = clear_color;
+            }
+        }
+        if (!jpb_SoftwareClearDepthBuffer(depth_buffer)) {
+            return JPB_SOFTWARE_RENDER_INVALID_ARGUMENT;
+        }
     }
 
     memset(&state, 0, sizeof(state));
+    if (stats != NULL &&
+        first_pass != JPB_LEVEL_FBX_PASS_OPAQUE) {
+        state.draw.stats = *stats;
+    }
     state.draw.scene = world_scene;
     state.draw.framebuffer = framebuffer;
     state.draw.view = view_matrix;
@@ -2825,8 +2880,8 @@ int jpb_SoftwareRenderLevelMesh(
     state.depthStride = depth_buffer->strideValues;
     state.repeatTexture = 1;
 
-    for (pass = JPB_LEVEL_FBX_PASS_OPAQUE;
-         pass <= JPB_LEVEL_FBX_PASS_GLASS;
+    for (pass = first_pass;
+         pass <= last_pass;
          ++pass) {
         size_t batch_index;
 
@@ -2945,6 +3000,49 @@ int jpb_SoftwareRenderLevelMesh(
         *stats = state.draw.stats;
     }
     return JPB_SOFTWARE_RENDER_OK;
+}
+
+int jpb_SoftwareRenderLevelMeshPass(
+    const JPBSoftwareLevelMesh *mesh,
+    JPBLevelFbxMeshPass pass,
+    const JPBSoftwareJpxScene *world_scene,
+    MATRIX *view_matrix,
+    JPBSoftwareFramebuffer *framebuffer,
+    uint32_t clear_color,
+    JPBSoftwareTextureResolver resolve_texture,
+    void *texture_user_data,
+    JPBSoftwareDepthBuffer *depth_buffer,
+    JPBSoftwareRenderStats *stats)
+{
+    return software_render_level_mesh_range(
+        mesh, (int)pass, (int)pass, world_scene, view_matrix,
+        framebuffer, clear_color, resolve_texture,
+        texture_user_data, depth_buffer, stats);
+}
+
+int jpb_SoftwareRenderLevelMesh(
+    const JPBSoftwareLevelMesh *mesh,
+    const JPBSoftwareJpxScene *world_scene,
+    MATRIX *view_matrix,
+    JPBSoftwareFramebuffer *framebuffer,
+    uint32_t clear_color,
+    JPBSoftwareTextureResolver resolve_texture,
+    void *texture_user_data,
+    JPBSoftwareDepthBuffer *depth_buffer,
+    JPBSoftwareRenderStats *stats)
+{
+    return software_render_level_mesh_range(
+        mesh,
+        JPB_LEVEL_FBX_PASS_OPAQUE,
+        JPB_LEVEL_FBX_PASS_GLASS,
+        world_scene,
+        view_matrix,
+        framebuffer,
+        clear_color,
+        resolve_texture,
+        texture_user_data,
+        depth_buffer,
+        stats);
 }
 
 static int software_draw_model_node(
@@ -3120,6 +3218,23 @@ static int software_draw_model_node(
                     material_color[corner].b = UINT8_C(0x12);
                 }
             }
+        }
+        /*
+         * _RenderNode submits each complete BMD face through
+         * _NoScaleEndPoly. The shipped PC path projects the original tri or
+         * quad and applies el_chavo::ApplyCulling before GPU clipping.
+         */
+        if (material_face_visible &&
+            software_no_scale_camera_polygon_culled(
+                state,
+                material_world,
+                material_uv,
+                material_color,
+                corners,
+                resolved_texture != NULL
+                    ? resolved_texture->materialFlags
+                    : JPB_MATERIAL_MODE_BACKFACE_REJECT)) {
+            material_face_visible = 0;
         }
         if (material_face_visible) {
             size_t primitive;

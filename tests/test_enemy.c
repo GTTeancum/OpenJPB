@@ -1227,6 +1227,17 @@ static void test_authored_opcode_traversal_boundary(void)
     CHECK(jpb_enemy_ParseOpcodes(
               &enemy, &unsupported) ==
           JPB_ENEMY_OPCODE_PARSE_COMPLETE);
+    CHECK(world.overRideDolly == 9);
+    CHECK((player.pFlags & 2U) != 0);
+    CHECK(GameStruct.screenShotFlag == 1);
+
+    world.overRideDolly = 0;
+    player.pFlags = 0;
+    GameStruct.screenShotFlag = 0;
+    GameStruct.checkpoint[5] = 6;
+    CHECK(jpb_enemy_ParseOpcodes(
+              &enemy, &unsupported) ==
+          JPB_ENEMY_OPCODE_PARSE_COMPLETE);
     CHECK(world.overRideDolly == 0);
     CHECK((player.pFlags & 2U) == 0);
     CHECK(GameStruct.screenShotFlag == 0);
@@ -1925,6 +1936,19 @@ static void test_enemy_post_frame_and_activation(void)
     CHECK(fixture.enemy.location.vx == 111);
     CHECK(fixture.enemy.location.vy == -222);
     CHECK(fixture.enemy.location.vz == 333);
+    fixture.scene.pPhysics = NULL;
+    fixture.enemy.hitPoints = 22;
+    fixture.enemy.location.vx = 7;
+    fixture.enemy.location.vy = 8;
+    fixture.enemy.location.vz = 9;
+    bapenemy_postFrame(&fixture.enemy);
+    CHECK(game_gGetEnergy(2) == 22);
+    CHECK(fixture.enemy.location.vx == 7);
+    CHECK(fixture.enemy.location.vy == 8);
+    CHECK(fixture.enemy.location.vz == 9);
+    fixture.enemy.pPlayer = NULL;
+    bapenemy_postFrame(&fixture.enemy);
+    bapenemy_postFrame(NULL);
 
     memset(&world, 0, sizeof(world));
     memset(&first, 0, sizeof(first));
@@ -2438,8 +2462,12 @@ static void test_enemy_check_teleport(void)
 {
     EnemyFixture nearby;
     WorldData world;
+    int32_t map_storage[6] = {0};
     WorldData *old_world = gpWorld;
+    int32_t *old_leveldata = leveldata;
     Camera old_camera = gCamera;
+    int old_camera_type = camera_GetCurrentCameraType();
+    int old_new_camera_flag = newcameraflag;
     char old_level = LevelSelect;
 
     memset(&world, 0, sizeof(world));
@@ -2456,11 +2484,16 @@ static void test_enemy_check_teleport(void)
         &maSceneData[0].sceneRoot;
     maSceneData[1].pScene =
         &maSceneData[1].sceneRoot;
+    maSceneData[0].pPhysics =
+        &maPhysicsData[0].physicsRoot;
+    maSceneData[1].pPhysics =
+        &maPhysicsData[1].physicsRoot;
     maSceneData[0].sceneRoot.flags = 0;
     maSceneData[1].sceneRoot.flags = UINT32_C(0x20);
     world.player0 = &gaPlayerData[0];
     world.player1 = &gaPlayerData[1];
     gpWorld = &world;
+    leveldata = &map_storage[2];
 
     maPhysicsData[0].pos.vx = 100.0f;
     maPhysicsData[0].pos.vy = 200.0f;
@@ -2492,6 +2525,11 @@ static void test_enemy_check_teleport(void)
     LevelSelect = 0;
     memset(&gCamera, 0, sizeof(gCamera));
     gCamera.viewType = UINT32_C(0x1800);
+    gCamera.focus.vx = 1;
+    gCamera.focus.vy = 2;
+    gCamera.focus.vz = 3;
+    newcameraflag = 0;
+    camera_SetCurrentCameraType(1);
 
     enemy_CheckTeleport();
 
@@ -2511,10 +2549,19 @@ static void test_enemy_check_teleport(void)
     CHECK(maPhysicsData[1].pos.vz == 600.0f);
     CHECK(camera_GetCurrentCameraType() == 1);
     CHECK((gCamera.viewType & UINT32_C(0x1000)) == 0);
+    CHECK(gCamera.focus.vx == gCamera.focusDest.vx);
+    CHECK(gCamera.focus.vy == gCamera.focusDest.vy);
+    CHECK(gCamera.focus.vz == gCamera.focusDest.vz);
+    CHECK(gCamera.angle.vx == gCamera.angleDest.vx);
+    CHECK(gCamera.angle.vy == gCamera.angleDest.vy);
+    CHECK(gCamera.angle.vz == gCamera.angleDest.vz);
 
     list_InitList(&enemyList[0]);
     gpWorld = old_world;
+    leveldata = old_leveldata;
     gCamera = old_camera;
+    newcameraflag = old_new_camera_flag;
+    camera_SetCurrentCameraType(old_camera_type);
     LevelSelect = old_level;
 }
 

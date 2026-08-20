@@ -120,6 +120,12 @@ static int test_directions_and_thresholds(void)
     CHECK(bits == 0);
     CHECK(axis_x == 0.0f && axis_y == 0.0f);
 
+    gamepad.thumbLX = 1000;
+    bits = jpb_PCXInputMapGamepad(
+        &gamepad, 8, 2, 1, 0, &axis_x, &axis_y);
+    CHECK(bits == 0);
+    CHECK(axis_x == 0.0f && axis_y == 0.0f);
+
     gamepad.thumbLX = 656;
     bits = jpb_PCXInputMapGamepad(
         &gamepad, 2, 8, 1, 0, &axis_x, &axis_y);
@@ -343,6 +349,9 @@ static int test_sparse_physical_user_routing(void)
     memset(&xinput, 0, sizeof(xinput));
     fake_xinput.connectedMask = UINT32_C(0x0c);
     fake_xinput.states[2].gamepad.buttons = JPB_PC_XINPUT_A;
+    /* Exact idle values captured from the user's Xbox controller. */
+    fake_xinput.states[2].gamepad.thumbLX = 2652;
+    fake_xinput.states[2].gamepad.thumbLY = -862;
     fake_xinput.states[3].gamepad.buttons = JPB_PC_XINPUT_B;
     xinput.getState = fake_xinput_get_state;
     xinput.setState = fake_xinput_set_state;
@@ -361,6 +370,15 @@ static int test_sparse_physical_user_routing(void)
         &bits, &axis_x, &axis_y));
     CHECK(bits == JPB_PAD_COMBO_SOUTH);
     CHECK(axis_x == 0.0f && axis_y == 0.0f);
+    fake_xinput.states[2].gamepad.buttons = 0;
+    fake_xinput.states[2].gamepad.thumbLX = 10000;
+    fake_xinput.states[2].gamepad.thumbLY = 0;
+    CHECK(jpb_PCXInputReadUser(
+        &xinput, player_one_user, 2, 8, 0, 0,
+        &bits, &axis_x, &axis_y));
+    CHECK(bits == (JPB_PAD_LEFT | JPB_PAD_ANALOG_MOVEMENT));
+    CHECK(axis_x > 0.086f && axis_x < 0.087f);
+    CHECK(axis_y == 0.0f);
     CHECK(jpb_PCXInputReadUser(
         &xinput, player_two_user, 2, 8, 0, 0,
         &bits, &axis_x, &axis_y));

@@ -223,6 +223,15 @@ static void test_ai_prelude_and_damage(void)
 
     reset_traces();
     init_fixture(&fixture);
+    fixture.current_motion = &fixture.motions[1];
+    fixture.animation->pMotion = fixture.current_motion;
+    fixture.player.currentMotion = 7;
+    brain_ControlPlayer(cpad, &fixture.player, 1);
+    CHECK(fixture.player.currentMotion == 7);
+    CHECK(fixture.animation->pMotion == &fixture.motions[1]);
+
+    reset_traces();
+    init_fixture(&fixture);
     fixture.player.pFlags = UINT32_C(0x04000000);
     fixture.player.currentMotion = 7;
     fixture.player.ACTION_LOCK = 9;

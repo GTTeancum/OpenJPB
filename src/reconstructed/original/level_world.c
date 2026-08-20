@@ -280,8 +280,12 @@ int jpb_ShouldDrawFbxMesh(
         return cull_index != JPB_LEVEL_INDEX_NONE &&
                cullmesh[cull_index] == 1;
     }
-    if (pass != JPB_LEVEL_FBX_PASS_OPAQUE || mesh_count > 31) {
-        return 1;
-    }
-    return cullmesh[mesh_index] == 1;
+    /*
+     * Non-Streets live FBX nodes do not carry the original DrawLevel mesh
+     * partition indices. Applying cullmesh by FBX node index drops authored
+     * room geometry and exposes the void as the camera changes dolly. JPX
+     * rendering still uses the original cullmesh path; the FBX bridge only
+     * culls where a data-backed Streets name map exists.
+     */
+    return 1;
 }

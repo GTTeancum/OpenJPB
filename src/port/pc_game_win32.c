@@ -7,6 +7,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <mmsystem.h>
 
 #include "jpb/ai.h"
 #include "jpb/anim.h"
@@ -39,6 +40,7 @@
 #include "jpb/text.h"
 #include "jpb/texture.h"
 #include "jpb/vehicle.h"
+#include "jpb/vectors.h"
 
 #include "pc_image_wic.h"
 #include "pc_input_mapping.h"
@@ -50,6 +52,7 @@
 #endif
 
 #include <limits.h>
+#include <float.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -62,6 +65,8 @@ enum {
     PC_VISIBLE_FRAMEBUFFER_WIDTH = 1920,
     PC_VISIBLE_FRAMEBUFFER_HEIGHT = 1080,
     PC_HEADLESS_PHASE_CAPACITY = 32,
+    PC_MOVIE_AUDIO_BUFFER_COUNT = 8,
+    PC_MOVIE_AUDIO_BUFFER_BYTES = 16384,
     /* 132 front-end records plus the exact 77 controller/KBM records. */
     PC_MENU_TEXTURE_CAPACITY = JPB_MENU_TEXTURE_ENTRY_COUNT + 77,
     PC_MENU_TEXTURE_PATH_CAPACITY = 1024
@@ -79,6 +84,7 @@ typedef struct PcGameplayLogState {
     int motion;
     int activeMotion;
     int inputType;
+    int authoredAi;
     int energy;
     int maxEnergy;
     int force;
@@ -104,6 +110,13 @@ typedef struct PcHeadlessPhase {
     uint8_t xinputMask;
 } PcHeadlessPhase;
 
+typedef struct PcRetailInputSample {
+    int32_t frame;
+    uint32_t buttons;
+    float axisX;
+    float axisY;
+} PcRetailInputSample;
+
 typedef struct PcExpectedScreenDraw {
     int left;
     int top;
@@ -117,6 +130,78 @@ typedef struct PcExpectedScreenDraw {
     int textureHeight;
     float layerDepth;
 } PcExpectedScreenDraw;
+
+typedef struct PcMoviePlayback {
+    int active;
+    int audioOutputEnabled;
+    HWAVEOUT audioOutput;
+    WAVEHDR audioHeaders[PC_MOVIE_AUDIO_BUFFER_COUNT];
+    uint8_t audioBuffers[PC_MOVIE_AUDIO_BUFFER_COUNT]
+                        [PC_MOVIE_AUDIO_BUFFER_BYTES];
+    PROCESS_INFORMATION process;
+    PROCESS_INFORMATION audioProcess;
+    HANDLE readerThread;
+    HANDLE audioReaderThread;
+    HANDLE stdoutRead;
+    HANDLE audioStdoutRead;
+    volatile LONG stopReader;
+    volatile LONG readerFinished;
+    volatile LONG audioStopReader;
+    volatile LONG audioReaderFinished;
+    CRITICAL_SECTION frameLock;
+    int frameLockInitialized;
+    uint8_t *pixels;
+    uint8_t *pending;
+    size_t frameBytes;
+    size_t pendingBytes;
+    int width;
+    int height;
+    unsigned framesDecoded;
+    unsigned framesPresented;
+    unsigned lastPresentedFrame;
+    volatile LONG audioBytesDecoded;
+    volatile LONG audioBytesQueued;
+    volatile LONG audioChunksDecoded;
+    volatile LONG audioChunksQueued;
+    unsigned audioSampleRate;
+    unsigned audioChannels;
+    unsigned audioBytesPerSample;
+    char path[MAX_PATH];
+    char ffmpegPath[MAX_PATH];
+    char error[160];
+} PcMoviePlayback;
+
+enum {
+    PC_FED_NAVIGATION_COLUMNS = 256,
+    PC_FED_NAVIGATION_ROWS = 256,
+    PC_FED_NAVIGATION_MAX_NODES = 8192,
+    PC_FED_NAVIGATION_MAX_LAYERS = 16,
+    PC_FED_NAVIGATION_MAX_STEP = 0x100,
+    PC_FED_NAVIGATION_REBUILD_FRAMES = 300
+};
+
+typedef struct PcFedNavigationNode {
+    int32_t x;
+    int32_t y;
+    int32_t z;
+    uint8_t column;
+    uint8_t row;
+    int16_t nextInCell;
+} PcFedNavigationNode;
+
+typedef struct PcFedNavigation {
+    const int32_t *levelDataOwner;
+    PcFedNavigationNode nodes[PC_FED_NAVIGATION_MAX_NODES];
+    int16_t cellHeads[
+        PC_FED_NAVIGATION_COLUMNS * PC_FED_NAVIGATION_ROWS];
+    int16_t predecessors[PC_FED_NAVIGATION_MAX_NODES];
+    int16_t queue[PC_FED_NAVIGATION_MAX_NODES];
+    int16_t reversePath[PC_FED_NAVIGATION_MAX_NODES];
+    int nodeCount;
+    int buildFrame;
+} PcFedNavigation;
+
+static PcFedNavigation pc_fed_navigation;
 
 typedef struct PcInput {
     int headless;
@@ -179,6 +264,8 @@ typedef struct PcInput {
     int validateTeleport;
     int validateCameraFollow;
     int validateTitleAudio;
+    int validateTitleMovie;
+    unsigned validateTitleMovieIndex;
     int validatePlayerSaber;
     int validatePlayerProjectile;
     int validatePresentationHandoff;
@@ -186,8 +273,14 @@ typedef struct PcInput {
     int validatePersistenceHandoff;
     int validateNeutralHandoff;
     int headlessMaximumProgression;
+    int fedTraversalHarness;
+    int fedTraversalTargetPlacement;
+    int fedTraversalAttackCooldown;
+    int fedTraversalNavigationPathNodes;
+    int fedTraversalNavigationReachedTarget;
     int controllerConfigOverride[2];
     int requireFbxLevel;
+    int profileRuntime;
     uint32_t headlessBits;
     uint32_t headlessPhaseBits;
     uint32_t observedPlayerBits[2];
@@ -203,6 +296,30 @@ typedef struct PcInput {
     int persistenceEnabled;
     int noValidGameSave;
     unsigned gameSaveWriteCount;
+    unsigned movieRequestCount;
+    unsigned movieResolvedCount;
+    unsigned movieLaunchCount;
+    unsigned movieDecodeCount;
+    unsigned moviePresentCount;
+    unsigned movieAudioByteCount;
+    unsigned movieAudioSampleCount;
+    unsigned movieAudioChunkCount;
+    unsigned movieAudioQueuedByteCount;
+    unsigned movieAudioQueuedChunkCount;
+    unsigned movieStartFailureCount;
+    unsigned movieSkipCount;
+    unsigned movieLastIndex;
+    int movieLastFlags;
+    int movieAudioOutputEnabled;
+    int autoIntroMovieStarted;
+    int autoLevelMovieStarted;
+    char movieLastPath[MAX_PATH];
+    char movieLastError[160];
+    PcMoviePlayback *moviePlayback;
+    int movieFramebufferWidth;
+    int movieFramebufferHeight;
+    uint16_t previousMovieXInputButtons[4];
+    int movieXInputSkipSeeded;
     int playerOneUsesKeyboard;
     /* A menu confirmation must be released before it can become gameplay. */
     uint8_t gameplayHandoffReleaseMask;
@@ -212,6 +329,27 @@ typedef struct PcInput {
     char saveGamePath[MAX_PATH];
     char optionsPath[MAX_PATH];
     JPBPCXInput xinput;
+    uint8_t livePadCacheValid;
+    uint32_t livePadCacheBits[2];
+    float livePadCacheX[2];
+    float livePadCacheY[2];
+    int livePadCacheInputType[2];
+    int livePadCacheP2Connected;
+    int retailReplayEnabled;
+    int retailReplayStarted;
+    int retailReplayComplete;
+    int retailReplayError;
+    unsigned retailReplayFramesApplied;
+    int retailReplayFrameColumn;
+    int retailReplayAxisXColumn;
+    int retailReplayAxisYColumn;
+    int retailReplayButtonsColumn;
+    FILE *retailReplayFile;
+    PcRetailInputSample retailReplayNext;
+    int retailReplayNextValid;
+    PcRetailInputSample retailReplayCurrent;
+    int retailReplayCurrentValid;
+    char retailReplayPath[MAX_PATH];
 } PcInput;
 
 static void pc_apply_control_scheme_overrides(const PcInput *input);
@@ -260,8 +398,61 @@ typedef struct PcPlayerAssets {
     char cmb[MAX_PATH];
 } PcPlayerAssets;
 
+typedef enum PcPlayerSaberColorMode {
+    PC_PLAYER_SABER_COLOR_CURRENT,
+    PC_PLAYER_SABER_COLOR_CANON,
+    PC_PLAYER_SABER_COLOR_LEGACY
+} PcPlayerSaberColorMode;
+
 static int pc_running = 1;
 static char pc_asset_root[MAX_PATH];
+
+static int pc_parse_player_saber_color_mode(
+    const char *text,
+    PcPlayerSaberColorMode *mode)
+{
+    if (text == NULL || mode == NULL) {
+        return 0;
+    }
+    if (strcmp(text, "current") == 0) {
+        *mode = PC_PLAYER_SABER_COLOR_CURRENT;
+        return 1;
+    }
+    if (strcmp(text, "canon") == 0) {
+        *mode = PC_PLAYER_SABER_COLOR_CANON;
+        return 1;
+    }
+    if (strcmp(text, "legacy") == 0) {
+        *mode = PC_PLAYER_SABER_COLOR_LEGACY;
+        return 1;
+    }
+    return 0;
+}
+
+static int pc_apply_player_saber_color_mode(
+    int player_model,
+    PcPlayerSaberColorMode mode)
+{
+    uint64_t index = (uint32_t)player_model;
+
+    if (mode == PC_PLAYER_SABER_COLOR_CURRENT) {
+        return 1;
+    }
+    if (player_model < 0 ||
+        index >= gJediColourArrayLength ||
+        !jedi_CanToggleSaber((model_id)player_model)) {
+        return 0;
+    }
+    if (mode == PC_PLAYER_SABER_COLOR_LEGACY) {
+        gJediColourCurrent[index] = gJediColourLegacy[index];
+        gJediColorSpriteCurrent[index] =
+            gJediColorSpriteLegacy[index];
+        return 1;
+    }
+    gJediColourCurrent[index] = gJediColourCanon[index];
+    gJediColorSpriteCurrent[index] = gJediColorSpriteCanon[index];
+    return 1;
+}
 
 static int pc_base_player_expects_saber(int player_model)
 {
@@ -1878,6 +2069,73 @@ static void pc_log_live_menu_key_edges(
             : UINT_MAX);
 }
 
+static int pc_movie_scripted_skip_requested(const PcInput *input)
+{
+    uint32_t bits;
+
+    if (input == NULL || !input->scriptedInput) {
+        return 0;
+    }
+    bits = input->phaseCount != 0
+        ? input->headlessPhaseBits
+        : input->headlessBits;
+    return (bits & (JPB_PAD_START |
+                    JPB_PAD_COMBO_SOUTH |
+                    JPB_PAD_JUMP)) != 0;
+}
+
+static int pc_movie_xinput_skip_pressed(PcInput *input)
+{
+    unsigned user;
+    uint32_t connected;
+    int pressed = 0;
+
+    if (input == NULL || input->xinput.getState == NULL) {
+        return 0;
+    }
+    connected = input->xinput.connectedMask;
+    (void)jpb_PCXInputConnectedCount(&input->xinput);
+    connected |= input->xinput.connectedMask;
+    for (user = 0; user < 4; ++user) {
+        JPBPCXInputStatePacket state;
+        uint16_t buttons = 0;
+        uint16_t edge;
+
+        if ((connected & (1u << user)) != 0 &&
+            input->xinput.getState(user, &state) == ERROR_SUCCESS) {
+            buttons = state.gamepad.buttons;
+        }
+        edge = input->movieXInputSkipSeeded
+            ? (uint16_t)(buttons &
+                         ~input->previousMovieXInputButtons[user])
+            : 0;
+        input->previousMovieXInputButtons[user] = buttons;
+        if ((edge & (JPB_PC_XINPUT_A |
+                     JPB_PC_XINPUT_B |
+                     JPB_PC_XINPUT_START |
+                     JPB_PC_XINPUT_BACK)) != 0) {
+            pressed = 1;
+        }
+    }
+    input->movieXInputSkipSeeded = 1;
+    return pressed;
+}
+
+static int pc_movie_skip_requested(
+    PcInput *input,
+    uint32_t live_menu_pressed)
+{
+    if ((live_menu_pressed &
+         (PC_LIVE_MENU_KEY_J |
+          PC_LIVE_MENU_KEY_SPACE |
+          PC_LIVE_MENU_KEY_ENTER |
+          PC_LIVE_MENU_KEY_ESCAPE)) != 0) {
+        return 1;
+    }
+    return pc_movie_scripted_skip_requested(input) ||
+           pc_movie_xinput_skip_pressed(input);
+}
+
 static void pc_prepare_title_framebuffer(
     JPBSoftwareFramebuffer *framebuffer,
     const uint32_t *title_pixels)
@@ -1902,6 +2160,1115 @@ static void pc_prepare_title_framebuffer(
     }
     memset(framebuffer->pixels, 0,
            pixel_count * sizeof(*framebuffer->pixels));
+}
+
+static const char *pc_movie_localized_text_scroll_name(unsigned language)
+{
+    switch (language) {
+    case 1:
+        return "1080/flipped/German1920Vertical_converted.ogg";
+    case 2:
+        return "1080/flipped/French1920Vertical_converted.ogg";
+    case 3:
+        return "1080/flipped/Italian1920Vertical_converted.ogg";
+    case 4:
+        return "1080/flipped/Spanish1920CorrectVertical_converted.ogg";
+    case 5:
+        return "1080/flipped/Russian1920Vertical_converted.ogg";
+    case 6:
+        return "1080/flipped/SChinese1920Vertical_converted.ogg";
+    case 0:
+    default:
+        return "1080/flipped/English1920Vertical_converted.ogg";
+    }
+}
+
+static const char *pc_movie_name_for_index(unsigned movie)
+{
+    static const char *const names[] = {
+        "1080/flipped/IntroFlippedVertical_converted.ogg",
+        NULL,
+        "1080/flipped/HorizontalFlippedQui_converted.ogg",
+        "1080/flipped/HorizontalFlippedObi_converted.ogg",
+        "1080/flipped/HorizontalFlippedMace_converted.ogg",
+        "1080/flipped/HorizontalFlippedPlo_converted.ogg",
+        "1080/flipped/HorizontalFlippedAdi_converted.ogg",
+        "1080/flipped/End1080Flipped_converted.ogg"
+    };
+
+    if (movie >= sizeof(names) / sizeof(names[0])) {
+        return NULL;
+    }
+    if (movie == 1) {
+        return pc_movie_localized_text_scroll_name(
+            (unsigned)OptionStruct.Language);
+    }
+    return names[movie];
+}
+
+static int pc_resolve_movie_path(
+    unsigned movie,
+    char *path,
+    size_t capacity)
+{
+    const char *name;
+    const char *resolved;
+
+    if (path == NULL || capacity == 0) {
+        return 0;
+    }
+    path[0] = '\0';
+    name = pc_movie_name_for_index(movie);
+    if (name == NULL) {
+        return 0;
+    }
+    resolved = resource_getPath(name, JPB_RESOURCE_MOVIE);
+    if (resolved == NULL || GetFileAttributesA(resolved) == INVALID_FILE_ATTRIBUTES) {
+        return 0;
+    }
+    (void)snprintf(path, capacity, "%s", resolved);
+    return 1;
+}
+
+static void pc_movie_copy_error(
+    PcMoviePlayback *movie,
+    char *error,
+    size_t error_capacity,
+    const char *message)
+{
+    if (movie != NULL) {
+        (void)snprintf(movie->error, sizeof(movie->error), "%s", message);
+    }
+    if (error != NULL && error_capacity != 0) {
+        (void)snprintf(error, error_capacity, "%s", message);
+    }
+}
+
+static DWORD WINAPI pc_movie_reader_thread(void *user_data)
+{
+    PcMoviePlayback *movie = (PcMoviePlayback *)user_data;
+
+    if (movie == NULL || movie->stdoutRead == NULL ||
+        movie->pending == NULL || movie->pixels == NULL ||
+        movie->frameBytes == 0) {
+        return 0;
+    }
+    while (InterlockedCompareExchange(
+               (volatile LONG *)&movie->stopReader, 0, 0) == 0) {
+        size_t bytes_read_total = 0;
+
+        while (bytes_read_total < movie->frameBytes) {
+            DWORD bytes_read = 0;
+            DWORD chunk =
+                (DWORD)(movie->frameBytes - bytes_read_total);
+
+            if (chunk > (DWORD)(1024 * 1024)) {
+                chunk = (DWORD)(1024 * 1024);
+            }
+            if (!ReadFile(
+                    movie->stdoutRead,
+                    movie->pending + bytes_read_total,
+                    chunk,
+                    &bytes_read,
+                    NULL) ||
+                bytes_read == 0 ||
+                InterlockedCompareExchange(
+                    (volatile LONG *)&movie->stopReader, 0, 0) != 0) {
+                InterlockedExchange(
+                    (volatile LONG *)&movie->readerFinished, 1);
+                return 0;
+            }
+            bytes_read_total += bytes_read;
+        }
+        EnterCriticalSection(&movie->frameLock);
+        memcpy(movie->pixels, movie->pending, movie->frameBytes);
+        ++movie->framesDecoded;
+        LeaveCriticalSection(&movie->frameLock);
+    }
+    InterlockedExchange((volatile LONG *)&movie->readerFinished, 1);
+    return 0;
+}
+
+static void pc_movie_audio_close_output(PcMoviePlayback *movie)
+{
+    unsigned index;
+
+    if (movie == NULL || movie->audioOutput == NULL) {
+        return;
+    }
+    waveOutReset(movie->audioOutput);
+    for (index = 0; index < PC_MOVIE_AUDIO_BUFFER_COUNT; ++index) {
+        WAVEHDR *header = &movie->audioHeaders[index];
+
+        if ((header->dwFlags & WHDR_PREPARED) != 0) {
+            (void)waveOutUnprepareHeader(
+                movie->audioOutput, header, sizeof(*header));
+        }
+        memset(header, 0, sizeof(*header));
+    }
+    waveOutClose(movie->audioOutput);
+    movie->audioOutput = NULL;
+}
+
+static int pc_movie_audio_open_output(
+    PcMoviePlayback *movie,
+    char *error,
+    size_t error_capacity)
+{
+    WAVEFORMATEX format;
+    MMRESULT result;
+
+    if (movie == NULL || !movie->audioOutputEnabled) {
+        return 1;
+    }
+    memset(&format, 0, sizeof(format));
+    format.wFormatTag = WAVE_FORMAT_PCM;
+    format.nChannels = (WORD)movie->audioChannels;
+    format.nSamplesPerSec = movie->audioSampleRate;
+    format.wBitsPerSample =
+        (WORD)(movie->audioBytesPerSample * CHAR_BIT);
+    format.nBlockAlign =
+        (WORD)(format.nChannels * movie->audioBytesPerSample);
+    format.nAvgBytesPerSec =
+        format.nSamplesPerSec * format.nBlockAlign;
+    result = waveOutOpen(
+        &movie->audioOutput,
+        WAVE_MAPPER,
+        &format,
+        0,
+        0,
+        CALLBACK_NULL);
+    if (result != MMSYSERR_NOERROR) {
+        pc_movie_copy_error(
+            movie,
+            error,
+            error_capacity,
+            "could not open movie audio output");
+        return 0;
+    }
+    return 1;
+}
+
+static int pc_movie_audio_find_buffer(PcMoviePlayback *movie)
+{
+    for (;;) {
+        unsigned index;
+
+        if (movie == NULL ||
+            InterlockedCompareExchange(
+                (volatile LONG *)&movie->audioStopReader, 0, 0) != 0) {
+            return -1;
+        }
+        for (index = 0; index < PC_MOVIE_AUDIO_BUFFER_COUNT; ++index) {
+            WAVEHDR *header = &movie->audioHeaders[index];
+
+            if ((header->dwFlags & WHDR_PREPARED) == 0) {
+                return (int)index;
+            }
+            if ((header->dwFlags & WHDR_DONE) != 0) {
+                (void)waveOutUnprepareHeader(
+                    movie->audioOutput, header, sizeof(*header));
+                memset(header, 0, sizeof(*header));
+                return (int)index;
+            }
+        }
+        Sleep(2);
+    }
+}
+
+static int pc_movie_audio_queue(
+    PcMoviePlayback *movie,
+    const uint8_t *bytes,
+    DWORD byte_count)
+{
+    int index;
+    WAVEHDR *header;
+
+    if (movie == NULL || movie->audioOutput == NULL ||
+        bytes == NULL || byte_count == 0) {
+        return 0;
+    }
+    index = pc_movie_audio_find_buffer(movie);
+    if (index < 0) {
+        return 0;
+    }
+    memcpy(movie->audioBuffers[index], bytes, byte_count);
+    header = &movie->audioHeaders[index];
+    memset(header, 0, sizeof(*header));
+    header->lpData = (LPSTR)movie->audioBuffers[index];
+    header->dwBufferLength = byte_count;
+    if (waveOutPrepareHeader(
+            movie->audioOutput, header, sizeof(*header)) !=
+        MMSYSERR_NOERROR) {
+        memset(header, 0, sizeof(*header));
+        return 0;
+    }
+    if (waveOutWrite(movie->audioOutput, header, sizeof(*header)) !=
+        MMSYSERR_NOERROR) {
+        (void)waveOutUnprepareHeader(
+            movie->audioOutput, header, sizeof(*header));
+        memset(header, 0, sizeof(*header));
+        return 0;
+    }
+    InterlockedExchangeAdd(
+        (volatile LONG *)&movie->audioBytesQueued,
+        (LONG)byte_count);
+    InterlockedIncrement(
+        (volatile LONG *)&movie->audioChunksQueued);
+    return 1;
+}
+
+static DWORD WINAPI pc_movie_audio_reader_thread(void *user_data)
+{
+    PcMoviePlayback *movie = (PcMoviePlayback *)user_data;
+    uint8_t buffer[PC_MOVIE_AUDIO_BUFFER_BYTES];
+
+    if (movie == NULL || movie->audioStdoutRead == NULL) {
+        return 0;
+    }
+    while (InterlockedCompareExchange(
+               (volatile LONG *)&movie->audioStopReader, 0, 0) == 0) {
+        DWORD bytes_read = 0;
+
+        if (!ReadFile(
+                movie->audioStdoutRead,
+                buffer,
+                (DWORD)sizeof(buffer),
+                &bytes_read,
+                NULL) ||
+            bytes_read == 0 ||
+            InterlockedCompareExchange(
+                (volatile LONG *)&movie->audioStopReader, 0, 0) != 0) {
+            InterlockedExchange(
+                (volatile LONG *)&movie->audioReaderFinished, 1);
+            return 0;
+        }
+        InterlockedExchangeAdd(
+            (volatile LONG *)&movie->audioBytesDecoded,
+            (LONG)bytes_read);
+        InterlockedIncrement(
+            (volatile LONG *)&movie->audioChunksDecoded);
+        if (movie->audioOutput != NULL &&
+            !pc_movie_audio_queue(movie, buffer, bytes_read)) {
+            InterlockedExchange(
+                (volatile LONG *)&movie->audioReaderFinished, 1);
+            return 0;
+        }
+    }
+    InterlockedExchange(
+        (volatile LONG *)&movie->audioReaderFinished, 1);
+    return 0;
+}
+
+static void pc_movie_close_process(
+    PcMoviePlayback *movie,
+    int terminate)
+{
+    DWORD exit_code = 0;
+
+    if (movie == NULL) {
+        return;
+    }
+    InterlockedExchange((volatile LONG *)&movie->stopReader, 1);
+    InterlockedExchange((volatile LONG *)&movie->audioStopReader, 1);
+    if (movie->process.hProcess != NULL) {
+        if (GetExitCodeProcess(movie->process.hProcess, &exit_code) &&
+            exit_code == STILL_ACTIVE && terminate) {
+            TerminateProcess(movie->process.hProcess, 0);
+        }
+    }
+    if (movie->audioProcess.hProcess != NULL) {
+        exit_code = 0;
+        if (GetExitCodeProcess(movie->audioProcess.hProcess, &exit_code) &&
+            exit_code == STILL_ACTIVE && terminate) {
+            TerminateProcess(movie->audioProcess.hProcess, 0);
+        }
+    }
+    if (movie->readerThread != NULL) {
+        if (WaitForSingleObject(movie->readerThread, 1000) == WAIT_TIMEOUT) {
+            CancelSynchronousIo(movie->readerThread);
+            WaitForSingleObject(movie->readerThread, 1000);
+        }
+        CloseHandle(movie->readerThread);
+        movie->readerThread = NULL;
+    }
+    if (movie->audioReaderThread != NULL) {
+        if (WaitForSingleObject(
+                movie->audioReaderThread, 1000) == WAIT_TIMEOUT) {
+            CancelSynchronousIo(movie->audioReaderThread);
+            WaitForSingleObject(movie->audioReaderThread, 1000);
+        }
+        CloseHandle(movie->audioReaderThread);
+        movie->audioReaderThread = NULL;
+    }
+    pc_movie_audio_close_output(movie);
+    if (movie->stdoutRead != NULL) {
+        CloseHandle(movie->stdoutRead);
+        movie->stdoutRead = NULL;
+    }
+    if (movie->audioStdoutRead != NULL) {
+        CloseHandle(movie->audioStdoutRead);
+        movie->audioStdoutRead = NULL;
+    }
+    if (movie->process.hProcess != NULL) {
+        if (terminate) {
+            WaitForSingleObject(movie->process.hProcess, 100);
+        }
+        CloseHandle(movie->process.hProcess);
+        movie->process.hProcess = NULL;
+    }
+    if (movie->process.hThread != NULL) {
+        CloseHandle(movie->process.hThread);
+        movie->process.hThread = NULL;
+    }
+    if (movie->audioProcess.hProcess != NULL) {
+        if (terminate) {
+            WaitForSingleObject(movie->audioProcess.hProcess, 100);
+        }
+        CloseHandle(movie->audioProcess.hProcess);
+        movie->audioProcess.hProcess = NULL;
+    }
+    if (movie->audioProcess.hThread != NULL) {
+        CloseHandle(movie->audioProcess.hThread);
+        movie->audioProcess.hThread = NULL;
+    }
+    movie->active = 0;
+}
+
+static void pc_movie_playback_shutdown(PcMoviePlayback *movie)
+{
+    if (movie == NULL) {
+        return;
+    }
+    pc_movie_close_process(movie, 1);
+    free(movie->pixels);
+    free(movie->pending);
+    movie->pixels = NULL;
+    movie->pending = NULL;
+    if (movie->frameLockInitialized) {
+        DeleteCriticalSection(&movie->frameLock);
+        movie->frameLockInitialized = 0;
+    }
+    movie->frameBytes = 0;
+    movie->pendingBytes = 0;
+    movie->width = 0;
+    movie->height = 0;
+    movie->lastPresentedFrame = 0;
+}
+
+static int pc_find_ffmpeg(char *path, size_t capacity)
+{
+    char module_directory[MAX_PATH];
+    DWORD attributes;
+    int written;
+
+    if (path == NULL || capacity == 0) {
+        return 0;
+    }
+    path[0] = '\0';
+    if (pc_get_module_directory(
+            module_directory, sizeof(module_directory))) {
+        written = snprintf(
+            path,
+            capacity,
+            "%s\\ffmpeg.exe",
+            module_directory);
+        if (written >= 0 && (size_t)written < capacity) {
+            attributes = GetFileAttributesA(path);
+            if (attributes != INVALID_FILE_ATTRIBUTES &&
+                (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+                return 1;
+            }
+        }
+        path[0] = '\0';
+    }
+    return 0;
+}
+
+static int pc_movie_playback_start(
+    PcMoviePlayback *movie,
+    const char *path,
+    int width,
+    int height,
+    int audio_output_enabled,
+    char *error,
+    size_t error_capacity)
+{
+    SECURITY_ATTRIBUTES security;
+    STARTUPINFOA startup;
+    PROCESS_INFORMATION process;
+    HANDLE stdout_read = NULL;
+    HANDLE stdout_write = NULL;
+    char ffmpeg_path[MAX_PATH];
+    char filter[256];
+    char command_line[4096];
+    char audio_command_line[4096];
+    size_t frame_bytes;
+    DWORD pipe_size;
+    int written;
+
+    if (movie == NULL) {
+        return 0;
+    }
+    pc_movie_playback_shutdown(movie);
+    movie->framesDecoded = 0;
+    movie->framesPresented = 0;
+    InterlockedExchange((volatile LONG *)&movie->audioBytesDecoded, 0);
+    InterlockedExchange((volatile LONG *)&movie->audioBytesQueued, 0);
+    InterlockedExchange((volatile LONG *)&movie->audioChunksDecoded, 0);
+    InterlockedExchange((volatile LONG *)&movie->audioChunksQueued, 0);
+    movie->audioSampleRate = 48000;
+    movie->audioChannels = 2;
+    movie->audioBytesPerSample = 2;
+    movie->audioOutputEnabled = audio_output_enabled;
+    movie->path[0] = '\0';
+    movie->ffmpegPath[0] = '\0';
+    movie->error[0] = '\0';
+    if (path == NULL || path[0] == '\0' || width <= 0 || height <= 0) {
+        pc_movie_copy_error(
+            movie, error, error_capacity,
+            "invalid movie playback request");
+        return 0;
+    }
+    if (strchr(path, '"') != NULL) {
+        pc_movie_copy_error(
+            movie, error, error_capacity,
+            "movie path contains an unsupported quote character");
+        return 0;
+    }
+    if (!pc_find_ffmpeg(ffmpeg_path, sizeof(ffmpeg_path))) {
+        pc_movie_copy_error(
+            movie, error, error_capacity,
+            "ffmpeg.exe was not found beside the executable");
+        return 0;
+    }
+    if (strchr(ffmpeg_path, '"') != NULL) {
+        pc_movie_copy_error(
+            movie, error, error_capacity,
+            "ffmpeg path contains an unsupported quote character");
+        return 0;
+    }
+    frame_bytes = (size_t)width * (size_t)height * sizeof(uint32_t);
+    if (frame_bytes == 0 ||
+        frame_bytes / sizeof(uint32_t) != (size_t)width * (size_t)height) {
+        pc_movie_copy_error(
+            movie, error, error_capacity,
+            "movie framebuffer size overflowed");
+        return 0;
+    }
+    movie->pixels = (uint8_t *)malloc(frame_bytes);
+    movie->pending = (uint8_t *)malloc(frame_bytes);
+    if (movie->pixels == NULL || movie->pending == NULL) {
+        pc_movie_copy_error(
+            movie, error, error_capacity,
+            "could not allocate movie frame buffers");
+        pc_movie_playback_shutdown(movie);
+        return 0;
+    }
+    memset(movie->pixels, 0, frame_bytes);
+    InitializeCriticalSection(&movie->frameLock);
+    movie->frameLockInitialized = 1;
+    InterlockedExchange((volatile LONG *)&movie->stopReader, 0);
+    InterlockedExchange((volatile LONG *)&movie->readerFinished, 0);
+    InterlockedExchange((volatile LONG *)&movie->audioStopReader, 0);
+    InterlockedExchange((volatile LONG *)&movie->audioReaderFinished, 0);
+    movie->frameBytes = frame_bytes;
+    movie->width = width;
+    movie->height = height;
+    (void)snprintf(movie->path, sizeof(movie->path), "%s", path);
+    (void)snprintf(movie->ffmpegPath, sizeof(movie->ffmpegPath), "%s",
+                   ffmpeg_path);
+
+    written = snprintf(
+        filter,
+        sizeof(filter),
+        "vflip,scale=%d:%d:force_original_aspect_ratio=decrease,"
+        "pad=%d:%d:(ow-iw)/2:(oh-ih)/2",
+        width,
+        height,
+        width,
+        height);
+    if (written < 0 || (size_t)written >= sizeof(filter)) {
+        pc_movie_copy_error(
+            movie, error, error_capacity,
+            "movie filter command was too long");
+        pc_movie_playback_shutdown(movie);
+        return 0;
+    }
+    written = snprintf(
+        command_line,
+        sizeof(command_line),
+        "\"%s\" -hide_banner -loglevel error -nostdin -re -i \"%s\" "
+        "-an -vf %s -f rawvideo -pix_fmt bgra -",
+        ffmpeg_path,
+        path,
+        filter);
+    if (written < 0 || (size_t)written >= sizeof(command_line)) {
+        pc_movie_copy_error(
+            movie, error, error_capacity,
+            "movie decoder command was too long");
+        pc_movie_playback_shutdown(movie);
+        return 0;
+    }
+    written = snprintf(
+        audio_command_line,
+        sizeof(audio_command_line),
+        "\"%s\" -hide_banner -loglevel error -nostdin -re -i \"%s\" "
+        "-vn -f s16le -acodec pcm_s16le -ac %u -ar %u -",
+        ffmpeg_path,
+        path,
+        movie->audioChannels,
+        movie->audioSampleRate);
+    if (written < 0 || (size_t)written >= sizeof(audio_command_line)) {
+        pc_movie_copy_error(
+            movie, error, error_capacity,
+            "movie audio decoder command was too long");
+        pc_movie_playback_shutdown(movie);
+        return 0;
+    }
+    if (!pc_movie_audio_open_output(movie, error, error_capacity)) {
+        pc_movie_playback_shutdown(movie);
+        return 0;
+    }
+
+    memset(&security, 0, sizeof(security));
+    security.nLength = sizeof(security);
+    security.bInheritHandle = TRUE;
+    pipe_size = frame_bytes > (size_t)(16 * 1024 * 1024)
+        ? (DWORD)(16 * 1024 * 1024)
+        : (DWORD)(frame_bytes * 2);
+    if (!CreatePipe(&stdout_read, &stdout_write, &security, pipe_size)) {
+        pc_movie_copy_error(
+            movie, error, error_capacity,
+            "could not create movie decoder pipe");
+        pc_movie_playback_shutdown(movie);
+        return 0;
+    }
+    SetHandleInformation(stdout_read, HANDLE_FLAG_INHERIT, 0);
+
+    memset(&startup, 0, sizeof(startup));
+    memset(&process, 0, sizeof(process));
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    startup.hStdOutput = stdout_write;
+    startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    if (!CreateProcessA(
+            ffmpeg_path,
+            command_line,
+            NULL,
+            NULL,
+            TRUE,
+            CREATE_NO_WINDOW,
+            NULL,
+            NULL,
+            &startup,
+            &process)) {
+        CloseHandle(stdout_read);
+        CloseHandle(stdout_write);
+        pc_movie_copy_error(
+            movie, error, error_capacity,
+            "could not start ffmpeg movie decoder");
+        pc_movie_playback_shutdown(movie);
+        return 0;
+    }
+    CloseHandle(stdout_write);
+    stdout_write = NULL;
+    movie->stdoutRead = stdout_read;
+    stdout_read = NULL;
+    movie->process = process;
+    movie->readerThread = CreateThread(
+        NULL,
+        0,
+        pc_movie_reader_thread,
+        movie,
+        0,
+        NULL);
+    if (movie->readerThread == NULL) {
+        pc_movie_copy_error(
+            movie, error, error_capacity,
+            "could not start movie reader thread");
+        pc_movie_playback_shutdown(movie);
+        return 0;
+    }
+    memset(&startup, 0, sizeof(startup));
+    memset(&process, 0, sizeof(process));
+    stdout_read = NULL;
+    stdout_write = NULL;
+    if (!CreatePipe(&stdout_read, &stdout_write, &security, 65536)) {
+        pc_movie_copy_error(
+            movie, error, error_capacity,
+            "could not create movie audio decoder pipe");
+        pc_movie_playback_shutdown(movie);
+        return 0;
+    }
+    SetHandleInformation(stdout_read, HANDLE_FLAG_INHERIT, 0);
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    startup.hStdOutput = stdout_write;
+    startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    if (!CreateProcessA(
+            ffmpeg_path,
+            audio_command_line,
+            NULL,
+            NULL,
+            TRUE,
+            CREATE_NO_WINDOW,
+            NULL,
+            NULL,
+            &startup,
+            &process)) {
+        CloseHandle(stdout_read);
+        CloseHandle(stdout_write);
+        pc_movie_copy_error(
+            movie, error, error_capacity,
+            "could not start ffmpeg movie audio decoder");
+        pc_movie_playback_shutdown(movie);
+        return 0;
+    }
+    CloseHandle(stdout_write);
+    movie->audioStdoutRead = stdout_read;
+    movie->audioProcess = process;
+    movie->audioReaderThread = CreateThread(
+        NULL,
+        0,
+        pc_movie_audio_reader_thread,
+        movie,
+        0,
+        NULL);
+    if (movie->audioReaderThread == NULL) {
+        pc_movie_copy_error(
+            movie, error, error_capacity,
+            "could not start movie audio reader thread");
+        pc_movie_playback_shutdown(movie);
+        return 0;
+    }
+    movie->active = 1;
+    pc_movie_copy_error(movie, error, error_capacity, "none");
+    return 1;
+}
+
+static void pc_movie_fill_black(JPBSoftwareFramebuffer *framebuffer)
+{
+    size_t row;
+
+    if (framebuffer == NULL || framebuffer->pixels == NULL ||
+        framebuffer->width <= 0 || framebuffer->height <= 0 ||
+        framebuffer->stridePixels < framebuffer->width) {
+        return;
+    }
+    for (row = 0; row < (size_t)framebuffer->height; ++row) {
+        memset(
+            framebuffer->pixels + row * (size_t)framebuffer->stridePixels,
+            0,
+            (size_t)framebuffer->width * sizeof(*framebuffer->pixels));
+    }
+}
+
+static int pc_movie_present_frame(
+    PcMoviePlayback *movie,
+    JPBSoftwareFramebuffer *framebuffer,
+    DWORD first_frame_wait_ms)
+{
+    DWORD waited_ms = 0;
+    unsigned decoded_frames;
+
+    if (movie == NULL || !movie->active || framebuffer == NULL ||
+        framebuffer->pixels == NULL || movie->frameBytes == 0 ||
+        movie->pending == NULL || movie->pixels == NULL) {
+        return 0;
+    }
+    while (movie->framesDecoded == 0 &&
+           InterlockedCompareExchange(
+               (volatile LONG *)&movie->readerFinished, 0, 0) == 0 &&
+           waited_ms < first_frame_wait_ms) {
+        Sleep(5);
+        waited_ms += 5;
+    }
+    decoded_frames = movie->framesDecoded;
+    if (decoded_frames == 0) {
+        if (InterlockedCompareExchange(
+                (volatile LONG *)&movie->readerFinished, 0, 0) != 0) {
+            pc_movie_close_process(movie, 0);
+        }
+        pc_movie_fill_black(framebuffer);
+        return movie->active;
+    }
+    if (framebuffer->width == movie->width &&
+        framebuffer->height == movie->height &&
+        framebuffer->stridePixels >= framebuffer->width) {
+        size_t row;
+
+        EnterCriticalSection(&movie->frameLock);
+        for (row = 0; row < (size_t)framebuffer->height; ++row) {
+            memcpy(
+                framebuffer->pixels +
+                    row * (size_t)framebuffer->stridePixels,
+                movie->pixels +
+                    row * (size_t)movie->width * sizeof(uint32_t),
+                (size_t)framebuffer->width * sizeof(uint32_t));
+        }
+        movie->lastPresentedFrame = decoded_frames;
+        LeaveCriticalSection(&movie->frameLock);
+        ++movie->framesPresented;
+    }
+    if (InterlockedCompareExchange(
+            (volatile LONG *)&movie->readerFinished, 0, 0) != 0 &&
+        movie->lastPresentedFrame >= movie->framesDecoded) {
+        pc_movie_close_process(movie, 0);
+    }
+    return movie->active || movie->framesDecoded != 0;
+}
+
+static void pc_movie_sync_input_counts(PcInput *input)
+{
+    LONG audio_bytes;
+    LONG audio_chunks;
+    LONG audio_queued_bytes;
+    LONG audio_queued_chunks;
+    unsigned bytes_per_sample_frame;
+
+    if (input == NULL || input->moviePlayback == NULL) {
+        return;
+    }
+    input->movieDecodeCount = input->moviePlayback->framesDecoded;
+    input->moviePresentCount = input->moviePlayback->framesPresented;
+    audio_bytes = InterlockedCompareExchange(
+        (volatile LONG *)&input->moviePlayback->audioBytesDecoded,
+        0,
+        0);
+    audio_chunks = InterlockedCompareExchange(
+        (volatile LONG *)&input->moviePlayback->audioChunksDecoded,
+        0,
+        0);
+    audio_queued_bytes = InterlockedCompareExchange(
+        (volatile LONG *)&input->moviePlayback->audioBytesQueued,
+        0,
+        0);
+    audio_queued_chunks = InterlockedCompareExchange(
+        (volatile LONG *)&input->moviePlayback->audioChunksQueued,
+        0,
+        0);
+    input->movieAudioByteCount =
+        audio_bytes > 0 ? (unsigned)audio_bytes : 0;
+    input->movieAudioChunkCount =
+        audio_chunks > 0 ? (unsigned)audio_chunks : 0;
+    input->movieAudioQueuedByteCount =
+        audio_queued_bytes > 0 ? (unsigned)audio_queued_bytes : 0;
+    input->movieAudioQueuedChunkCount =
+        audio_queued_chunks > 0 ? (unsigned)audio_queued_chunks : 0;
+    bytes_per_sample_frame =
+        input->moviePlayback->audioChannels *
+        input->moviePlayback->audioBytesPerSample;
+    input->movieAudioSampleCount =
+        bytes_per_sample_frame != 0
+            ? input->movieAudioByteCount / bytes_per_sample_frame
+            : 0;
+    if (input->moviePlayback->error[0] != '\0') {
+        (void)snprintf(
+            input->movieLastError,
+            sizeof(input->movieLastError),
+            "%s",
+            input->moviePlayback->error);
+    }
+}
+
+static void pc_trigger_movie(
+    unsigned movie,
+    int flags,
+    void *user_data)
+{
+    PcInput *input = (PcInput *)user_data;
+    char path[MAX_PATH];
+    int resolved;
+    int started = 0;
+
+    if (input == NULL) {
+        return;
+    }
+    ++input->movieRequestCount;
+    input->movieLastIndex = movie;
+    input->movieLastFlags = flags;
+    input->movieLastPath[0] = '\0';
+    memset(
+        input->previousMovieXInputButtons,
+        0,
+        sizeof(input->previousMovieXInputButtons));
+    input->movieXInputSkipSeeded = 0;
+    resolved = pc_resolve_movie_path(movie, path, sizeof(path));
+    if (resolved) {
+        ++input->movieResolvedCount;
+        (void)snprintf(
+            input->movieLastPath,
+            sizeof(input->movieLastPath),
+            "%s",
+            path);
+        if (input->moviePlayback != NULL) {
+            started = pc_movie_playback_start(
+                input->moviePlayback,
+                path,
+                input->movieFramebufferWidth,
+                input->movieFramebufferHeight,
+                input->movieAudioOutputEnabled,
+                input->movieLastError,
+                sizeof(input->movieLastError));
+            if (started) {
+                ++input->movieLaunchCount;
+            } else {
+                ++input->movieStartFailureCount;
+            }
+        }
+    }
+    jpb_PCLog(
+        "movie trigger index=%u flags=%d resolved=%d started=%d "
+        "path=%s error=%s",
+        movie,
+        flags,
+        resolved,
+        started,
+        resolved ? path : "(none)",
+        input->movieLastError[0] != '\0'
+            ? input->movieLastError
+            : "none");
+}
+
+static void pc_trigger_auto_intro_movie(
+    PcInput *input,
+    unsigned movie,
+    const char *reason)
+{
+    if (input == NULL) {
+        return;
+    }
+    pc_trigger_movie(movie, 0, input);
+    jpb_PCLog(
+        "auto movie request reason=%s index=%u requests=%u resolved=%u "
+        "started=%u failures=%u",
+        reason != NULL ? reason : "unknown",
+        movie,
+        input->movieRequestCount,
+        input->movieResolvedCount,
+        input->movieLaunchCount,
+        input->movieStartFailureCount);
+}
+
+static void pc_trigger_first_level_movie(
+    PcInput *input,
+    int selected_level,
+    const char *reason)
+{
+    if (input == NULL || input->headless || input->autoLevelMovieStarted ||
+        selected_level != 1) {
+        return;
+    }
+    input->autoLevelMovieStarted = 1;
+    pc_trigger_auto_intro_movie(input, 1, reason);
+}
+
+static int pc_retail_replay_field_end(const char *end)
+{
+    while (*end == '\r' || *end == '\n') {
+        ++end;
+    }
+    return *end == '\0';
+}
+
+static int pc_retail_replay_parse_sample(
+    const PcInput *input,
+    char *line,
+    PcRetailInputSample *sample)
+{
+    char *context = NULL;
+    char *field = strtok_s(line, ",", &context);
+    int column = 0;
+    unsigned found = 0;
+
+    memset(sample, 0, sizeof(*sample));
+    while (field != NULL) {
+        char *end = NULL;
+
+        if (column == input->retailReplayFrameColumn) {
+            long value = strtol(field, &end, 10);
+
+            if (end == field || !pc_retail_replay_field_end(end) ||
+                value < 0 || value > INT32_MAX) {
+                return 0;
+            }
+            sample->frame = (int32_t)value;
+            found |= 1u;
+        } else if (column == input->retailReplayAxisXColumn) {
+            sample->axisX = strtof(field, &end);
+            if (end == field || !pc_retail_replay_field_end(end) ||
+                !isfinite(sample->axisX)) {
+                return 0;
+            }
+            found |= 2u;
+        } else if (column == input->retailReplayAxisYColumn) {
+            sample->axisY = strtof(field, &end);
+            if (end == field || !pc_retail_replay_field_end(end) ||
+                !isfinite(sample->axisY)) {
+                return 0;
+            }
+            found |= 4u;
+        } else if (column == input->retailReplayButtonsColumn) {
+            unsigned long value = strtoul(field, &end, 16);
+
+            if (end == field || !pc_retail_replay_field_end(end) ||
+                value > UINT32_MAX) {
+                return 0;
+            }
+            sample->buttons = (uint32_t)value;
+            found |= 8u;
+        }
+        field = strtok_s(NULL, ",", &context);
+        ++column;
+    }
+    return found == 15u;
+}
+
+static int pc_retail_replay_read_next(PcInput *input)
+{
+    char line[8192];
+
+    input->retailReplayNextValid = 0;
+    while (fgets(line, sizeof(line), input->retailReplayFile) != NULL) {
+        if (line[0] == '\r' || line[0] == '\n' || line[0] == '\0') {
+            continue;
+        }
+        if (!pc_retail_replay_parse_sample(
+                input, line, &input->retailReplayNext)) {
+            input->retailReplayError = 1;
+            return 0;
+        }
+        input->retailReplayNextValid = 1;
+        return 1;
+    }
+    if (ferror(input->retailReplayFile)) {
+        input->retailReplayError = 1;
+        return 0;
+    }
+    return 1;
+}
+
+static int pc_retail_replay_open(PcInput *input)
+{
+    char header[8192];
+    char *context = NULL;
+    char *field;
+    int column = 0;
+
+    input->retailReplayFrameColumn = -1;
+    input->retailReplayAxisXColumn = -1;
+    input->retailReplayAxisYColumn = -1;
+    input->retailReplayButtonsColumn = -1;
+    input->retailReplayFile = fopen(input->retailReplayPath, "rb");
+    if (input->retailReplayFile == NULL ||
+        fgets(header, sizeof(header), input->retailReplayFile) == NULL) {
+        return 0;
+    }
+    field = strtok_s(header, ",", &context);
+    while (field != NULL) {
+        size_t length = strcspn(field, "\r\n");
+
+        field[length] = '\0';
+        if (strcmp(field, "frame") == 0) {
+            input->retailReplayFrameColumn = column;
+        } else if (strcmp(field, "input_x") == 0) {
+            input->retailReplayAxisXColumn = column;
+        } else if (strcmp(field, "input_y") == 0) {
+            input->retailReplayAxisYColumn = column;
+        } else if (strcmp(field, "p0_pad1") == 0) {
+            input->retailReplayButtonsColumn = column;
+        }
+        field = strtok_s(NULL, ",", &context);
+        ++column;
+    }
+    if (input->retailReplayFrameColumn < 0 ||
+        input->retailReplayAxisXColumn < 0 ||
+        input->retailReplayAxisYColumn < 0 ||
+        input->retailReplayButtonsColumn < 0 ||
+        !pc_retail_replay_read_next(input) ||
+        !input->retailReplayNextValid) {
+        return 0;
+    }
+    jpb_PCLog(
+        "retail input replay loaded path=%s first_frame=%d",
+        input->retailReplayPath,
+        input->retailReplayNext.frame);
+    return 1;
+}
+
+static int pc_retail_replay_prepare_frame(
+    PcInput *input, int32_t next_total_frame)
+{
+    input->retailReplayCurrentValid = 0;
+    if (!input->retailReplayEnabled || input->retailReplayComplete) {
+        return input->retailReplayError == 0;
+    }
+    if (!input->retailReplayStarted) {
+        if (!input->retailReplayNextValid ||
+            next_total_frame < input->retailReplayNext.frame) {
+            return 1;
+        }
+        if (next_total_frame != input->retailReplayNext.frame) {
+            input->retailReplayError = 1;
+            fprintf(
+                stderr,
+                "retail input replay missed first sample: "
+                "portable_total=%d retail_total=%d\n",
+                next_total_frame,
+                input->retailReplayNext.frame);
+            jpb_PCLog(
+                "retail input replay missed first sample portable_total=%d "
+                "retail_total=%d",
+                next_total_frame,
+                input->retailReplayNext.frame);
+            return 0;
+        }
+        input->retailReplayStarted = 1;
+        jpb_PCLog(
+            "retail input replay started portable_total=%d "
+            "retail_total=%d",
+            next_total_frame,
+            input->retailReplayNext.frame);
+    }
+    if (!input->retailReplayNextValid) {
+        input->retailReplayComplete = 1;
+        jpb_PCLog(
+            "retail input replay complete frames=%u",
+            input->retailReplayFramesApplied);
+        return 1;
+    }
+    if (input->retailReplayNext.frame != next_total_frame) {
+        input->retailReplayError = 1;
+        fprintf(
+            stderr,
+            "retail input replay frame gap: portable_total=%d "
+            "next_retail_total=%d frames_applied=%u\n",
+            next_total_frame,
+            input->retailReplayNext.frame,
+            input->retailReplayFramesApplied);
+        jpb_PCLog(
+            "retail input replay frame gap portable_total=%d "
+            "next_retail_total=%d frames_applied=%u",
+            next_total_frame,
+            input->retailReplayNext.frame,
+            input->retailReplayFramesApplied);
+        return 0;
+    }
+    input->retailReplayCurrent = input->retailReplayNext;
+    input->retailReplayCurrentValid = 1;
+    ++input->retailReplayFramesApplied;
+    return pc_retail_replay_read_next(input);
+}
+
+static void pc_retail_replay_close(PcInput *input)
+{
+    if (input->retailReplayFile != NULL) {
+        fclose(input->retailReplayFile);
+        input->retailReplayFile = NULL;
+    }
 }
 
 static uint32_t pc_filter_gameplay_handoff_input(
@@ -1934,7 +3301,46 @@ static uint32_t pc_filter_gameplay_handoff_input(
     return 0;
 }
 
-static uint32_t pc_read_pad(int32_t pad_index, void *user_data)
+static void pc_begin_input_frame(PcInput *input)
+{
+    if (input != NULL) {
+        input->livePadCacheValid = 0;
+    }
+}
+
+static void pc_restore_cached_live_pad_state(
+    PcInput *input,
+    unsigned pad_index)
+{
+    if (pad_index == 0) {
+        player1InputType = input->livePadCacheInputType[0];
+        g_p1X = input->livePadCacheX[0];
+        g_p1Y = input->livePadCacheY[0];
+    } else {
+        player2InputType = input->livePadCacheInputType[1];
+        p2Connected = input->livePadCacheP2Connected;
+        g_p2X = input->livePadCacheX[1];
+        g_p2Y = input->livePadCacheY[1];
+    }
+}
+
+static void pc_store_cached_live_pad_state(
+    PcInput *input,
+    unsigned pad_index,
+    uint32_t bits)
+{
+    input->livePadCacheBits[pad_index] = bits;
+    input->livePadCacheX[pad_index] =
+        pad_index == 0 ? g_p1X : g_p2X;
+    input->livePadCacheY[pad_index] =
+        pad_index == 0 ? g_p1Y : g_p2Y;
+    input->livePadCacheInputType[pad_index] =
+        pad_index == 0 ? player1InputType : player2InputType;
+    input->livePadCacheP2Connected = p2Connected;
+    input->livePadCacheValid |= (uint8_t)(1u << pad_index);
+}
+
+static uint32_t pc_read_pad_uncached(int32_t pad_index, void *user_data)
 {
     PcInput *input = (PcInput *)user_data;
     uint32_t bits = 0;
@@ -1948,6 +3354,23 @@ static uint32_t pc_read_pad(int32_t pad_index, void *user_data)
     int controller_connected;
 
     if (pad_index < 0 || pad_index > 1) {
+        return 0;
+    }
+    if (input->retailReplayEnabled) {
+        if (pad_index == 0) {
+            player1InputType = 1;
+            lastUsedInputType = 1;
+            input->playerOneUsesKeyboard = 0;
+            g_p1X = input->retailReplayCurrentValid
+                ? input->retailReplayCurrent.axisX : 0.0f;
+            g_p1Y = input->retailReplayCurrentValid
+                ? input->retailReplayCurrent.axisY : 0.0f;
+            return input->retailReplayCurrentValid
+                ? input->retailReplayCurrent.buttons : 0;
+        }
+        player2InputType = 1;
+        g_p2X = 0.0f;
+        g_p2Y = 0.0f;
         return 0;
     }
     if (input->headless || input->scriptedInput) {
@@ -2177,6 +3600,28 @@ static uint32_t pc_read_pad(int32_t pad_index, void *user_data)
     return bits;
 }
 
+static uint32_t pc_read_pad(int32_t pad_index, void *user_data)
+{
+    PcInput *input = (PcInput *)user_data;
+    uint32_t bits;
+
+    if (input == NULL || pad_index < 0 || pad_index > 1) {
+        return 0;
+    }
+    if (!input->headless && !input->scriptedInput &&
+        (input->livePadCacheValid &
+         (uint8_t)(1u << (unsigned)pad_index)) != 0) {
+        pc_restore_cached_live_pad_state(input, (unsigned)pad_index);
+        return input->livePadCacheBits[pad_index];
+    }
+    bits = pc_read_pad_uncached(pad_index, user_data);
+    if (!input->headless && !input->scriptedInput) {
+        pc_store_cached_live_pad_state(
+            input, (unsigned)pad_index, bits);
+    }
+    return bits;
+}
+
 static uint32_t pc_read_brainutl_cheat_chords(void *user_data)
 {
     uint32_t chords = 0;
@@ -2325,44 +3770,32 @@ static HWND pc_create_window(
     return window;
 }
 
-static void pc_visible_framebuffer_size(int *width, int *height)
+static void pc_update_window_fps_title(
+    HWND window,
+    double fps,
+    double frame_ms,
+    double worst_ms)
 {
-    RECT work_area;
-    int client_width;
-    int client_height;
-    int viewport_width;
-    int viewport_height;
+    char title[160];
 
-    if (width == NULL || height == NULL ||
-        !SystemParametersInfoA(
-            SPI_GETWORKAREA, 0, &work_area, 0)) {
+    if (window == NULL) {
         return;
     }
-    client_width = work_area.right - work_area.left;
-    client_height = work_area.bottom - work_area.top -
-        GetSystemMetrics(SM_CYCAPTION);
-    if (client_width < 320 || client_height < 240) {
-        return;
-    }
-    viewport_width = client_width;
-    viewport_height = (int)(
-        (int64_t)client_width * PC_VISIBLE_FRAMEBUFFER_HEIGHT /
-        PC_VISIBLE_FRAMEBUFFER_WIDTH);
-    if (viewport_height > client_height) {
-        viewport_height = client_height;
-        viewport_width = (int)(
-            (int64_t)client_height * PC_VISIBLE_FRAMEBUFFER_WIDTH /
-            PC_VISIBLE_FRAMEBUFFER_HEIGHT);
-    }
-    if (viewport_width >= 320 && viewport_height >= 240) {
-        *width = viewport_width;
-        *height = viewport_height;
-    }
+    snprintf(
+        title,
+        sizeof(title),
+        "Star Wars: Episode I: Jedi Power Battles - %.1f FPS "
+        "(frame %.1f ms, worst %.1f ms)",
+        fps,
+        frame_ms,
+        worst_ms);
+    SetWindowTextA(window, title);
 }
 
 static int pc_render_level_d3d11(
     void *user_data,
     const JPBSoftwareLevelMesh *mesh,
+    JPBLevelFbxMeshPass pass,
     const JPBSoftwareJpxScene *world_scene,
     MATRIX *view_matrix,
     JPBSoftwareFramebuffer *framebuffer,
@@ -2372,9 +3805,10 @@ static int pc_render_level_d3d11(
     JPBSoftwareDepthBuffer *depth_buffer,
     JPBSoftwareRenderStats *stats)
 {
-    return jpb_PCD3D11PresenterRenderLevel(
+    return jpb_PCD3D11PresenterRenderLevelPass(
         (JPBPCD3D11Presenter *)user_data,
         mesh,
+        pass,
         world_scene,
         view_matrix,
         framebuffer,
@@ -2451,14 +3885,17 @@ static int pc_gameplay_composite_d3d11(
         glow_draw_count, view_matrix, stats);
 }
 
-static void pc_set_hardware_render_hooks(
+static int pc_set_hardware_render_hooks(
     JPBGameRuntime *runtime,
     JPBPCD3D11Presenter *presenter,
-    JPBSoftwareOwnedLevelMesh *jpx_hardware_level)
+    JPBSoftwareOwnedLevelMesh *jpx_hardware_level,
+    int require_level_mesh)
 {
     if (runtime->levelRenderMesh != &jpx_hardware_level->mesh) {
         jpb_SoftwareFreeOwnedLevelMesh(jpx_hardware_level);
     }
+    jpb_GameRuntimeSetTitleScreenDrawRenderHook(
+        runtime, pc_render_title_screen_draws_d3d11, presenter);
     if (runtime->levelRenderMesh == NULL &&
         jpb_SoftwareBuildJpxLevelMesh(
             &runtime->scene, jpx_hardware_level) ==
@@ -2473,24 +3910,18 @@ static void pc_set_hardware_render_hooks(
             jpx_hardware_level->mesh.triangles);
     }
     if (runtime->levelRenderMesh == NULL) {
-        /*
-         * A JPX-only world is rasterized into the CPU color/depth buffers.
-         * The D3D11 actor pipeline requires the matching GPU world targets,
-         * which are normally created by the FBX world hook. Keep the whole
-         * depth-dependent gameplay frame on one renderer for this fallback;
-         * the final framebuffer is still presented and FXAA-filtered by D3D11.
-         */
         jpb_GameRuntimeSetLevelRenderHook(runtime, NULL, NULL);
         jpb_GameRuntimeSetModelRenderHooks(
             runtime, NULL, NULL, NULL, NULL);
         jpb_GameRuntimeSetScreenPolyRenderHooks(
             runtime, NULL, NULL, NULL, NULL);
-        jpb_GameRuntimeSetTitleScreenDrawRenderHook(
-            runtime, pc_render_title_screen_draws_d3d11, presenter);
         jpb_GameRuntimeSetGameplayCompositeHook(runtime, NULL, NULL);
-        jpb_PCLog(
-            "hardware gameplay fallback=software-world reason=no-level-mesh");
-        return;
+        if (require_level_mesh) {
+            jpb_PCLog(
+                "hardware gameplay unavailable reason=no-level-mesh");
+            return 0;
+        }
+        return 1;
     }
     jpb_GameRuntimeSetLevelRenderHook(
         runtime, pc_render_level_d3d11, presenter);
@@ -2506,10 +3937,9 @@ static void pc_set_hardware_render_hooks(
         jpb_PCD3D11PresenterScreenPolyTriangle,
         pc_end_screen_polys_d3d11,
         presenter);
-    jpb_GameRuntimeSetTitleScreenDrawRenderHook(
-        runtime, pc_render_title_screen_draws_d3d11, presenter);
     jpb_GameRuntimeSetGameplayCompositeHook(
         runtime, pc_gameplay_composite_d3d11, presenter);
+    return 1;
 }
 
 static HANDLE pc_create_frame_timer(void)
@@ -2574,14 +4004,68 @@ static int pc_resolve_level_texture(
 
 static int pc_prewarm_hardware_level(
     JPBGameRuntime *runtime,
-    JPBPCD3D11Presenter *presenter)
+    JPBPCD3D11Presenter *presenter,
+    const JPBSoftwareFramebuffer *framebuffer)
 {
-    return runtime->levelRenderMesh == NULL ||
-        jpb_PCD3D11PresenterPrewarmLevel(
+    JPBSoftwareDepthBuffer depth_buffer;
+    JPBSoftwareFramebuffer warm_framebuffer;
+    JPBSoftwareRenderStats warm_stats = {0};
+    MATRIX warm_view;
+    float *depth_values;
+    int result;
+
+    if (runtime == NULL || runtime->levelRenderMesh == NULL) {
+        return 1;
+    }
+    if (presenter == NULL || framebuffer == NULL ||
+        framebuffer->width <= 0 || framebuffer->height <= 0 ||
+        framebuffer->stridePixels < framebuffer->width) {
+        return 0;
+    }
+    if (!jpb_PCD3D11PresenterPrewarmLevel(
             presenter,
             runtime->levelRenderMesh,
             pc_resolve_level_texture,
-            runtime);
+            runtime)) {
+        return 0;
+    }
+    depth_values = (float *)malloc(
+        (size_t)framebuffer->width *
+        (size_t)framebuffer->height *
+        sizeof(*depth_values));
+    if (depth_values == NULL) {
+        return 0;
+    }
+    memset(&depth_buffer, 0, sizeof(depth_buffer));
+    depth_buffer.values = depth_values;
+    depth_buffer.width = (size_t)framebuffer->width;
+    depth_buffer.height = (size_t)framebuffer->height;
+    depth_buffer.strideValues = (size_t)framebuffer->width;
+    warm_framebuffer = *framebuffer;
+    memset(&warm_view, 0, sizeof(warm_view));
+    warm_view.m[0][0] = 1.0f;
+    warm_view.m[1][1] = 1.0f;
+    warm_view.m[2][2] = 1.0f;
+    warm_view.t[2] = 32768;
+    result = jpb_PCD3D11PresenterRenderLevel(
+        presenter,
+        runtime->levelRenderMesh,
+        &runtime->scene,
+        &warm_view,
+        &warm_framebuffer,
+        UINT32_C(0x00000000),
+        pc_resolve_level_texture,
+        runtime,
+        &depth_buffer,
+        &warm_stats) == 0;
+    free(depth_values);
+    if (result) {
+        jpb_PCLog(
+            "D3D11 level draw prewarm completed source=%dx%d",
+            framebuffer->width,
+            framebuffer->height);
+    }
+    return result;
 }
 
 static int pc_screen_draw_is_enemy_radar(
@@ -6638,6 +8122,9 @@ static int pc_parse_headless_buttons(
             length == 6 && strncmp(cursor, "select", length) == 0) {
             button = JPB_PAD_COMBO_SOUTH;
         } else if (
+            length == 5 && strncmp(cursor, "start", length) == 0) {
+            button = JPB_PAD_START;
+        } else if (
             length == 4 && strncmp(cursor, "back", length) == 0) {
             button = JPB_PAD_JUMP;
         } else if (
@@ -6933,6 +8420,346 @@ static void pc_select_headless_phase(
             return;
         }
         active_frame -= input->phases[phase].frames;
+    }
+}
+
+static int pc_angle_delta_abs(int first, int second)
+{
+    int delta = (first - second) & 0xfff;
+
+    if (delta > 0x7ff) {
+        delta -= 0x1000;
+    }
+    return delta < 0 ? -delta : delta;
+}
+
+static int pc_fed_navigation_waypoint(
+    const JPBGameRuntime *runtime,
+    const FVECTOR *target,
+    int active_frame,
+    FVECTOR *waypoint,
+    int *path_nodes,
+    int *reached_target);
+
+static uint32_t pc_fed_traversal_direction(int desired_facing)
+{
+    struct DirectionCandidate {
+        uint32_t bits;
+        int facing;
+    };
+    const int camera_angle = mCameraAngleDest;
+    const struct DirectionCandidate candidates[] = {
+        {JPB_PAD_UP, 0x800 - camera_angle},
+        {JPB_PAD_UP | JPB_PAD_LEFT, 0x600 - camera_angle},
+        {JPB_PAD_LEFT, 0x400 - camera_angle},
+        {JPB_PAD_DOWN | JPB_PAD_LEFT, 0x200 - camera_angle},
+        {JPB_PAD_DOWN, -camera_angle},
+        {JPB_PAD_DOWN | JPB_PAD_RIGHT, 0xe00 - camera_angle},
+        {JPB_PAD_RIGHT, 0xc00 - camera_angle},
+        {JPB_PAD_UP | JPB_PAD_RIGHT, 0xa00 - camera_angle}
+    };
+    size_t best = 0;
+    int best_delta = INT_MAX;
+    size_t index;
+
+    for (index = 0;
+         index < sizeof(candidates) / sizeof(candidates[0]);
+         ++index) {
+        int delta = pc_angle_delta_abs(
+            desired_facing, candidates[index].facing);
+
+        if (delta < best_delta) {
+            best = index;
+            best_delta = delta;
+        }
+    }
+    return candidates[best].bits;
+}
+
+static int pc_fed_traversal_target(
+    const PcInput *input,
+    const JPBGameRuntime *runtime,
+    FVECTOR *target,
+    int *target_enemy,
+    int *target_placement)
+{
+    enum {
+        FED_TRAVERSAL_BLOCKING_ENEMY_RANGE = 1280
+    };
+    const FVECTOR *player_position;
+    FVECTOR placement_target = {0.0f, 0.0f, 0.0f};
+    FVECTOR enemy_target = {0.0f, 0.0f, 0.0f};
+    float best_placement_distance_squared = FLT_MAX;
+    float best_enemy_distance_squared = FLT_MAX;
+    int placement_index = -1;
+    int enemy_index = -1;
+    int index;
+
+    if (runtime == NULL || runtime->physics == NULL ||
+        target == NULL || target_enemy == NULL ||
+        target_placement == NULL) {
+        return 0;
+    }
+    player_position = &runtime->physics->pos;
+    *target_enemy = -1;
+    *target_placement = -1;
+
+    if (input != NULL && input->fedTraversalTargetPlacement >= 0) {
+        const int requested = input->fedTraversalTargetPlacement;
+        const wsl_BAP_PLACEMENT *placement;
+
+        if (runtime->world == NULL || runtime->world->apEnemy == NULL ||
+            requested >= runtime->world->nEnemy) {
+            return 0;
+        }
+        placement = runtime->world->apEnemy[requested];
+        if (placement == NULL) {
+            return 0;
+        }
+        target->vx = (float)placement->loc.vx;
+        target->vy = (float)placement->loc.vy;
+        target->vz = (float)placement->loc.vz;
+        *target_placement = requested;
+        return 1;
+    }
+
+    /*
+     * Camera traversal needs forward route coverage, so visit unopened
+     * authored placements before settling into combat with an activated
+     * actor. This remains explicit control-harness input only.
+     */
+    if (runtime->world != NULL && runtime->world->apEnemy != NULL) {
+        for (index = 0; index < runtime->world->nEnemy; ++index) {
+            const wsl_BAP_PLACEMENT *placement =
+                runtime->world->apEnemy[index];
+            float delta_x;
+            float delta_z;
+            float distance_squared;
+
+            if (placement == NULL || placement->status != 0 ||
+                placement->aiDf.ownerType != 2 ||
+                placement->actorNum == 7) {
+                continue;
+            }
+            delta_x = (float)placement->loc.vx - player_position->vx;
+            delta_z = (float)placement->loc.vz - player_position->vz;
+            distance_squared = delta_x * delta_x + delta_z * delta_z;
+            if (distance_squared < best_placement_distance_squared) {
+                best_placement_distance_squared = distance_squared;
+                placement_target.vx = (float)placement->loc.vx;
+                placement_target.vy = (float)placement->loc.vy;
+                placement_target.vz = (float)placement->loc.vz;
+                placement_index = index;
+            }
+        }
+    }
+
+    for (index = 0; index < 20; ++index) {
+        wsl_ENEMY *enemy = &aEnemyListNodes[index];
+        VECTOR *position;
+        int energy;
+        float delta_x;
+        float delta_z;
+        float distance_squared;
+
+        if (enemy->active == 0 || enemy->ownerType != 2 ||
+            enemy->pPlayer == NULL ||
+            enemy->pPlayer == runtime->player) {
+            continue;
+        }
+        energy = game_gGetEnergy(enemy->pPlayer->playernum);
+        if (energy <= 0) {
+            continue;
+        }
+        if ((enemy->pPlayer->pFlags & UINT32_C(0x80)) != 0 ||
+            game_gGetMaxEnergy(enemy->pPlayer->playernum) <= 0) {
+            continue;
+        }
+        position = physics_gGetPosition(
+            &enemy->pPlayer->playerRoot);
+        if (position == NULL) {
+            continue;
+        }
+        delta_x = (float)position->vx - player_position->vx;
+        delta_z = (float)position->vz - player_position->vz;
+        distance_squared = delta_x * delta_x + delta_z * delta_z;
+        if (distance_squared < best_enemy_distance_squared) {
+            best_enemy_distance_squared = distance_squared;
+            enemy_target.vx = (float)position->vx;
+            enemy_target.vy = (float)position->vy;
+            enemy_target.vz = (float)position->vz;
+            enemy_index = enemy->enemyID;
+        }
+    }
+
+    if (enemy_index >= 0 &&
+        (placement_index < 0 ||
+         best_enemy_distance_squared <=
+             (float)(FED_TRAVERSAL_BLOCKING_ENEMY_RANGE *
+                     FED_TRAVERSAL_BLOCKING_ENEMY_RANGE))) {
+        *target = enemy_target;
+        *target_enemy = enemy_index;
+        return 1;
+    }
+    if (placement_index >= 0) {
+        *target = placement_target;
+        *target_placement = placement_index;
+        return 1;
+    }
+    if (enemy_index >= 0) {
+        *target = enemy_target;
+        *target_enemy = enemy_index;
+        return 1;
+    }
+
+    return 0;
+}
+
+static void pc_select_fed_traversal_input(
+    PcInput *input, const JPBGameRuntime *runtime, int active_frame)
+{
+    FVECTOR target;
+    FVECTOR actual_target;
+    FVECTOR direction;
+    _svector rotation = {0, 0, 0, 0};
+    float distance;
+    float actual_distance;
+    uint32_t bits = 0;
+    int target_enemy;
+    int target_placement;
+    int navigation_path_nodes = 0;
+    int navigation_reached_target = 0;
+
+    if (input == NULL || !input->fedTraversalHarness) {
+        return;
+    }
+    input->headlessBits = 0;
+    if (active_frame < 0 || runtime == NULL || runtime->player == NULL ||
+        runtime->physics == NULL || runtime->player->pEnemy != NULL) {
+        return;
+    }
+    if (!pc_fed_traversal_target(
+            input,
+            runtime,
+            &target,
+            &target_enemy,
+            &target_placement)) {
+        return;
+    }
+    actual_target = target;
+    {
+        float actual_delta_x =
+            actual_target.vx - runtime->physics->pos.vx;
+        float actual_delta_z =
+            actual_target.vz - runtime->physics->pos.vz;
+
+        actual_distance = sqrtf(
+            actual_delta_x * actual_delta_x +
+            actual_delta_z * actual_delta_z);
+    }
+    if (target_enemy >= 0 || target_placement >= 0) {
+        FVECTOR waypoint;
+
+        if (pc_fed_navigation_waypoint(
+                runtime,
+                &target,
+                active_frame,
+                &waypoint,
+                &navigation_path_nodes,
+                &navigation_reached_target)) {
+            target = waypoint;
+        }
+    }
+    input->fedTraversalNavigationPathNodes = navigation_path_nodes;
+    input->fedTraversalNavigationReachedTarget =
+        navigation_reached_target;
+
+    direction.vx = target.vx - runtime->physics->pos.vx;
+    direction.vy = 0.0f;
+    direction.vz = target.vz - runtime->physics->pos.vz;
+    distance = sqrtf(
+        direction.vx * direction.vx +
+        direction.vz * direction.vz);
+    (void)vec_RotFromNormalF(&rotation, &direction);
+
+    if (target_enemy < 0 || actual_distance > 160.0f ||
+        navigation_path_nodes > 2) {
+        bits |= pc_fed_traversal_direction(rotation.vy);
+    }
+    if (target_enemy >= 0 && actual_distance <= 900.0f &&
+        (navigation_path_nodes == 0 ||
+         navigation_path_nodes <= 4)) {
+        if (input->fedTraversalAttackCooldown <= 0) {
+            static const uint32_t attacks[] = {
+                JPB_PAD_COMBO_NORTH,
+                JPB_PAD_COMBO_WEST,
+                JPB_PAD_COMBO_SOUTH
+            };
+
+            bits |= attacks[
+                ((unsigned)active_frame / 60U) %
+                (sizeof(attacks) / sizeof(attacks[0]))];
+            input->fedTraversalAttackCooldown = 36;
+        } else {
+            --input->fedTraversalAttackCooldown;
+            bits |= JPB_PAD_BLOCK;
+        }
+    } else {
+        input->fedTraversalAttackCooldown = 0;
+    }
+    if (target_enemy < 0 &&
+        (target.vy > runtime->physics->pos.vy + 64.0f ||
+         (active_frame > 0 && active_frame % 180 == 0))) {
+        bits |= JPB_PAD_JUMP;
+    }
+    input->headlessBits = bits;
+
+    if (active_frame % 60 == 0) {
+        jpb_PCLog(
+            "FED traversal frame=%d target_enemy=%d "
+            "target_placement=%d distance=%.1f/actual:%.1f bits=%08x "
+            "nav=%d/reached:%d waypoint=%.1f/%.1f/%.1f "
+            "player=%.1f/%.1f/%.1f dolly=%d",
+            active_frame,
+            target_enemy,
+            target_placement,
+            distance,
+            actual_distance,
+            (unsigned)bits,
+            navigation_path_nodes,
+            navigation_reached_target,
+            target.vx,
+            target.vy,
+            target.vz,
+            runtime->physics->pos.vx,
+            runtime->physics->pos.vy,
+            runtime->physics->pos.vz,
+            runtime->world != NULL
+                ? (int)runtime->world->currentDolly : -1);
+        if (jpb_PCLogPath() == NULL || jpb_PCLogPath()[0] == '\0') {
+            printf(
+                "fed_traversal=(frame=%d,enemy=%d,placement=%d,"
+                "distance=%.1f,actual=%.1f,bits=0x%08x,"
+                "nav=%d,reached=%d,"
+                "waypoint=%.1f/%.1f/%.1f,player=%.1f/%.1f/%.1f,"
+                "dolly=%d)\n",
+                active_frame,
+                target_enemy,
+                target_placement,
+                distance,
+                actual_distance,
+                (unsigned)bits,
+                navigation_path_nodes,
+                navigation_reached_target,
+                target.vx,
+                target.vy,
+                target.vz,
+                runtime->physics->pos.vx,
+                runtime->physics->pos.vy,
+                runtime->physics->pos.vz,
+                runtime->world != NULL
+                    ? (int)runtime->world->currentDolly : -1);
+        }
     }
 }
 
@@ -7479,6 +9306,7 @@ static void pc_log_player_controls(
     uint32_t pressed;
     uint32_t held;
     int input_type;
+    int authored_ai;
     int active_motion_index;
     int energy;
     int max_energy;
@@ -7506,6 +9334,7 @@ static void pc_log_player_controls(
     input_type = player_index == 0
         ? player1InputType
         : player2InputType;
+    authored_ai = player->pEnemy != NULL;
     axis_x = player_index == 0 ? g_p1X : g_p2X;
     axis_y = player_index == 0 ? g_p1Y : g_p2Y;
     if (player->paMotions != NULL &&
@@ -7528,6 +9357,7 @@ static void pc_log_player_controls(
         state->motion == player->currentMotion &&
         state->activeMotion == active_motion_index &&
         state->inputType == input_type &&
+        state->authoredAi == authored_ai &&
         state->energy == energy &&
         state->maxEnergy == max_energy &&
         state->force == force &&
@@ -7550,7 +9380,9 @@ static void pc_log_player_controls(
         "flags=%08x facing=%d",
         frame,
         player_index + 1,
-        input_type == 0 ? "keyboard" : "xinput",
+        authored_ai
+            ? "authored-ai"
+            : (input_type == 0 ? "keyboard" : "xinput"),
         (unsigned)pressed,
         pressed_names,
         (unsigned)held,
@@ -7590,6 +9422,7 @@ static void pc_log_player_controls(
     state->motion = player->currentMotion;
     state->activeMotion = active_motion_index;
     state->inputType = input_type;
+    state->authoredAi = authored_ai;
     state->energy = energy;
     state->maxEnergy = max_energy;
     state->force = force;
@@ -7621,11 +9454,13 @@ static void pc_print_usage(const char *program)
         stderr,
         "usage: %s [<world.jpx>] [--cad actor.cad] [--bmd actor.bmd] "
         "[--cmb actor.cmb] [--player-model id] "
+        "[--player-saber-color current|canon|legacy] "
         "[--player-two-cad actor.cad] [--player-two-bmd actor.bmd] "
         "[--player-two-cmb actor.cmb] [--player-two-model id] "
         "[--enemy-cad enemy.cad] [--enemy-bmd enemy.bmd] "
-        "[--headless] [--hidden-window] [--scripted-input] "
+        "[--headless] [--hidden-window] [--control-harness] "
         "[--enemy-placement-diagnostics] "
+        "[--profile-runtime] "
         "[--mute | --silent-audio] "
         "[--persistence-directory path] [--quickload level] "
         "[--overlay-mode 0|1|2] "
@@ -7687,7 +9522,8 @@ static void pc_print_usage(const char *program)
         "[--validate-hud-debug-labels3-1080] "
         "[--validate-hud-owner-coverage] "
         "[--validate-teleport] [--validate-camera-follow] "
-        "[--validate-title-audio] [--validate-player-saber] "
+        "[--validate-title-audio] [--validate-title-movie N] "
+        "[--validate-player-saber] "
         "[--validate-player-projectile] "
         "[--validate-presentation-handoff] "
         "[--validate-audio-handoff] "
@@ -7695,9 +9531,16 @@ static void pc_print_usage(const char *program)
         "[--validate-neutral-handoff] "
         "[--validate-player-two-sound name] "
         "[--headless-maximum-progression] "
+        "[--fed-traversal-harness] "
+        "[--fed-traversal-target-placement N] "
         "[--require-fbx-level] "
+        "[--spawn-position x y z] "
+        "[--force-enemy-placement id] "
         "[--camera-dolly N] "
         "[--camera-diagnostics] "
+        "[--camera-region-sweep path.csv] "
+        "[--record-input-trail path.csv] "
+        "[--replay-retail-input retail-trail.csv] "
         "[--framebuffer-size width height] "
         "[--frames N] [--output frame.ppm]\n"
         "with no world path, the installed front end is shown and its "
@@ -7730,6 +9573,43 @@ static int pc_collision_storage_contains(
         address - start <= runtime->collisionStorageSize - size;
 }
 
+static int pc_camera_index_from_height_stuff(
+    const JPBGameRuntime *runtime,
+    const _jheightstuff *height_stuff)
+{
+    const int32_t *camera_record;
+    uint32_t cube_word;
+
+    if (runtime == NULL || height_stuff == NULL || leveldata == NULL ||
+        !pc_collision_storage_contains(
+            runtime,
+            height_stuff->cube,
+            sizeof(*height_stuff->cube))) {
+        return -1;
+    }
+    camera_record = height_stuff->cube;
+    cube_word = (uint32_t)*camera_record;
+    if ((cube_word & UINT32_C(0x3c000000)) == 0) {
+        if (!pc_collision_storage_contains(
+                runtime,
+                leveldata - 4,
+                5 * sizeof(*leveldata))) {
+            return -1;
+        }
+        camera_record =
+            leveldata +
+            (leveldata[-4] >> 11) +
+            (int32_t)(((cube_word >> 14) &
+                       UINT32_C(0xff)) * 9U);
+    }
+    if (!pc_collision_storage_contains(
+            runtime, camera_record, 2 * sizeof(*camera_record))) {
+        return -1;
+    }
+    return ((const uint8_t *)(const void *)camera_record)[7] &
+        UINT8_C(0x7f);
+}
+
 static int pc_camera_index_at_world_position(
     const JPBGameRuntime *runtime,
     int32_t x,
@@ -7738,12 +9618,7 @@ static int pc_camera_index_at_world_position(
 {
     VECTOR high_point;
     _jheightstuff height_stuff;
-    const int32_t *camera_poly;
-    uint32_t polygon_word;
 
-    if (leveldata == NULL) {
-        return -1;
-    }
     high_point.vx = x;
     high_point.vy = y + 0x100;
     high_point.vz = z;
@@ -7754,33 +9629,516 @@ static int pc_camera_index_at_world_position(
         NULL,
         (objectRoot *)(void *)&height_stuff,
         1);
+    return pc_camera_index_from_height_stuff(runtime, &height_stuff);
+}
+
+static double pc_fed_navigation_distance_squared(
+    const PcFedNavigationNode *node,
+    const FVECTOR *position)
+{
+    double dx = (double)node->x - (double)position->vx;
+    double dy = (double)node->y - (double)position->vy;
+    double dz = (double)node->z - (double)position->vz;
+
+    return dx * dx + dz * dz + 4.0 * dy * dy;
+}
+
+static int pc_build_fed_navigation(
+    const JPBGameRuntime *runtime,
+    int active_frame)
+{
+    PcFedNavigation *navigation = &pc_fed_navigation;
+    int rows;
+    int row;
+
+    if (runtime == NULL || leveldata == NULL ||
+        runtime->collisionStorage == NULL) {
+        return 0;
+    }
+    rows = leveldata[-2] >> 10;
+    if (rows <= 0 || rows > PC_FED_NAVIGATION_ROWS) {
+        return 0;
+    }
+    memset(navigation->cellHeads, 0xff, sizeof(navigation->cellHeads));
+    navigation->nodeCount = 0;
+    navigation->levelDataOwner = leveldata;
+    navigation->buildFrame = active_frame;
+
+    for (row = 0; row < rows; ++row) {
+        int column;
+        int32_t z = row * 0x100 - 0x7e80;
+
+        for (column = 0; column < PC_FED_NAVIGATION_COLUMNS;
+             ++column) {
+            VECTOR high_point;
+            int32_t x = 0x8080 - column * 0x100;
+            int layer;
+
+            high_point.vx = x;
+            high_point.vy = 0x7fff;
+            high_point.vz = z;
+            high_point.pad = 0;
+            for (layer = 0; layer < PC_FED_NAVIGATION_MAX_LAYERS;
+                 ++layer) {
+                _jheightstuff height_stuff;
+                int height;
+
+                memset(&height_stuff, 0, sizeof(height_stuff));
+                height = intersec_FindWalkHeight(
+                    &high_point,
+                    NULL,
+                    (objectRoot *)(void *)&height_stuff,
+                    1);
+                if (height <= 0 || height_stuff.cube == NULL) {
+                    break;
+                }
+                if (navigation->nodeCount >=
+                    PC_FED_NAVIGATION_MAX_NODES) {
+                    jpb_PCLog(
+                        "FED navigation overflow frame=%d nodes=%d",
+                        active_frame,
+                        navigation->nodeCount);
+                    return 0;
+                }
+                {
+                    int node_index = navigation->nodeCount++;
+                    int cell_index =
+                        row * PC_FED_NAVIGATION_COLUMNS + column;
+                    PcFedNavigationNode *node =
+                        &navigation->nodes[node_index];
+
+                    node->x = x;
+                    node->y = height;
+                    node->z = z;
+                    node->column = (uint8_t)column;
+                    node->row = (uint8_t)row;
+                    node->nextInCell =
+                        navigation->cellHeads[cell_index];
+                    navigation->cellHeads[cell_index] =
+                        (int16_t)node_index;
+                }
+                high_point.vy = height - 0x41;
+            }
+        }
+    }
+    jpb_PCLog(
+        "FED navigation built frame=%d nodes=%d rows=%d",
+        active_frame,
+        navigation->nodeCount,
+        rows);
+    return navigation->nodeCount > 0;
+}
+
+static int pc_fed_navigation_waypoint(
+    const JPBGameRuntime *runtime,
+    const FVECTOR *target,
+    int active_frame,
+    FVECTOR *waypoint,
+    int *path_nodes,
+    int *reached_target)
+{
+    static const int neighbor_offsets[4][2] = {
+        {-1, 0},
+        {1, 0},
+        {0, -1},
+        {0, 1}
+    };
+    PcFedNavigation *navigation = &pc_fed_navigation;
+    int start = -1;
+    int goal = -1;
+    double start_distance = DBL_MAX;
+    double goal_distance = DBL_MAX;
+    int queue_read = 0;
+    int queue_write = 0;
+    int best;
+    double best_distance;
+    int index;
+    int path_length = 0;
+    int cursor;
+
+    if (runtime == NULL || runtime->physics == NULL || target == NULL ||
+        waypoint == NULL || path_nodes == NULL || reached_target == NULL) {
+        return 0;
+    }
+    *path_nodes = 0;
+    *reached_target = 0;
+    if (navigation->levelDataOwner != leveldata ||
+        navigation->nodeCount == 0 ||
+        active_frame < navigation->buildFrame ||
+        active_frame - navigation->buildFrame >=
+            PC_FED_NAVIGATION_REBUILD_FRAMES) {
+        if (!pc_build_fed_navigation(runtime, active_frame)) {
+            return 0;
+        }
+    }
+
+    for (index = 0; index < navigation->nodeCount; ++index) {
+        double player_distance = pc_fed_navigation_distance_squared(
+            &navigation->nodes[index], &runtime->physics->pos);
+        double target_distance = pc_fed_navigation_distance_squared(
+            &navigation->nodes[index], target);
+
+        if (player_distance < start_distance) {
+            start = index;
+            start_distance = player_distance;
+        }
+        if (target_distance < goal_distance) {
+            goal = index;
+            goal_distance = target_distance;
+        }
+    }
+    if (start < 0 || goal < 0) {
+        return 0;
+    }
+
+    memset(
+        navigation->predecessors,
+        0xff,
+        (size_t)navigation->nodeCount *
+            sizeof(navigation->predecessors[0]));
+    navigation->predecessors[start] = -2;
+    navigation->queue[queue_write++] = (int16_t)start;
+    best = start;
+    best_distance = pc_fed_navigation_distance_squared(
+        &navigation->nodes[start], target);
+
+    while (queue_read < queue_write) {
+        int current_index = navigation->queue[queue_read++];
+        const PcFedNavigationNode *current =
+            &navigation->nodes[current_index];
+        double distance = pc_fed_navigation_distance_squared(
+            current, target);
+        int neighbor_direction;
+
+        if (distance < best_distance) {
+            best = current_index;
+            best_distance = distance;
+        }
+        for (neighbor_direction = 0;
+             neighbor_direction < 4;
+             ++neighbor_direction) {
+            int column =
+                (int)current->column +
+                neighbor_offsets[neighbor_direction][0];
+            int row =
+                (int)current->row +
+                neighbor_offsets[neighbor_direction][1];
+            int neighbor_index;
+
+            if (column < 0 ||
+                column >= PC_FED_NAVIGATION_COLUMNS ||
+                row < 0 || row >= PC_FED_NAVIGATION_ROWS) {
+                continue;
+            }
+            neighbor_index = navigation->cellHeads[
+                row * PC_FED_NAVIGATION_COLUMNS + column];
+            while (neighbor_index >= 0) {
+                const PcFedNavigationNode *neighbor =
+                    &navigation->nodes[neighbor_index];
+
+                if (navigation->predecessors[neighbor_index] == -1 &&
+                    abs(neighbor->y - current->y) <=
+                        PC_FED_NAVIGATION_MAX_STEP) {
+                    navigation->predecessors[neighbor_index] =
+                        (int16_t)current_index;
+                    navigation->queue[queue_write++] =
+                        (int16_t)neighbor_index;
+                }
+                neighbor_index = neighbor->nextInCell;
+            }
+        }
+    }
+    if (navigation->predecessors[goal] != -1) {
+        best = goal;
+        *reached_target = 1;
+    }
+
+    cursor = best;
+    while (cursor >= 0 &&
+           path_length < PC_FED_NAVIGATION_MAX_NODES) {
+        navigation->reversePath[path_length++] = (int16_t)cursor;
+        if (navigation->predecessors[cursor] == -2) {
+            break;
+        }
+        cursor = navigation->predecessors[cursor];
+    }
+    if (path_length == 0 ||
+        navigation->predecessors[
+            navigation->reversePath[path_length - 1]] != -2) {
+        return 0;
+    }
+    *path_nodes = path_length;
+    if (path_length > 1) {
+        const PcFedNavigationNode *next =
+            &navigation->nodes[
+                navigation->reversePath[path_length - 2]];
+
+        waypoint->vx = (float)next->x;
+        waypoint->vy = (float)next->y;
+        waypoint->vz = (float)next->z;
+    } else {
+        const PcFedNavigationNode *current =
+            &navigation->nodes[best];
+        double dx = (double)target->vx - runtime->physics->pos.vx;
+        double dz = (double)target->vz - runtime->physics->pos.vz;
+
+        if (dx * dx + dz * dz <= 1024.0 * 1024.0) {
+            *waypoint = *target;
+        } else {
+            waypoint->vx = (float)current->x;
+            waypoint->vy = (float)current->y;
+            waypoint->vz = (float)current->z;
+        }
+    }
+    return 1;
+}
+
+static int pc_write_camera_region_sweep(
+    const char *path,
+    const JPBGameRuntime *runtime)
+{
+    FILE *file;
+    int rows;
+    int row;
+
+    if (path == NULL || runtime == NULL || leveldata == NULL ||
+        runtime->world == NULL) {
+        return 0;
+    }
+    rows = leveldata[-2] >> 10;
+    if (rows <= 0 || rows > 256) {
+        fprintf(stderr, "camera region sweep has invalid row count: %d\n", rows);
+        return 0;
+    }
+    file = fopen(path, "w");
+    if (file == NULL) {
+        fprintf(stderr, "could not open camera region sweep: %s\n", path);
+        return 0;
+    }
+    fputs(
+        "column,row,layer,x,height,z,camera,flags,cube,entry,poly\n",
+        file);
+    for (row = 0; row < rows; ++row) {
+        int column;
+        int32_t z = row * 0x100 - 0x7e80;
+
+        for (column = 0; column < 256; ++column) {
+            VECTOR high_point;
+            int32_t x = 0x8080 - column * 0x100;
+            int layer;
+
+            high_point.vx = x;
+            high_point.vy = 0x7fff;
+            high_point.vz = z;
+            high_point.pad = 0;
+            for (layer = 0; layer < 16; ++layer) {
+                _jheightstuff height_stuff;
+                int height;
+                int camera;
+
+                memset(&height_stuff, 0, sizeof(height_stuff));
+                height = intersec_FindWalkHeight(
+                    &high_point,
+                    NULL,
+                    (objectRoot *)(void *)&height_stuff,
+                    1);
+                if (!pc_collision_storage_contains(
+                        runtime,
+                        height_stuff.cube,
+                        sizeof(*height_stuff.cube))) {
+                    break;
+                }
+                camera = pc_camera_index_from_height_stuff(
+                    runtime, &height_stuff);
+                if (camera >= 0 && camera < 256) {
+                    fprintf(
+                        file,
+                        "%d,%d,%d,%d,%d,%d,%d,%08x,%td,%td,%td\n",
+                        column,
+                        row,
+                        layer,
+                        x,
+                        height,
+                        z,
+                        camera,
+                        (unsigned)runtime->world->aDolly[camera].flags,
+                        height_stuff.cube - leveldata,
+                        height_stuff.entry != NULL
+                            ? height_stuff.entry - leveldata
+                            : (ptrdiff_t)-1,
+                        height_stuff.poly - leveldata);
+                }
+                if (height <= 0) {
+                    break;
+                }
+                high_point.vy = height - 0x41;
+            }
+        }
+    }
+    if (fclose(file) != 0) {
+        fprintf(stderr, "could not finalize camera region sweep: %s\n", path);
+        return 0;
+    }
+    return 1;
+}
+
+static void pc_log_camera_collision_source(
+    const JPBGameRuntime *runtime,
+    int frame)
+{
+    VECTOR high_point;
+    _jheightstuff height_stuff;
+    const int32_t *camera_record;
+    uint32_t cube_word;
+    int height;
+
+    if (runtime == NULL || runtime->world == NULL ||
+        leveldata == NULL) {
+        return;
+    }
+    high_point.vx = runtime->world->location.vx;
+    high_point.vy = runtime->world->location.vy;
+    high_point.vz = runtime->world->location.vz;
+    high_point.pad = 0;
+    high_point.vy += 0x100;
+    memset(&height_stuff, 0, sizeof(height_stuff));
+    height = intersec_FindWalkHeight(
+        &high_point,
+        NULL,
+        (objectRoot *)(void *)&height_stuff,
+        1);
     if (!pc_collision_storage_contains(
             runtime,
-            height_stuff.poly,
-            sizeof(*height_stuff.poly))) {
-        return -1;
+            height_stuff.cube,
+            sizeof(*height_stuff.cube))) {
+        jpb_PCLog(
+            "camera source frame=%d target=(%d,%d,%d) height=%d "
+            "target_delta=%d cube=none-or-invalid current=%d override=%d",
+            frame,
+            runtime->world->location.vx,
+            runtime->world->location.vy,
+            runtime->world->location.vz,
+            height,
+            runtime->world->location.vy - height,
+            (int)runtime->world->currentDolly,
+            (int)runtime->world->overRideDolly);
+        return;
     }
-    camera_poly = height_stuff.poly;
-    polygon_word = (uint32_t)*camera_poly;
-    if ((polygon_word & UINT32_C(0x3c000000)) == 0) {
+
+    camera_record = height_stuff.cube;
+    cube_word = (uint32_t)*camera_record;
+    if ((cube_word & UINT32_C(0x3c000000)) == 0) {
         if (!pc_collision_storage_contains(
                 runtime,
                 leveldata - 4,
                 5 * sizeof(*leveldata))) {
-            return -1;
+            jpb_PCLog(
+                "camera source frame=%d target=(%d,%d,%d) height=%d "
+                "poly=invalid-header current=%d override=%d",
+                frame,
+                runtime->world->location.vx,
+                runtime->world->location.vy,
+                runtime->world->location.vz,
+                height,
+                (int)runtime->world->currentDolly,
+                (int)runtime->world->overRideDolly);
+            return;
         }
-        camera_poly =
+        camera_record =
             leveldata +
             (leveldata[-4] >> 11) +
-            (int32_t)(((polygon_word >> 14) &
+            (int32_t)(((cube_word >> 14) &
                        UINT32_C(0xff)) * 9U);
     }
     if (!pc_collision_storage_contains(
-            runtime, camera_poly, 2 * sizeof(*camera_poly))) {
-        return -1;
+            runtime, camera_record, 2 * sizeof(*camera_record))) {
+        jpb_PCLog(
+            "camera source frame=%d target=(%d,%d,%d) height=%d "
+            "cube=%td entry=%td poly=%td record=invalid "
+            "word=0x%08x current=%d override=%d",
+            frame,
+            runtime->world->location.vx,
+            runtime->world->location.vy,
+            runtime->world->location.vz,
+            height,
+            height_stuff.cube - leveldata,
+            height_stuff.entry != NULL
+                ? height_stuff.entry - leveldata
+                : (ptrdiff_t)-1,
+            height_stuff.poly - leveldata,
+            (unsigned)cube_word,
+            (int)runtime->world->currentDolly,
+            (int)runtime->world->overRideDolly);
+        return;
     }
-    return ((const uint8_t *)(const void *)camera_poly)[7] &
-        UINT8_C(0x7f);
+    jpb_PCLog(
+        "camera source frame=%d target=(%d,%d,%d) height=%d "
+        "target_delta=%d cube=%td entry=%td poly=%td record=%td "
+        "record_words=0x%08x/0x%08x candidate=%u "
+        "current=%d override=%d",
+        frame,
+        runtime->world->location.vx,
+        runtime->world->location.vy,
+        runtime->world->location.vz,
+        height,
+        runtime->world->location.vy - height,
+        height_stuff.cube - leveldata,
+        height_stuff.entry != NULL
+            ? height_stuff.entry - leveldata
+            : (ptrdiff_t)-1,
+        height_stuff.poly - leveldata,
+        camera_record - leveldata,
+        (unsigned)cube_word,
+        (unsigned)(uint32_t)camera_record[1],
+        (unsigned)(((const uint8_t *)(const void *)camera_record)[7] &
+                   UINT8_C(0x7f)),
+        (int)runtime->world->currentDolly,
+        (int)runtime->world->overRideDolly);
+}
+
+static void pc_log_camera_selection_decision(int frame)
+{
+    JPBCameraSelectionDiagnostics decision;
+
+    camera_GetSelectionDiagnostics(&decision);
+    if (!decision.valid) {
+        return;
+    }
+    jpb_PCLog(
+        "camera decision frame=%d previous=%d candidate=%d type=%d "
+        "accepted=%d height=%d box=0x%02x clips=0x%02x/0x%02x "
+        "offscreen=0x%02x active=%d/%d "
+        "distance0=%d/%d/%d/%d/%d "
+        "distance1=%d/%d/%d/%d/%d "
+        "test_focus=%d/%d/%d test_angle=%d/%d/%d",
+        frame,
+        decision.previousDolly,
+        decision.candidateDolly,
+        decision.cameraType,
+        decision.accepted,
+        decision.height,
+        decision.boxMask,
+        decision.player0Clip,
+        decision.player1Clip,
+        decision.offscreen,
+        decision.player0Active,
+        decision.player1Active,
+        decision.distances0[0],
+        decision.distances0[1],
+        decision.distances0[2],
+        decision.distances0[3],
+        decision.distances0[4],
+        decision.distances1[0],
+        decision.distances1[1],
+        decision.distances1[2],
+        decision.distances1[3],
+        decision.distances1[4],
+        decision.testFocus.vx,
+        decision.testFocus.vy,
+        decision.testFocus.vz,
+        decision.testAngle.vx,
+        decision.testAngle.vy,
+        decision.testAngle.vz);
 }
 
 static int pc_ai_stored_node_count(const BAP_AI *ai)
@@ -7838,11 +10196,14 @@ static void pc_print_camera_ai_diagnostics(const WorldData *world)
             const BAP_AINODE *node = &ai->aiNodes[node_index];
             unsigned opcode = (unsigned)(uint16_t)node->opcode;
             unsigned base_opcode = opcode & UINT16_C(0x0fff);
-            int required_count = base_opcode == 0x604U ? 2 : 3;
+            int required_count = base_opcode == 0x20cU
+                ? 1
+                : (base_opcode == 0x604U ? 2 : 3);
             int variable_index = (int)node->vx.ui;
             int value_index;
 
-            if (base_opcode != 0x604U && base_opcode != 0x606U) {
+            if (base_opcode != 0x20cU &&
+                base_opcode != 0x604U && base_opcode != 0x606U) {
                 continue;
             }
             camera_ai[ai_index] = 1;
@@ -7856,10 +10217,18 @@ static void pc_print_camera_ai_diagnostics(const WorldData *world)
                 (int)node->iSibling,
                 opcode,
                 (unsigned)node->vx.ui);
-            if ((opcode & UINT16_C(0x4000)) != 0 ||
-                variables == NULL || variable_index < 0 ||
-                variable_index > variable_count ||
-                required_count > variable_count - variable_index) {
+            if ((opcode & UINT16_C(0x4000)) != 0 &&
+                required_count == 1) {
+                printf(
+                    "%08x/%d/%.6g",
+                    (unsigned)node->vx.ui,
+                    node->vx.si,
+                    (double)node->vx.f);
+            } else if ((opcode & UINT16_C(0x4000)) != 0 ||
+                       variables == NULL || variable_index < 0 ||
+                       variable_index > variable_count ||
+                       required_count >
+                           variable_count - variable_index) {
                 fputs("invalid", stdout);
             } else {
                 for (value_index = 0;
@@ -7871,6 +10240,103 @@ static void pc_print_camera_ai_diagnostics(const WorldData *world)
                         (unsigned)variables[variable_index + value_index].ui,
                         variables[variable_index + value_index].si,
                         (double)variables[variable_index + value_index].f);
+                }
+            }
+            puts(")");
+        }
+    }
+    for (ai_index = 0; ai_index < world->nAI; ++ai_index) {
+        const BAP_AI *ai = world->apAI[ai_index];
+        int stored_nodes;
+        int variable_count;
+        const UDATA *variables;
+        int node_index;
+
+        if (camera_ai[ai_index] == 0 || ai == NULL) {
+            continue;
+        }
+        stored_nodes = pc_ai_stored_node_count(ai);
+        variable_count = pc_ai_variable_count(ai, stored_nodes);
+        variables = (const UDATA *)getPtr(
+            (int)ai->pVars, JPB_POINTER_ARRAY_AI);
+        for (node_index = 0;
+             stored_nodes >= 0 && node_index < stored_nodes;
+             ++node_index) {
+            const BAP_AINODE *node = &ai->aiNodes[node_index];
+            unsigned opcode = (unsigned)(uint16_t)node->opcode;
+            int variable_index = (int)node->vx.ui;
+            int linked_ai;
+
+            if ((opcode & UINT16_C(0x0fff)) != UINT16_C(0x060f) ||
+                (opcode & UINT16_C(0x4000)) != 0 ||
+                variables == NULL || variable_index < 0 ||
+                variable_index > variable_count ||
+                2 > variable_count - variable_index) {
+                continue;
+            }
+            linked_ai = variables[variable_index + 1].si;
+            if (linked_ai >= 0 && linked_ai < world->nAI) {
+                camera_ai[linked_ai] = 1;
+            }
+        }
+    }
+    for (ai_index = 0; ai_index < world->nAI; ++ai_index) {
+        const BAP_AI *ai = world->apAI[ai_index];
+        int stored_nodes;
+        int variable_count;
+        const UDATA *variables;
+        int node_index;
+
+        if (camera_ai[ai_index] == 0 || ai == NULL) {
+            continue;
+        }
+        stored_nodes = pc_ai_stored_node_count(ai);
+        variable_count = pc_ai_variable_count(ai, stored_nodes);
+        variables = (const UDATA *)getPtr(
+            (int)ai->pVars, JPB_POINTER_ARRAY_AI);
+        for (node_index = 0;
+             stored_nodes >= 0 && node_index < stored_nodes;
+             ++node_index) {
+            const BAP_AINODE *node = &ai->aiNodes[node_index];
+            unsigned opcode = (unsigned)(uint16_t)node->opcode;
+            int variable_index = (int)node->vx.ui;
+            int value_index;
+
+            printf(
+                "camera_ai_node=(ai=%d,node=%d,parent=%d,child=%d,"
+                "sibling=%d,opcode=0x%04x,var=%08x,values=",
+                ai_index,
+                node_index,
+                (int)node->iParent,
+                (int)node->iChild,
+                (int)node->iSibling,
+                opcode,
+                (unsigned)node->vx.ui);
+            if ((opcode & UINT16_C(0x4000)) != 0) {
+                printf(
+                    "%08x/%d/%.6g",
+                    (unsigned)node->vx.ui,
+                    node->vx.si,
+                    (double)node->vx.f);
+            } else if (variables == NULL || variable_index < 0 ||
+                       variable_index >= variable_count) {
+                fputs("none", stdout);
+            } else {
+                int available = variable_count - variable_index;
+                int shown = available < 3 ? available : 3;
+
+                for (value_index = 0;
+                     value_index < shown;
+                     ++value_index) {
+                    const UDATA *value =
+                        &variables[variable_index + value_index];
+
+                    printf(
+                        "%s%08x/%d/%.6g",
+                        value_index == 0 ? "" : ",",
+                        (unsigned)value->ui,
+                        value->si,
+                        (double)value->f);
                 }
             }
             puts(")");
@@ -7911,13 +10377,332 @@ static void pc_print_camera_ai_diagnostics(const WorldData *world)
     free(camera_ai);
 }
 
+static void pc_log_camera_ai_event(
+    int frame,
+    uint32_t *last_sequence,
+    const WorldData *world)
+{
+    JPBEnemyCameraOpcodeDiagnostics diagnostics = {0};
+    const char *log_path;
+    static int last_override = INT_MIN;
+    static int last_dolly = INT_MIN;
+    int log_directors = 0;
+
+    if (last_sequence == NULL) {
+        return;
+    }
+    jpb_EnemyGetCameraOpcodeDiagnostics(&diagnostics);
+    if (diagnostics.sequence != *last_sequence) {
+        jpb_PCLog(
+            "camera ai event frame=%d sequence=%u delta=%u "
+            "total=%d timer=%u enemy=%d ai=%d node=%d opcode=%04x "
+            "value=%d dolly=%d flags=%08x->%08x",
+            frame,
+            (unsigned)diagnostics.sequence,
+            (unsigned)(diagnostics.sequence - *last_sequence),
+            diagnostics.totalFrames,
+            (unsigned)diagnostics.globalTimer,
+            diagnostics.enemyID,
+            diagnostics.aiNum,
+            diagnostics.nodeIndex,
+            (unsigned)diagnostics.encodedOpcode,
+            diagnostics.value,
+            diagnostics.dolly,
+            (unsigned)diagnostics.flagsBefore,
+            (unsigned)diagnostics.flagsAfter);
+        log_path = jpb_PCLogPath();
+        if (log_path == NULL || log_path[0] == '\0') {
+            printf(
+                "camera_ai_event=(frame=%d,sequence=%u,delta=%u,total=%d,"
+                "timer=%u,enemy=%d,ai=%d,node=%d,opcode=0x%04x,"
+                "value=%d,dolly=%d,flags=0x%08x->0x%08x)\n",
+                frame,
+                (unsigned)diagnostics.sequence,
+                (unsigned)(diagnostics.sequence - *last_sequence),
+                diagnostics.totalFrames,
+                (unsigned)diagnostics.globalTimer,
+                diagnostics.enemyID,
+                diagnostics.aiNum,
+                diagnostics.nodeIndex,
+                (unsigned)diagnostics.encodedOpcode,
+                diagnostics.value,
+                diagnostics.dolly,
+                (unsigned)diagnostics.flagsBefore,
+                (unsigned)diagnostics.flagsAfter);
+        }
+        *last_sequence = diagnostics.sequence;
+    }
+    if (world != NULL &&
+        ((frame % 60) == 0 ||
+         last_override != (int)world->overRideDolly ||
+         last_dolly != (int)world->currentDolly)) {
+        log_directors = 1;
+        last_override = world->overRideDolly;
+        last_dolly = world->currentDolly;
+    }
+    if (log_directors) {
+        const Node *node;
+
+        for (node = enemyList[mCurEnemyList].head;
+             node != NULL;
+             node = node->next) {
+            const wsl_ENEMY *enemy =
+                (const wsl_ENEMY *)(const void *)node;
+
+            if (enemy->pPlace == NULL ||
+                enemy->pPlace->aiDf.ownerType != 3) {
+                continue;
+            }
+            jpb_PCLog(
+                "camera director pulse frame=%d total=%d timer=%u "
+                "override=%d dolly=%d enemy=%d ai=%d mode=%d "
+                "node=%d opcode=%04x ai_timer=%d "
+                "counters=%u/%u/%u/%u/%u",
+                frame,
+                totalframes,
+                (unsigned)gGlobalTimer,
+                (int)world->overRideDolly,
+                (int)world->currentDolly,
+                enemy->enemyID,
+                enemy->aiNum,
+                (int)enemy->currAIMode,
+                enemy->aiLocation,
+                enemy->pAINode != NULL
+                    ? (unsigned)(uint16_t)enemy->pAINode->opcode
+                    : 0U,
+                enemy->aiTimer,
+                (unsigned)enemy->counter[0],
+                (unsigned)enemy->counter[1],
+                (unsigned)enemy->counter[2],
+                (unsigned)enemy->counter[3],
+                (unsigned)enemy->counter[4]);
+        }
+    }
+}
+
+static int pc_record_headless_input_trail_frame(
+    const char *path,
+    FILE **file,
+    int *armed,
+    int *start_frame,
+    int frame,
+    const PcInput *input,
+    const JPBGameRuntime *runtime)
+{
+    uint32_t buttons;
+    const uint32_t directions =
+        JPB_PAD_UP | JPB_PAD_LEFT | JPB_PAD_DOWN | JPB_PAD_RIGHT |
+        JPB_PAD_ANALOG_MOVEMENT;
+    sceneObject *player_scene;
+    animObject *animation;
+    Motion *motion;
+    _animTemplate *sequence;
+    Node *node;
+    int queued_motions = 0;
+    int free_motion_nodes = 0;
+    int dolly;
+    const BAP_CAMERADOLLY *dolly_record = NULL;
+    const BAP_CAMERADOLLY *backup_dolly = NULL;
+
+    if (path == NULL || file == NULL || armed == NULL ||
+        start_frame == NULL || input == NULL || runtime == NULL ||
+        runtime->player == NULL || runtime->physics == NULL) {
+        return 1;
+    }
+    buttons = input->retailReplayEnabled
+        ? (input->retailReplayCurrentValid
+               ? input->retailReplayCurrent.buttons
+               : 0)
+        : (input->headless
+               ? input->headlessPhaseBits
+               : ((input->livePadCacheValid & UINT8_C(1)) != 0
+                      ? input->livePadCacheBits[0]
+                      : 0));
+    if (!*armed &&
+        (fabsf(g_p1X) >= 0.05f || fabsf(g_p1Y) >= 0.05f ||
+         fabsf(runtime->lastControlAxisX[0]) >= 0.05f ||
+         fabsf(runtime->lastControlAxisY[0]) >= 0.05f ||
+         (buttons & directions) != 0)) {
+        *file = fopen(path, "w");
+        if (*file == NULL) {
+            fprintf(stderr, "could not open input trail: %s\n", path);
+            return 0;
+        }
+        fputs(
+            "frame,run_frame,total_frames,global_timer,global_frame_rate,"
+            "buttons,axis_x,axis_y,"
+            "player_x,player_y,player_z,"
+            "player_vpos_x,player_vpos_y,player_vpos_z,"
+            "move_x,move_y,move_z,"
+            "camera_x,camera_y,camera_z,"
+            "eye_x,eye_y,eye_z,"
+            "camera_location_x,camera_location_y,camera_location_z,"
+            "camera_dest_x,camera_dest_y,camera_dest_z,"
+            "pitch,yaw,dest_pitch,dest_yaw,dolly,flags,backup_flags,"
+            "override,camera_type,new_camera_flag,camera_view,"
+            "lead_x,lead_y,lead_z,lead_dot,"
+            "dolly_offset_x,dolly_offset_y,dolly_offset_z,"
+            "dolly_slack_x,dolly_slack_y,dolly_slack_z,"
+            "dolly_off_x,dolly_off_y,dolly_off_z,"
+            "screen_x,screen_y,onscreen_frames,onscreen_samples,"
+            "dolly_transitions,unique_dollies,"
+            "target_x,target_y,target_z,"
+            "player2_x,player2_y,player2_z,"
+            "player2_move_x,player2_move_y,player2_move_z,"
+            "player2_root_flags,player2_flags,"
+            "player_motion,motion_flags,anim_frame,anim_frame_raw,"
+            "anim_acc,anim_rate,anim_lock,action_lock,"
+            "seq_first,seq_last,seq_cutout,queued_motions,"
+            "free_motion_nodes,player_root_flags,player_flags\n",
+            *file);
+        *armed = 1;
+        *start_frame = frame;
+    }
+    if (*file == NULL) {
+        return 1;
+    }
+    player_scene = (sceneObject *)runtime->player->playerRoot.pParent;
+    animation = player_scene != NULL
+        ? (animObject *)player_scene->pAnim : NULL;
+    motion = animation != NULL ? animation->pMotion : NULL;
+    sequence = animation != NULL &&
+            animation->pCurrentAnimSeq != NULL
+        ? animation->pCurrentAnimSeq->pAnimTemplate : NULL;
+    if (animation != NULL) {
+        for (node = animation->animList.head;
+             node != NULL && queued_motions <= JPB_ANIM_QUEUE_NODE_CAPACITY;
+             node = node->next) {
+            ++queued_motions;
+        }
+        for (node = animation->animFreeList.head;
+             node != NULL &&
+                 free_motion_nodes <= JPB_ANIM_QUEUE_NODE_CAPACITY;
+             node = node->next) {
+            ++free_motion_nodes;
+        }
+    }
+    dolly = runtime->authoredCameraDolly;
+    if (runtime->world != NULL && dolly >= 0 && dolly < 256) {
+        dolly_record = &runtime->world->aDolly[dolly];
+        backup_dolly = &runtime->world->aBkDolly[dolly];
+    }
+    fprintf(
+        *file,
+        "%d,%d,%d,%u,%d,%08x,%.7f,%.7f,"
+        "%.3f,%.3f,%.3f,%d,%d,%d,%.3f,%.3f,%.3f,"
+        "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
+        "%d,%d,%d,%d,%d,%08x,%08x,%d,%d,%d,%08x,"
+        "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
+        "%d,%d,%u,%u,%u,%u,"
+        "%d,%d,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%08x,%08x,"
+        "%d,%08x,%d,%d,%d,%d,%u,%u,%d,%d,%u,%d,%d,%08x,%08x\n",
+        frame,
+        frame - *start_frame,
+        totalframes,
+        (unsigned)gGlobalTimer,
+        gGlobalFrameRate,
+        (unsigned)buttons,
+        g_p1X,
+        g_p1Y,
+        runtime->physics->pos.vx,
+        runtime->physics->pos.vy,
+        runtime->physics->pos.vz,
+        runtime->physics->vpos.vx,
+        runtime->physics->vpos.vy,
+        runtime->physics->vpos.vz,
+        runtime->physics->mov.vx,
+        runtime->physics->mov.vy,
+        runtime->physics->mov.vz,
+        runtime->camera.focus.vx,
+        runtime->camera.focus.vy,
+        runtime->camera.focus.vz,
+        cameraposition.vx,
+        cameraposition.vy,
+        cameraposition.vz,
+        cameraLocation.vx,
+        cameraLocation.vy,
+        cameraLocation.vz,
+        runtime->camera.focusDest.vx,
+        runtime->camera.focusDest.vy,
+        runtime->camera.focusDest.vz,
+        runtime->camera.angle.vx,
+        runtime->camera.angle.vy,
+        runtime->camera.angleDest.vx,
+        runtime->camera.angleDest.vy,
+        dolly,
+        (unsigned)runtime->authoredCameraDollyFlags,
+        backup_dolly != NULL ? (unsigned)backup_dolly->flags : 0U,
+        runtime->world != NULL ? (int)runtime->world->overRideDolly : 0,
+        camera_GetCurrentCameraType(),
+        newcameraflag,
+        (unsigned)runtime->camera.viewType,
+        (int)runtime->authoredCameraLeadX,
+        (int)runtime->authoredCameraLeadY,
+        (int)runtime->authoredCameraLeadZ,
+        (int)runtime->authoredCameraLeadDot,
+        dolly_record != NULL ? dolly_record->offset.vx : 0,
+        dolly_record != NULL ? dolly_record->offset.vy : 0,
+        dolly_record != NULL ? dolly_record->offset.vz : 0,
+        dolly_record != NULL ? (int)dolly_record->slackx : 0,
+        dolly_record != NULL ? (int)dolly_record->slacky : 0,
+        dolly_record != NULL ? (int)dolly_record->slackz : 0,
+        dolly_record != NULL ? (int)dolly_record->offx : 0,
+        dolly_record != NULL ? (int)dolly_record->offy : 0,
+        dolly_record != NULL ? (int)dolly_record->offz : 0,
+        (int)runtime->playerOffscreenScreenX,
+        (int)runtime->playerOffscreenScreenY,
+        (unsigned)runtime->playerOnscreenFrameCount,
+        (unsigned)runtime->playerOnscreenSampleCount,
+        (unsigned)runtime->authoredCameraDollyTransitionCount,
+        (unsigned)runtime->authoredCameraUniqueDollyCount,
+        runtime->world != NULL ? runtime->world->location.vx : 0,
+        runtime->world != NULL ? runtime->world->location.vy : 0,
+        runtime->world != NULL ? runtime->world->location.vz : 0,
+        runtime->inactivePlayerPhysics != NULL
+            ? runtime->inactivePlayerPhysics->pos.vx : 0.0f,
+        runtime->inactivePlayerPhysics != NULL
+            ? runtime->inactivePlayerPhysics->pos.vy : 0.0f,
+        runtime->inactivePlayerPhysics != NULL
+            ? runtime->inactivePlayerPhysics->pos.vz : 0.0f,
+        runtime->inactivePlayerPhysics != NULL
+            ? runtime->inactivePlayerPhysics->mov.vx : 0.0f,
+        runtime->inactivePlayerPhysics != NULL
+            ? runtime->inactivePlayerPhysics->mov.vy : 0.0f,
+        runtime->inactivePlayerPhysics != NULL
+            ? runtime->inactivePlayerPhysics->mov.vz : 0.0f,
+        runtime->inactivePlayer != NULL
+            ? (unsigned)runtime->inactivePlayer->playerRoot.flags : 0U,
+        runtime->inactivePlayer != NULL
+            ? (unsigned)runtime->inactivePlayer->pFlags : 0U,
+        (int)runtime->player->currentMotion,
+        motion != NULL ? (unsigned)motion->motionFlags : 0U,
+        animation != NULL
+            ? animation->animFrameIndex / JPB_FIXED_ONE : 0,
+        animation != NULL ? animation->animFrameIndex : 0,
+        animation != NULL ? animation->animFrameAcc : 0,
+        animation != NULL ? animation->animFrameRate : 0,
+        animation != NULL ? (unsigned)animation->Lock : 0U,
+        (unsigned)runtime->player->ACTION_LOCK,
+        sequence != NULL ? (int)sequence->Fframe : 0,
+        sequence != NULL ? (int)sequence->Lframe : 0,
+        motion != NULL ? (unsigned)motion->cutout : 0U,
+        queued_motions,
+        free_motion_nodes,
+        (unsigned)runtime->player->playerRoot.flags,
+        (unsigned)runtime->player->pFlags);
+    if ((frame - *start_frame) % 60 == 0) {
+        fflush(*file);
+    }
+    return 1;
+}
+
 static void pc_print_camera_collision_diagnostics(
     const JPBGameRuntime *runtime)
 {
     VECTOR high_point;
     _jheightstuff height_stuff;
-    const int32_t *camera_poly;
-    uint32_t polygon_word;
+    const int32_t *camera_record;
+    uint32_t cube_word;
     int height;
 
     if (runtime == NULL || runtime->physics == NULL ||
@@ -7997,6 +10782,46 @@ static void pc_print_camera_collision_diagnostics(
         puts(")");
         pc_print_camera_ai_diagnostics(runtime->world);
         {
+            static const int diagnostic_dollies[] = {
+                0, 1, 2, 3, 144, 145, 146
+            };
+            size_t dolly_index;
+
+            fputs("camera_dollies=(", stdout);
+            for (dolly_index = 0;
+                 dolly_index < sizeof(diagnostic_dollies) /
+                     sizeof(diagnostic_dollies[0]);
+                 ++dolly_index) {
+                int index = diagnostic_dollies[dolly_index];
+                const BAP_CAMERADOLLY *dolly =
+                    &runtime->world->aDolly[index];
+                const BAP_CAMERADOLLY *backup_dolly =
+                    &runtime->world->aBkDolly[index];
+
+                printf(
+                    "%s%d:flags=%08x,backup_flags=%08x,changed=%d,"
+                    "pitch=%d,yaw=%d,"
+                    "offset=%d/%d/%d,slack=%d/%d/%d,off=%d/%d/%d",
+                    dolly_index == 0 ? "" : ";",
+                    index,
+                    (unsigned)dolly->flags,
+                    (unsigned)backup_dolly->flags,
+                    memcmp(dolly, backup_dolly, sizeof(*dolly)) != 0,
+                    dolly->pitch,
+                    dolly->yaw,
+                    dolly->offset.vx,
+                    dolly->offset.vy,
+                    dolly->offset.vz,
+                    dolly->slackx,
+                    dolly->slacky,
+                    dolly->slackz,
+                    dolly->offx,
+                    dolly->offy,
+                    dolly->offz);
+            }
+            puts(")");
+        }
+        {
             int z_offset;
 
             fputs("camera_collision_grid=(step=512,rows=", stdout);
@@ -8043,43 +10868,43 @@ static void pc_print_camera_collision_diagnostics(
         1);
     if (!pc_collision_storage_contains(
             runtime,
-            height_stuff.poly,
-            sizeof(*height_stuff.poly))) {
+            height_stuff.cube,
+            sizeof(*height_stuff.cube))) {
         printf(
-            "camera_collision_probe=(height=%d,poly=none-or-invalid)\n",
+            "camera_collision_probe=(height=%d,cube=none-or-invalid)\n",
             height);
         return;
     }
 
-    camera_poly = height_stuff.poly;
-    polygon_word = (uint32_t)*camera_poly;
-    if ((polygon_word & UINT32_C(0x3c000000)) == 0) {
+    camera_record = height_stuff.cube;
+    cube_word = (uint32_t)*camera_record;
+    if ((cube_word & UINT32_C(0x3c000000)) == 0) {
         if (!pc_collision_storage_contains(
                 runtime,
                 leveldata - 4,
                 5 * sizeof(*leveldata))) {
             printf(
-                "camera_collision_probe=(height=%d,poly=invalid)\n",
+                "camera_collision_probe=(height=%d,record=invalid)\n",
                 height);
             return;
         }
-        camera_poly =
+        camera_record =
             leveldata +
             (leveldata[-4] >> 11) +
-            (int32_t)(((polygon_word >> 14) &
+            (int32_t)(((cube_word >> 14) &
                        UINT32_C(0xff)) * 9U);
     }
     if (!pc_collision_storage_contains(
-            runtime, camera_poly, 2 * sizeof(*camera_poly))) {
+            runtime, camera_record, 2 * sizeof(*camera_record))) {
         printf(
-            "camera_collision_probe=(height=%d,poly=invalid)\n",
+            "camera_collision_probe=(height=%d,record=invalid)\n",
             height);
         return;
     }
     printf(
         "camera_collision_probe=(height=%d,target_delta=%d,"
-        "cube=%td,entry=%td,poly=%td,resolved=%td,"
-        "words=0x%08x/0x%08x,camera=%u)\n",
+        "cube=%td,entry=%td,poly=%td,record=%td,"
+        "record_words=0x%08x/0x%08x,camera=%u)\n",
         height,
         (int32_t)runtime->physics->pos.vy - height,
         height_stuff.cube - leveldata,
@@ -8087,10 +10912,10 @@ static void pc_print_camera_collision_diagnostics(
             ? height_stuff.entry - leveldata
             : (ptrdiff_t)-1,
         height_stuff.poly - leveldata,
-        camera_poly - leveldata,
-        (unsigned)polygon_word,
-        (unsigned)(uint32_t)camera_poly[1],
-        (unsigned)(((const uint8_t *)(const void *)camera_poly)[7] &
+        camera_record - leveldata,
+        (unsigned)cube_word,
+        (unsigned)(uint32_t)camera_record[1],
+        (unsigned)(((const uint8_t *)(const void *)camera_record)[7] &
                    UINT8_C(0x7f)));
     if (pc_collision_storage_contains(
             runtime,
@@ -8324,21 +11149,29 @@ static void pc_print_enemy_placement_diagnostics(
     for (index = 0; index < runtime->world->nEnemy; ++index) {
         const wsl_BAP_PLACEMENT *placement =
             runtime->world->apEnemy[index];
+        const char *actor_name = "unknown";
         int class_model;
 
         if (placement == NULL) {
             printf("enemy_placement=(id=%d,null=1)\n", index);
             continue;
         }
+        if (runtime->world->apActorNames != NULL &&
+            placement->actorNum >= 0 &&
+            placement->actorNum < runtime->world->nActor &&
+            runtime->world->apActorNames[placement->actorNum] != NULL) {
+            actor_name = runtime->world->apActorNames[placement->actorNum];
+        }
         class_model = jpb_GameRuntimeEnemyClassModelId(
             runtime, placement->actorNum);
         printf(
-            "enemy_placement=(id=%d,actor=%d,ai=%d,owner=%d,"
+            "enemy_placement=(id=%d,actor=%d,ai=%d,actor_name=%s,owner=%d,"
             "flags=%08x,range=%d,class=%d,status=%d,handle=%u,"
             "loc=%d/%d/%d,angle=%d,waypoints=%d,link0=%u)\n",
             index,
             placement->actorNum,
             placement->aiNum,
+            actor_name,
             placement->aiDf.ownerType,
             (unsigned)placement->aiDf.activeFlags,
             placement->aiDf.aRange,
@@ -8357,15 +11190,23 @@ static void pc_print_enemy_placement_diagnostics(
             for (waypoint_index = 0;
                  waypoint_index < placement->nWaypnt;
                  ++waypoint_index) {
+                int waypoint_camera =
+                    pc_camera_index_at_world_position(
+                        runtime,
+                        placement->wayPoints[waypoint_index].loc.vx,
+                        placement->wayPoints[waypoint_index].loc.vy,
+                        placement->wayPoints[waypoint_index].loc.vz);
+
                 printf(
                     "enemy_waypoint=(id=%d,index=%d,loc=%d/%d/%d,"
-                    "flags=0x%08x)\n",
+                    "flags=0x%08x,camera=%d)\n",
                     index,
                     waypoint_index,
                     placement->wayPoints[waypoint_index].loc.vx,
                     placement->wayPoints[waypoint_index].loc.vy,
                     placement->wayPoints[waypoint_index].loc.vz,
-                    (unsigned)placement->wayPoints[waypoint_index].flags);
+                    (unsigned)placement->wayPoints[waypoint_index].flags,
+                    waypoint_camera);
             }
         }
     }
@@ -8429,6 +11270,57 @@ static int pc_position_for_uncovered_enemy_validation(
                JPB_PHYSICS_PARTIAL_OK;
     }
     return 0;
+}
+
+static int pc_force_enemy_placement(
+    JPBGameRuntime *runtime,
+    int placement_index)
+{
+    wsl_BAP_PLACEMENT *placement;
+    wsl_ENEMY *enemy;
+
+    if (runtime == NULL ||
+        runtime->world == NULL ||
+        runtime->world->apEnemy == NULL ||
+        runtime->player == NULL ||
+        placement_index < 0 ||
+        placement_index >= runtime->world->nEnemy) {
+        return 0;
+    }
+    placement = runtime->world->apEnemy[placement_index];
+    if (placement == NULL ||
+        jpb_GameRuntimeEnemyClassModelId(
+            runtime, placement->actorNum) < 0) {
+        return 0;
+    }
+    if (placement->status == 0) {
+        if (_addEnemy(
+                placement,
+                placement_index,
+                -1,
+                1) == 0) {
+            return 0;
+        }
+        placement->status = 1;
+    }
+    if (placement->status != 1 ||
+        placement->pLastEnemy == UINT32_MAX) {
+        return 0;
+    }
+    enemy = (wsl_ENEMY *)getPtr(
+        (int)placement->pLastEnemy,
+        JPB_POINTER_ARRAY_ENEMY);
+    if (enemy == NULL || enemy->pPlayer == NULL) {
+        return 0;
+    }
+    runtime->player->target = enemy->pPlayer;
+    runtime->enemy = enemy;
+    jpb_PCLog(
+        "force-enemy-placement applied id=%d actor=%d ai=%d",
+        placement_index,
+        placement->actorNum,
+        placement->aiNum);
+    return 1;
 }
 
 static int pc_position_for_combat_validation(
@@ -8544,6 +11436,7 @@ int main(int argc, char **argv)
     JPBSoftwareRenderStats stats = {0};
     JPBPCAudio *audio = NULL;
     PcInput input = {0};
+    PcMoviePlayback movie_playback = {0};
     JPBMenuPlatformHooks menu_hooks = {0};
     LARGE_INTEGER frequency;
     LARGE_INTEGER previous;
@@ -8572,6 +11465,8 @@ int main(int argc, char **argv)
     const char *player_two_cmb_path = NULL;
     int player_model = 0;
     int player_model_override = 0;
+    PcPlayerSaberColorMode player_saber_color_mode =
+        PC_PLAYER_SABER_COLOR_CURRENT;
     int player_two_model = 1;
     const char *output_path = NULL;
     int frame_limit = 0;
@@ -8587,6 +11482,12 @@ int main(int argc, char **argv)
     int jump_airborne_frames = 0;
     int camera_dolly_override = -1;
     int camera_diagnostics = 0;
+    const char *camera_region_sweep_path = NULL;
+    uint32_t camera_ai_event_sequence = 0;
+    const char *input_trail_path = NULL;
+    FILE *input_trail_file = NULL;
+    int input_trail_armed = 0;
+    int input_trail_start_frame = 0;
     int enemy_placement_diagnostics = 0;
     int mute = 0;
     int audio_output_enabled = 1;
@@ -8610,6 +11511,10 @@ int main(int argc, char **argv)
     int title_level_select = 0;
     int title_main_select = -1;
     int title_valid_save = 0;
+    int synthetic_input_requested = 0;
+    int spawn_position_explicit = 0;
+    FVECTOR spawn_position = {0};
+    int force_enemy_placement = -1;
     int overlay_mode_override = -1;
     unsigned presentation_frame_count = 0;
     unsigned gameplay_handoff_count = 0;
@@ -8628,6 +11533,7 @@ int main(int argc, char **argv)
 
     input.controllerConfigOverride[0] = -1;
     input.controllerConfigOverride[1] = -1;
+    input.fedTraversalTargetPlacement = -1;
     jpb_PCLogStart(argc, argv);
     pc_configure_failure_mode();
     jpb_PCLog("startup: resolving assets");
@@ -8666,12 +11572,20 @@ int main(int argc, char **argv)
             input.headless = 1;
         } else if (strcmp(argv[index], "--hidden-window") == 0) {
             input.hiddenWindow = 1;
-        } else if (strcmp(argv[index], "--scripted-input") == 0) {
+        } else if (strcmp(argv[index], "--control-harness") == 0) {
             input.scriptedInput = 1;
+        } else if (strcmp(argv[index], "--scripted-input") == 0) {
+            fputs(
+                "--scripted-input is no longer accepted; "
+                "use --control-harness for simulated input\n",
+                stderr);
+            return 2;
         } else if (strcmp(
                        argv[index],
                        "--enemy-placement-diagnostics") == 0) {
             enemy_placement_diagnostics = 1;
+        } else if (strcmp(argv[index], "--profile-runtime") == 0) {
+            input.profileRuntime = 1;
         } else if (strcmp(argv[index], "--quickload") == 0 &&
                    index + 1 < argc) {
             quickload_level = argv[++index];
@@ -8769,18 +11683,25 @@ int main(int argc, char **argv)
             input.controllerConfigOverride[player_index] = scheme;
             index += 2;
         } else if (strcmp(argv[index], "--headless-move") == 0) {
+            synthetic_input_requested = 1;
             input.headlessBits |= JPB_PAD_UP;
         } else if (strcmp(argv[index], "--headless-left") == 0) {
+            synthetic_input_requested = 1;
             input.headlessBits |= JPB_PAD_RIGHT;
         } else if (strcmp(argv[index], "--headless-down") == 0) {
+            synthetic_input_requested = 1;
             input.headlessBits |= JPB_PAD_DOWN;
         } else if (strcmp(argv[index], "--headless-right") == 0) {
+            synthetic_input_requested = 1;
             input.headlessBits |= JPB_PAD_LEFT;
         } else if (strcmp(argv[index], "--headless-attack") == 0) {
+            synthetic_input_requested = 1;
             input.headlessBits |= JPB_PAD_COMBO_NORTH;
         } else if (strcmp(argv[index], "--headless-block") == 0) {
+            synthetic_input_requested = 1;
             input.headlessBits |= JPB_PAD_BLOCK;
         } else if (strcmp(argv[index], "--headless-lock") == 0) {
+            synthetic_input_requested = 1;
             input.headlessBits |= JPB_PAD_LOCK_ON;
         } else if (strcmp(argv[index], "--validate-combat") == 0) {
             input.validateCombat = 1;
@@ -9004,6 +11925,13 @@ int main(int argc, char **argv)
             input.validateTitleAudio = 1;
         } else if (strcmp(
                        argv[index],
+                       "--validate-title-movie") == 0 &&
+                   index + 1 < argc) {
+            input.validateTitleMovie = 1;
+            input.validateTitleMovieIndex =
+                (unsigned)strtoul(argv[++index], NULL, 0);
+        } else if (strcmp(
+                       argv[index],
                        "--validate-player-saber") == 0) {
             input.validatePlayerSaber = 1;
         } else if (strcmp(
@@ -9037,8 +11965,50 @@ int main(int argc, char **argv)
             input.headlessMaximumProgression = 1;
         } else if (strcmp(
                        argv[index],
+                       "--fed-traversal-harness") == 0) {
+            synthetic_input_requested = 1;
+            input.fedTraversalHarness = 1;
+        } else if (strcmp(
+                       argv[index],
+                       "--fed-traversal-target-placement") == 0 &&
+                   index + 1 < argc) {
+            synthetic_input_requested = 1;
+            input.fedTraversalTargetPlacement = atoi(argv[++index]);
+            if (input.fedTraversalTargetPlacement < 0) {
+                pc_print_usage(argv[0]);
+                return 2;
+            }
+        } else if (strcmp(
+                       argv[index],
                        "--require-fbx-level") == 0) {
             input.requireFbxLevel = 1;
+        } else if (strcmp(argv[index], "--spawn-position") == 0 &&
+                   index + 3 < argc) {
+            const char *arg_x = argv[index + 1];
+            const char *arg_y = argv[index + 2];
+            const char *arg_z = argv[index + 3];
+            char *end_x = NULL;
+            char *end_y = NULL;
+            char *end_z = NULL;
+
+            spawn_position.vx = (float)strtod(arg_x, &end_x);
+            spawn_position.vy = (float)strtod(arg_y, &end_y);
+            spawn_position.vz = (float)strtod(arg_z, &end_z);
+            if (end_x == arg_x || *end_x != '\0' ||
+                end_y == arg_y || *end_y != '\0' ||
+                end_z == arg_z || *end_z != '\0') {
+                pc_print_usage(argv[0]);
+                return 2;
+            }
+            index += 3;
+            spawn_position_explicit = 1;
+        } else if (strcmp(argv[index], "--force-enemy-placement") == 0 &&
+                   index + 1 < argc) {
+            force_enemy_placement = atoi(argv[++index]);
+            if (force_enemy_placement < 0) {
+                pc_print_usage(argv[0]);
+                return 2;
+            }
         } else if (strcmp(argv[index], "--camera-dolly") == 0 &&
                    index + 1 < argc) {
             camera_dolly_override = atoi(argv[++index]);
@@ -9053,7 +12023,35 @@ int main(int argc, char **argv)
             camera_diagnostics = 1;
         } else if (strcmp(
                        argv[index],
+                       "--camera-region-sweep") == 0 &&
+                   index + 1 < argc) {
+            camera_region_sweep_path = argv[++index];
+        } else if (strcmp(argv[index], "--record-input-trail") == 0 &&
+                   index + 1 < argc) {
+            input_trail_path = argv[++index];
+            camera_diagnostics = 1;
+        } else if (strcmp(
+                       argv[index],
+                       "--replay-retail-input") == 0 &&
+                   index + 1 < argc) {
+            const char *path = argv[++index];
+
+            if (strlen(path) >= sizeof(input.retailReplayPath)) {
+                fputs("retail input replay path is too long\n", stderr);
+                return 2;
+            }
+            (void)snprintf(
+                input.retailReplayPath,
+                sizeof(input.retailReplayPath),
+                "%s",
+                path);
+            input.retailReplayEnabled = 1;
+            synthetic_input_requested = 1;
+            camera_diagnostics = 1;
+        } else if (strcmp(
+                       argv[index],
                        "--cycle-input-phases") == 0) {
+            synthetic_input_requested = 1;
             input.cycleInputPhases = 1;
         } else if (strcmp(
                        argv[index],
@@ -9061,6 +12059,7 @@ int main(int argc, char **argv)
                    index + 5 < argc) {
             PcHeadlessPhase *phase;
 
+            synthetic_input_requested = 1;
             if (input.phaseCount >= PC_HEADLESS_PHASE_CAPACITY) {
                 pc_print_usage(argv[0]);
                 return 2;
@@ -9091,6 +12090,7 @@ int main(int argc, char **argv)
             index + 2 < argc) {
             PcHeadlessPhase *phase;
 
+            synthetic_input_requested = 1;
             if (input.phaseCount >= PC_HEADLESS_PHASE_CAPACITY) {
                 pc_print_usage(argv[0]);
                 return 2;
@@ -9119,6 +12119,7 @@ int main(int argc, char **argv)
             int paired = strcmp(
                 argv[index], "--headless-xinput-phase-pair") == 0;
 
+            synthetic_input_requested = 1;
             if (input.phaseCount >= PC_HEADLESS_PHASE_CAPACITY) {
                 pc_print_usage(argv[0]);
                 return 2;
@@ -9149,6 +12150,7 @@ int main(int argc, char **argv)
                    index + 3 < argc) {
             PcHeadlessPhase *phase;
 
+            synthetic_input_requested = 1;
             if (input.phaseCount >= PC_HEADLESS_PHASE_CAPACITY) {
                 pc_print_usage(argv[0]);
                 return 2;
@@ -9186,6 +12188,7 @@ int main(int argc, char **argv)
                            ? 1 : -1);
             uint32_t phase_bits;
 
+            synthetic_input_requested = 1;
             if (input.phaseCount >=
                 PC_HEADLESS_PHASE_CAPACITY) {
                 pc_print_usage(argv[0]);
@@ -9229,6 +12232,13 @@ int main(int argc, char **argv)
             player_model_override = 1;
             if (player_model < 0 ||
                 player_model >= JPB_MODEL_NAME_COUNT) {
+                pc_print_usage(argv[0]);
+                return 2;
+            }
+        } else if (strcmp(argv[index], "--player-saber-color") == 0 &&
+                   index + 1 < argc) {
+            if (!pc_parse_player_saber_color_mode(
+                    argv[++index], &player_saber_color_mode)) {
                 pc_print_usage(argv[0]);
                 return 2;
             }
@@ -9343,8 +12353,56 @@ int main(int argc, char **argv)
             player_two_model = 1;
         }
     }
+    jpb_EnemySetFrameProfileEnabled(input.profileRuntime);
+    jpb_AnimSetForceProfileEnabled(input.profileRuntime);
+    jpb_PlayerSetFrameProfileEnabled(input.profileRuntime);
     if (input.headless && frame_limit == 0) {
         frame_limit = 1;
+    }
+    if (synthetic_input_requested &&
+        !input.headless &&
+        !input.scriptedInput) {
+        fputs(
+            "simulated input switches require --control-harness "
+            "for interactive runs\n",
+            stderr);
+        return 2;
+    }
+    if (input.retailReplayEnabled &&
+        (!input.scriptedInput || quickload_level == NULL ||
+         strcmp(quickload_level, "fed") != 0)) {
+        fputs(
+            "--replay-retail-input requires --control-harness and "
+            "--quickload fed\n",
+            stderr);
+        return 2;
+    }
+    if (input.retailReplayEnabled && !pc_retail_replay_open(&input)) {
+        fprintf(
+            stderr,
+            "could not load retail input replay: %s\n",
+            input.retailReplayPath);
+        pc_retail_replay_close(&input);
+        return 2;
+    }
+    if (input.fedTraversalHarness &&
+        (!input.headless || !input.scriptedInput ||
+         quickload_level == NULL ||
+         strcmp(quickload_level, "fed") != 0 ||
+         input.phaseCount != 0)) {
+        fputs(
+            "--fed-traversal-harness requires headless FED quickload, "
+            "--control-harness, and no fixed input phases\n",
+            stderr);
+        return 2;
+    }
+    if (input.fedTraversalTargetPlacement >= 0 &&
+        !input.fedTraversalHarness) {
+        fputs(
+            "--fed-traversal-target-placement requires "
+            "--fed-traversal-harness\n",
+            stderr);
+        return 2;
     }
     if (overlay_mode_override >= 0) {
         OptionStruct.overlayMode = (uint8_t)overlay_mode_override;
@@ -9356,11 +12414,13 @@ int main(int argc, char **argv)
             stderr);
         return 2;
     }
+    input.movieAudioOutputEnabled =
+        !input.headless && !mute && audio_output_enabled;
     if (input.validatePresentationHandoff &&
         (input.headless || !input.scriptedInput || frame_limit == 0)) {
         fputs(
             "--validate-presentation-handoff requires a finite "
-            "interactive --scripted-input run\n",
+            "interactive --control-harness run\n",
             stderr);
         return 2;
     }
@@ -9402,10 +12462,8 @@ int main(int argc, char **argv)
         !framebuffer_size_explicit) {
         framebuffer_width = PC_VISIBLE_FRAMEBUFFER_WIDTH;
         framebuffer_height = PC_VISIBLE_FRAMEBUFFER_HEIGHT;
-        pc_visible_framebuffer_size(
-            &framebuffer_width, &framebuffer_height);
         jpb_PCLog(
-            "visible source framebuffer matched to maximized viewport "
+            "visible source framebuffer default "
             "source=%dx%d",
             framebuffer_width,
             framebuffer_height);
@@ -9422,6 +12480,9 @@ int main(int argc, char **argv)
     framebuffer.width = framebuffer_width;
     framebuffer.height = framebuffer_height;
     framebuffer.stridePixels = framebuffer_width;
+    input.moviePlayback = &movie_playback;
+    input.movieFramebufferWidth = framebuffer.width;
+    input.movieFramebufferHeight = framebuffer.height;
     /* Hidden presentation tests omit persistence unless an explicit isolated
      * directory is supplied. They never fall back to the executable's save
      * directory. */
@@ -9449,11 +12510,6 @@ int main(int argc, char **argv)
         (void)jpb_PCXInputInit(&input.xinput);
         controller_count = pc_controller_count(&input);
         input.previousControllerMask = input.xinput.connectedMask;
-        if (controller_count != 0) {
-            /* Prefer the connected pad and its authored glyph bank initially;
-             * keyboard activity switches the prompt bank immediately. */
-            lastUsedInputType = 1;
-        }
         jpb_PCLog(
             "XInput initialized controllers=%u dynamic_runtime=%d",
             controller_count,
@@ -9462,14 +12518,28 @@ int main(int argc, char **argv)
     jpb_InputSetProvider(pc_read_pad, &input);
     jpb_InputSetRumbleProvider(pc_set_rumble, &input);
     jpb_BrainutlSetCheatChordProvider(
-        pc_read_brainutl_cheat_chords, NULL);
+        pc_read_brainutl_cheat_chords, &input);
     menu_hooks.activateItem = pc_activate_menu_item;
     menu_hooks.keyboardState = pc_read_keyboard_state;
+    menu_hooks.triggerMovie = pc_trigger_movie;
     menu_hooks.saveGameData = pc_save_game_data;
     menu_hooks.controllerCount = pc_controller_count;
     menu_hooks.controllerName = pc_controller_name;
     menu_hooks.requestExit = pc_request_exit;
     jpb_MenuSetPlatformHooks(&menu_hooks, &input);
+    if (!pc_apply_player_saber_color_mode(
+            player_model, player_saber_color_mode)) {
+        fputs(
+            "player saber color mode requires a toggleable player model\n",
+            stderr);
+        jpb_InputSetProvider(NULL, NULL);
+        jpb_InputSetRumbleProvider(NULL, NULL);
+        jpb_BrainutlSetCheatChordProvider(NULL, NULL);
+        jpb_MenuSetPlatformHooks(NULL, NULL);
+        jpb_PCXInputShutdown(&input.xinput);
+        free(pixels);
+        return 2;
+    }
     result = jpb_GameRuntimeInitWithPlayerAssets(
         &runtime, mesh_path, cad_path, bmd_path, player_model);
     if (result != JPB_GAME_RUNTIME_OK) {
@@ -9950,6 +13020,51 @@ int main(int argc, char **argv)
         input.validateHudOffscreen1080) {
         pc_seed_hud_offscreen_validation(&runtime);
     }
+    if (spawn_position_explicit) {
+        runtime.physics->pos = spawn_position;
+        runtime.physics->vpos.vx = (int32_t)spawn_position.vx;
+        runtime.physics->vpos.vy = (int32_t)spawn_position.vy;
+        runtime.physics->vpos.vz = (int32_t)spawn_position.vz;
+        runtime.physics->snapshotpos = runtime.physics->pos;
+        runtime.physics->lastpos = runtime.physics->pos;
+        runtime.physics->lastpolyhit = NULL;
+        runtime.world->location.vx = runtime.physics->vpos.vx;
+        runtime.world->location.vy = runtime.physics->vpos.vy;
+        runtime.world->location.vz = runtime.physics->vpos.vz;
+        runtime.targetX = runtime.physics->pos.vx;
+        runtime.targetY = runtime.physics->pos.vy;
+        runtime.targetZ = runtime.physics->pos.vz;
+        if (jpb_PhysicsUpdateSceneObject(runtime.physics) !=
+            JPB_PHYSICS_PARTIAL_OK) {
+            fprintf(
+                stderr,
+                "spawn-position could not update player scene object "
+                "(%.1f/%.1f/%.1f)\n",
+                spawn_position.vx,
+                spawn_position.vy,
+                spawn_position.vz);
+            jpb_GameRuntimeShutdown(&runtime);
+            free(pixels);
+            return 4;
+        }
+        jpb_PCLog(
+            "spawn-position applied player=%.1f/%.1f/%.1f",
+            spawn_position.vx,
+            spawn_position.vy,
+            spawn_position.vz);
+    }
+    if (force_enemy_placement >= 0 &&
+        !pc_force_enemy_placement(
+            &runtime,
+            force_enemy_placement)) {
+        fprintf(
+            stderr,
+            "force-enemy-placement could not activate id=%d\n",
+            force_enemy_placement);
+        jpb_GameRuntimeShutdown(&runtime);
+        free(pixels);
+        return 4;
+    }
     initial_position = runtime.physics->pos;
     run_origin = runtime.physics->pos;
     run_origin_facing =
@@ -10083,6 +13198,16 @@ int main(int argc, char **argv)
             GameStruct.ModelSelect[0] = (int16_t)player_model;
             newMenu_currentModelSelectBaseP1 = player_model;
         }
+        if (input.validateTitleMovie) {
+            pc_trigger_movie(
+                input.validateTitleMovieIndex,
+                0,
+                &input);
+        } else if (!input.headless && quickload_level == NULL) {
+            input.autoIntroMovieStarted = 1;
+            pc_trigger_auto_intro_movie(
+                &input, 0, "startup-title");
+        }
     }
 
     /* menu_mainInitMenu clears GameStruct as its retail owner does. Load
@@ -10152,11 +13277,23 @@ int main(int argc, char **argv)
         while (frame_count < frame_limit) {
             int selected_front_end_level = 0;
             int selected_front_end_game_mode = 4;
+            int presented_movie_frame = 0;
 
+            pc_begin_input_frame(&input);
             input.headlessActive = frame_count > 0;
             pc_select_headless_phase(
                 &input, frame_count - 1);
-            if (title_active) {
+            pc_select_fed_traversal_input(
+                &input, &runtime, frame_count - 1);
+            if (movie_playback.active) {
+                (void)pc_movie_present_frame(
+                    &movie_playback,
+                    &framebuffer,
+                    input.validateTitleMovie ? 2000 : 250);
+                pc_movie_sync_input_counts(&input);
+                result = JPB_GAME_RUNTIME_OK;
+                presented_movie_frame = 1;
+            } else if (title_active) {
                 pc_prepare_title_framebuffer(
                     &framebuffer, title_pixels);
                 result = jpb_GameRuntimeTitleFrame(
@@ -10167,8 +13304,13 @@ int main(int argc, char **argv)
                         &runtime, GameStruct.NumPlayers)) {
                     front_end_playable_handoff = 0;
                 }
-                result = jpb_GameRuntimeFrame(
-                    &runtime, 1.0f / 60.0f, &framebuffer, &stats);
+                if (!pc_retail_replay_prepare_frame(
+                        &input, totalframes + 1)) {
+                    result = JPB_GAME_RUNTIME_LOAD_FAILED;
+                } else {
+                    result = jpb_GameRuntimeFrame(
+                        &runtime, 1.0f / 60.0f, &framebuffer, &stats);
+                }
                 if (result == JPB_GAME_RUNTIME_OK &&
                     front_end_playable_handoff &&
                     pc_release_front_end_gameplay_control(
@@ -10176,8 +13318,32 @@ int main(int argc, char **argv)
                     front_end_playable_handoff = 0;
                 }
             }
+            if (camera_diagnostics && !title_active &&
+                !presented_movie_frame &&
+                result == JPB_GAME_RUNTIME_OK) {
+                pc_log_camera_ai_event(
+                    frame_count,
+                    &camera_ai_event_sequence,
+                    runtime.world);
+            }
+            if (result == JPB_GAME_RUNTIME_OK && !title_active &&
+                !presented_movie_frame &&
+                !pc_record_headless_input_trail_frame(
+                    input_trail_path,
+                    &input_trail_file,
+                    &input_trail_armed,
+                    &input_trail_start_frame,
+                    frame_count,
+                    &input,
+                    &runtime)) {
+                result = JPB_GAME_RUNTIME_LOAD_FAILED;
+            }
             if (result != JPB_GAME_RUNTIME_OK) {
                 break;
+            }
+            if (presented_movie_frame) {
+                ++frame_count;
+                continue;
             }
             if (title_active && front_end_flow &&
                 pc_front_end_requests_gameplay(
@@ -10226,6 +13392,10 @@ int main(int argc, char **argv)
                 title_active = 0;
                 front_end_flow = 0;
                 front_end_playable_handoff = 1;
+                pc_trigger_first_level_movie(
+                    &input,
+                    selected_front_end_level,
+                    "front-end-level-load");
             } else if (title_active && front_end_flow) {
                 int selected_level;
 
@@ -10385,13 +13555,30 @@ int main(int argc, char **argv)
         int logged_gameplay_view = 0;
         double render_seconds = 0.0;
         double present_seconds = 0.0;
+        double cap_seconds = 0.0;
         double loop_seconds = 0.0;
         double worst_render_seconds = 0.0;
         double worst_present_seconds = 0.0;
+        double worst_cap_seconds = 0.0;
         double worst_frame_interval_seconds = 0.0;
+        double last_frame_render_ms = 0.0;
+        double last_frame_present_ms = 0.0;
+        double last_frame_cap_ms = 0.0;
         unsigned missed_frame_deadlines = 0;
         unsigned frame_interval_count = 0;
+        unsigned fps_title_frames = 0;
+        double fps_title_worst_interval = 0.0;
+        int logged_camera_dolly = -1;
+        double logged_camera_distance = -1.0;
+        int camera_pulse_initialized = 0;
+        float camera_pulse_player_x = 0.0f;
+        float camera_pulse_player_y = 0.0f;
+        float camera_pulse_player_z = 0.0f;
+        int camera_pulse_focus_x = 0;
+        int camera_pulse_focus_y = 0;
+        int camera_pulse_focus_z = 0;
         LARGE_INTEGER loop_started = {0};
+        LARGE_INTEGER fps_title_started = {0};
 
         if (window == NULL) {
             result = JPB_GAME_RUNTIME_RENDER_FAILED;
@@ -10414,11 +13601,17 @@ int main(int argc, char **argv)
                 sizeof(presentation_backend),
                 "%s",
                 jpb_PCD3D11PresenterDescription(presenter));
-            pc_set_hardware_render_hooks(
-                &runtime, presenter, &jpx_hardware_level);
-            if (!title_active &&
-                !pc_prewarm_hardware_level(&runtime, presenter)) {
-                jpb_PCLog("D3D11 level texture prewarm failed");
+            if (!pc_set_hardware_render_hooks(
+                    &runtime,
+                    presenter,
+                    &jpx_hardware_level,
+                    !title_active)) {
+                jpb_PCLog("D3D11 level mesh setup failed");
+                result = JPB_GAME_RUNTIME_RENDER_FAILED;
+            } else if (!title_active &&
+                !pc_prewarm_hardware_level(
+                    &runtime, presenter, &framebuffer)) {
+                jpb_PCLog("D3D11 level setup/prewarm failed");
                 result = JPB_GAME_RUNTIME_RENDER_FAILED;
             }
             memset(
@@ -10428,6 +13621,7 @@ int main(int argc, char **argv)
             QueryPerformanceFrequency(&frequency);
             QueryPerformanceCounter(&previous);
             loop_started = previous;
+            fps_title_started = previous;
             frame_timer = pc_create_frame_timer();
             jpb_PCLog(
                 "interactive window created visible=%d scripted=%d "
@@ -10442,13 +13636,22 @@ int main(int argc, char **argv)
                    (frame_limit == 0 || frame_count < frame_limit)) {
                 LARGE_INTEGER current;
                 LARGE_INTEGER render_finished;
-                LARGE_INTEGER present_finished;
+                LARGE_INTEGER present_started;
+                LARGE_INTEGER present_submitted;
+                LARGE_INTEGER cap_finished;
                 float elapsed;
                 int selected_front_end_level = 0;
                 int selected_front_end_game_mode = 4;
-                uint32_t live_menu_keys = input.scriptedInput
+                int presented_movie_frame = 0;
+                uint32_t live_menu_keys;
+                uint32_t live_menu_pressed;
+
+                pc_begin_input_frame(&input);
+                live_menu_keys = input.scriptedInput
                     ? 0
                     : pc_live_menu_key_bits();
+                live_menu_pressed =
+                    live_menu_keys & ~previous_menu_key_bits;
 
                 if (input.scriptedInput) {
                     input.headlessActive = frame_count > 0;
@@ -10469,7 +13672,6 @@ int main(int argc, char **argv)
                     live_menu_keys,
                     frame_count,
                     title_active);
-                previous_menu_key_bits = live_menu_keys;
                 QueryPerformanceCounter(&current);
                 elapsed =
                     (float)((double)(current.QuadPart - previous.QuadPart) /
@@ -10483,8 +13685,62 @@ int main(int argc, char **argv)
                     if (elapsed > (1.0 / 60.0) * 1.5) {
                         ++missed_frame_deadlines;
                     }
+                    if (elapsed > 0.100) {
+                        jpb_PCLog(
+                            "presentation stall frame=%d interval=%.3fms "
+                            "last_render=%.3fms last_present=%.3fms "
+                            "last_cap=%.3fms",
+                            frame_count,
+                            elapsed * 1000.0f,
+                            last_frame_render_ms,
+                            last_frame_present_ms,
+                            last_frame_cap_ms);
+                    }
+                    ++fps_title_frames;
+                    if (elapsed > fps_title_worst_interval) {
+                        fps_title_worst_interval = elapsed;
+                    }
+                    {
+                        double title_elapsed =
+                            (double)(current.QuadPart -
+                                     fps_title_started.QuadPart) /
+                            (double)frequency.QuadPart;
+
+                        if (title_elapsed >= 0.25) {
+                            pc_update_window_fps_title(
+                                window,
+                                fps_title_frames / title_elapsed,
+                                elapsed * 1000.0f,
+                                fps_title_worst_interval * 1000.0);
+                            fps_title_started = current;
+                            fps_title_frames = 0;
+                            fps_title_worst_interval = 0.0;
+                        }
+                    }
                 }
-                if (title_active) {
+                if (movie_playback.active) {
+                    jpb_PCLogSetCheckpoint(
+                        "interactive movie frame=%d last=%u presented=%u",
+                        frame_count,
+                        input.movieLastIndex,
+                        input.moviePresentCount);
+                    deltaTime = elapsed > 0.1f ? 0.1f : elapsed;
+                    if (pc_movie_skip_requested(
+                            &input, live_menu_pressed)) {
+                        ++input.movieSkipCount;
+                        jpb_PCLog(
+                            "movie skipped frame=%d index=%u",
+                            frame_count,
+                            input.movieLastIndex);
+                        pc_movie_playback_shutdown(&movie_playback);
+                    } else {
+                        (void)pc_movie_present_frame(
+                            &movie_playback, &framebuffer, 250);
+                    }
+                    pc_movie_sync_input_counts(&input);
+                    result = JPB_GAME_RUNTIME_OK;
+                    presented_movie_frame = 1;
+                } else if (title_active) {
                     jpb_PCLogSetCheckpoint(
                         "interactive title frame=%d mode=%u stack=%u select=%u",
                         frame_count,
@@ -10512,8 +13768,13 @@ int main(int argc, char **argv)
                             &runtime, GameStruct.NumPlayers)) {
                         front_end_playable_handoff = 0;
                     }
-                    result = jpb_GameRuntimeFrame(
-                        &runtime, elapsed, &framebuffer, &stats);
+                    if (!pc_retail_replay_prepare_frame(
+                            &input, totalframes + 1)) {
+                        result = JPB_GAME_RUNTIME_LOAD_FAILED;
+                    } else {
+                        result = jpb_GameRuntimeFrame(
+                            &runtime, elapsed, &framebuffer, &stats);
+                    }
                     if (result == JPB_GAME_RUNTIME_OK &&
                         front_end_playable_handoff &&
                         pc_release_front_end_gameplay_control(
@@ -10521,6 +13782,14 @@ int main(int argc, char **argv)
                         front_end_playable_handoff = 0;
                     }
                 }
+                if (camera_diagnostics && !title_active &&
+                    result == JPB_GAME_RUNTIME_OK) {
+                    pc_log_camera_ai_event(
+                        frame_count,
+                        &camera_ai_event_sequence,
+                        runtime.world);
+                }
+                previous_menu_key_bits = live_menu_keys;
                 if (result != JPB_GAME_RUNTIME_OK) {
                     jpb_PCLog(
                         "frame failed frame=%d status=%d title=%d "
@@ -10537,11 +13806,169 @@ int main(int argc, char **argv)
                         (double)frequency.QuadPart;
 
                     render_seconds += duration;
+                    last_frame_render_ms = duration * 1000.0;
                     if (duration > worst_render_seconds) {
                         worst_render_seconds = duration;
                     }
+                    if (input.profileRuntime &&
+                        !title_active && !presented_movie_frame &&
+                        duration > 0.025) {
+                        JPBEnemyFrameProfile enemy_profile;
+                        JPBAnimForceProfile anim_profile;
+                        JPBPlayerFrameProfile player_profile;
+
+                        jpb_EnemyGetFrameProfile(&enemy_profile);
+                        jpb_AnimGetForceProfile(&anim_profile);
+                        jpb_PlayerGetFrameProfile(&player_profile);
+                        jpb_PCLog(
+                            "runtime stall detail frame=%d total=%.3fms "
+                            "camera=%.3fms scene=%.3fms world=%.3fms "
+                            "models=%.3fms effects=%.3fms "
+                            "scene_parts=(setup=%.3fms,animations=%.3fms,"
+                            "overlay=%.3fms,sabre=%.3fms,player=%.3fms,"
+                            "powerups=%.3fms,sprites=%.3fms,"
+                            "enemies=%.3fms,backdrop=%.3fms,"
+                            "physics=%.3fms,owner=%.3fms) "
+                            "screen_poly=%.3fms depth=%.3fms hud=%.3fms "
+                            "glow=%.3fms hud_replay=%.3fms "
+                            "composite=%.3f/%.3fms "
+                            "enemy_create=(total=%.3fms,pool=%.3fms,"
+                            "ai=%.3fms,model=%.3fms,anim=%.3fms,"
+                            "player=%.3fms,refresh=%.3fms) "
+                            "player_frame=(total=%.3fms,"
+                            "collisions=%.3fms,global=%.3fms,"
+                            "triggers=%.3fms,life=%.3fms,debug=%.3fms,"
+                            "input=%.3fms,damage=%.3fms,pause=%.3fms,"
+                            "control=%.3fms,active=%u/%u,"
+                            "control_owner=%d/%d) "
+                            "enemy_frame=(total=%.3fms,radar=%.3fms,"
+                            "prepare=%.3fms,check=%.3fms,ref=%.3fms,"
+                            "kungfu=%.3f/%.3fms,loop=%.3fms,"
+                            "pre=%.3fms,parse=%.3fms,post=%.3fms,"
+                            "range=%.3fms,processed=%u,"
+                            "single_parse=%.3fms/%d/%d,"
+                            "opcode=%.3fms/%d/%d/%d/%03x,"
+                            "instructions=%u/%u) "
+                            "anim_force=(total=%.3fms,recovery=%.3fms,"
+                            "activate=%.3fms,motion=%.3fms,"
+                            "sound=%.3fms,tween=%.3fms,decode=%.3fms,"
+                            "max=%.3fms/%u/%u) "
+                            "dolly=%d flags=%08x lead=%d/%d/%d dot=%d "
+                            "screen_poly_count=%zu glow=%zu text=%zu "
+                            "player_pixels=%zu model_pixels=%zu "
+                            "enemy_counts=%zu/%zu/%zu classes=%zu/%zu/%zu/%zu",
+                            frame_count,
+                            runtime.profileLastFrameSeconds * 1000.0,
+                            runtime.profileLastCameraSeconds * 1000.0,
+                            runtime.profileLastSceneSeconds * 1000.0,
+                            runtime.profileLastWorldSeconds * 1000.0,
+                            runtime.profileLastModelsSeconds * 1000.0,
+                            runtime.profileLastEffectsSeconds * 1000.0,
+                            runtime.profileLastSceneSetupSeconds * 1000.0,
+                            runtime.profileLastSceneAnimationsSeconds *
+                                1000.0,
+                            runtime.profileLastSceneOverlaySeconds * 1000.0,
+                            runtime.profileLastSceneSabreSeconds * 1000.0,
+                            runtime.profileLastScenePlayerSeconds * 1000.0,
+                            runtime.profileLastScenePowerupsSeconds * 1000.0,
+                            runtime.profileLastSceneSpritesSeconds * 1000.0,
+                            runtime.profileLastSceneEnemiesSeconds * 1000.0,
+                            runtime.profileLastSceneBackdropSeconds * 1000.0,
+                            runtime.profileLastScenePhysicsSeconds * 1000.0,
+                            runtime.profileLastSceneLevelOwnerSeconds *
+                                1000.0,
+                            runtime.profileLastScreenPolySeconds * 1000.0,
+                            runtime.profileLastDepthSnapshotSeconds * 1000.0,
+                            runtime.profileLastHudSeconds * 1000.0,
+                            runtime.profileLastGlowSeconds * 1000.0,
+                            runtime.profileLastHudReplaySeconds * 1000.0,
+                            runtime.profileLastCompositeUploadSeconds *
+                                1000.0,
+                            runtime.profileLastCompositeFinishSeconds *
+                                1000.0,
+                            runtime.profileLastEnemyCreateTotalSeconds *
+                                1000.0,
+                            runtime.profileLastEnemyCreatePoolSeconds *
+                                1000.0,
+                            runtime.profileLastEnemyCreateAiSeconds *
+                                1000.0,
+                            runtime.profileLastEnemyCreateModelSeconds *
+                                1000.0,
+                            runtime.profileLastEnemyCreateAnimSeconds *
+                                1000.0,
+                            runtime.profileLastEnemyCreatePlayerSeconds *
+                                1000.0,
+                            runtime.profileLastEnemyCreateRefreshSeconds *
+                                1000.0,
+                            player_profile.lastTotalSeconds * 1000.0,
+                            player_profile.lastCollisionsSeconds * 1000.0,
+                            player_profile.lastGlobalBitsSeconds * 1000.0,
+                            player_profile.lastMapTriggersSeconds * 1000.0,
+                            player_profile.lastLifeTileSeconds * 1000.0,
+                            player_profile.lastDebugSeconds * 1000.0,
+                            player_profile.lastInputSeconds * 1000.0,
+                            player_profile.lastDamageTrackerSeconds * 1000.0,
+                            player_profile.lastPauseSeconds * 1000.0,
+                            player_profile.lastControlSeconds * 1000.0,
+                            (unsigned)player_profile.lastActivePlayers,
+                            (unsigned)player_profile.maxActivePlayers,
+                            (int)player_profile.maxControlPlayerIndex,
+                            (int)player_profile.maxControlPlayerId,
+                            enemy_profile.lastTotalSeconds * 1000.0,
+                            enemy_profile.lastRadarSeconds * 1000.0,
+                            enemy_profile.lastPrepareSeconds * 1000.0,
+                            enemy_profile.lastCheckNewSeconds * 1000.0,
+                            enemy_profile.lastReferenceSeconds * 1000.0,
+                            enemy_profile.lastKungfuStartSeconds * 1000.0,
+                            enemy_profile.lastKungfuDoSeconds * 1000.0,
+                            enemy_profile.lastLoopSeconds * 1000.0,
+                            enemy_profile.lastPreFrameSeconds * 1000.0,
+                            enemy_profile.lastParseSeconds * 1000.0,
+                            enemy_profile.lastPostFrameSeconds * 1000.0,
+                            enemy_profile.lastRangeSeconds * 1000.0,
+                            (unsigned)enemy_profile.lastProcessedEnemies,
+                            enemy_profile.maxSingleParseSeconds * 1000.0,
+                            (int)enemy_profile.maxParseEnemyId,
+                            (int)enemy_profile.maxParseAi,
+                            enemy_profile.maxSingleOpcodeSeconds * 1000.0,
+                            (int)enemy_profile.maxOpcodeEnemyId,
+                            (int)enemy_profile.maxOpcodeAi,
+                            (int)enemy_profile.maxOpcodeNode,
+                            (unsigned)enemy_profile.maxOpcode,
+                            (unsigned)enemy_profile.lastParseInstructions,
+                            (unsigned)enemy_profile.maxParseInstructions,
+                            anim_profile.lastTotalSeconds * 1000.0,
+                            anim_profile.lastRecoverySeconds * 1000.0,
+                            anim_profile.lastActivateSeconds * 1000.0,
+                            anim_profile.lastActivateMotionSeconds * 1000.0,
+                            anim_profile.lastActivateSoundSeconds * 1000.0,
+                            anim_profile.lastActivateTweenSeconds * 1000.0,
+                            anim_profile.lastDecodeStepSeconds * 1000.0,
+                            anim_profile.maxTotalSeconds * 1000.0,
+                            (unsigned)anim_profile.maxObjectId,
+                            (unsigned)anim_profile.maxMotionSeq,
+                            (int)runtime.authoredCameraDolly,
+                            (unsigned)runtime.authoredCameraDollyFlags,
+                            (int)runtime.authoredCameraLeadX,
+                            (int)runtime.authoredCameraLeadY,
+                            (int)runtime.authoredCameraLeadZ,
+                            (int)runtime.authoredCameraLeadDot,
+                            runtime.screenPolyDrawCount,
+                            runtime.glowDrawCount,
+                            runtime.textDrawCount,
+                            runtime.playerRenderedPixels,
+                            stats.modelPixels,
+                            runtime.enemyActorCount,
+                            runtime.enemyActorPeakCount,
+                            runtime.enemySpawnCount,
+                            runtime.enemyLoadedClassCount,
+                            runtime.enemyPlacedClassCount,
+                            runtime.enemyActiveClassCount,
+                            runtime.enemyActiveClassPeakCount);
+                    }
                 }
-                if (title_active &&
+                if (!presented_movie_frame &&
+                    title_active &&
                     menuVars.menuMode[menuVars.menuModeSP & 7u] !=
                         logged_menu_mode) {
                     logged_menu_mode = menuVars.menuMode[
@@ -10559,7 +13986,8 @@ int main(int argc, char **argv)
                         (int)GameStruct.ModelSelect[0],
                         (int)GameStruct.ModelSelect[1]);
                 }
-                if (title_active && front_end_flow &&
+                if (!presented_movie_frame &&
+                    title_active && front_end_flow &&
                     pc_front_end_requests_gameplay(
                         &selected_front_end_level,
                         &selected_front_end_game_mode)) {
@@ -10605,12 +14033,15 @@ int main(int argc, char **argv)
                         break;
                     }
 #endif
-                    pc_set_hardware_render_hooks(
-                        &runtime, presenter, &jpx_hardware_level);
-                    if (!pc_prewarm_hardware_level(
-                            &runtime, presenter)) {
+                    if (!pc_set_hardware_render_hooks(
+                            &runtime,
+                            presenter,
+                            &jpx_hardware_level,
+                            1) ||
+                        !pc_prewarm_hardware_level(
+                            &runtime, presenter, &framebuffer)) {
                         jpb_PCLog(
-                            "D3D11 level texture prewarm failed "
+                            "D3D11 level setup/prewarm failed "
                             "level=%d",
                             selected_front_end_level);
                         result = JPB_GAME_RUNTIME_RENDER_FAILED;
@@ -10633,6 +14064,10 @@ int main(int argc, char **argv)
                         (int)GameStruct.ModelSelect[0],
                         cad_path,
                         bmd_path);
+                    pc_trigger_first_level_movie(
+                        &input,
+                        selected_front_end_level,
+                        "front-end-level-load");
                     if (!mute) {
                         audio = pc_create_current_game_audio(
                             mesh_path,
@@ -10641,7 +14076,8 @@ int main(int argc, char **argv)
                             audio_output_enabled,
                             &audio_generation_count);
                     }
-                } else if (title_active && front_end_flow) {
+                } else if (!presented_movie_frame &&
+                           title_active && front_end_flow) {
                     int selected_level;
 
                     if (pc_front_end_requests_training(&selected_level)) {
@@ -10680,10 +14116,13 @@ int main(int argc, char **argv)
                             break;
                         }
 #endif
-                        pc_set_hardware_render_hooks(
-                            &runtime, presenter, &jpx_hardware_level);
-                        if (!pc_prewarm_hardware_level(
-                                &runtime, presenter)) {
+                        if (!pc_set_hardware_render_hooks(
+                                &runtime,
+                                presenter,
+                                &jpx_hardware_level,
+                                1) ||
+                            !pc_prewarm_hardware_level(
+                                &runtime, presenter, &framebuffer)) {
                             result = JPB_GAME_RUNTIME_RENDER_FAILED;
                             break;
                         }
@@ -10749,10 +14188,13 @@ int main(int argc, char **argv)
                             break;
                         }
 #endif
-                        pc_set_hardware_render_hooks(
-                            &runtime, presenter, &jpx_hardware_level);
-                        if (!pc_prewarm_hardware_level(
-                                &runtime, presenter)) {
+                        if (!pc_set_hardware_render_hooks(
+                                &runtime,
+                                presenter,
+                                &jpx_hardware_level,
+                                1) ||
+                            !pc_prewarm_hardware_level(
+                                &runtime, presenter, &framebuffer)) {
                             result = JPB_GAME_RUNTIME_RENDER_FAILED;
                             break;
                         }
@@ -10787,7 +14229,280 @@ int main(int argc, char **argv)
                         }
                     }
                 }
-                if (!title_active) {
+                if (!presented_movie_frame && !title_active) {
+                    if (runtime.physics != NULL) {
+                        double camera_dx =
+                            (double)runtime.camera.focus.vx -
+                            (double)runtime.physics->pos.vx;
+                        double camera_dy =
+                            (double)runtime.camera.focus.vy -
+                            (double)runtime.physics->pos.vy;
+                        double camera_dz =
+                            (double)runtime.camera.focus.vz -
+                            (double)runtime.physics->pos.vz;
+                        double camera_distance = sqrt(
+                            camera_dx * camera_dx +
+                            camera_dy * camera_dy +
+                            camera_dz * camera_dz);
+                        int dolly = runtime.authoredCameraDolly;
+                        int camera_transition =
+                            logged_camera_dolly >= 0 &&
+                            logged_camera_dolly != dolly;
+                        int log_camera =
+                            logged_camera_dolly < 0 ||
+                            logged_camera_dolly != dolly ||
+                            fabs(camera_distance -
+                                 logged_camera_distance) >= 1024.0;
+                        if (!pc_record_headless_input_trail_frame(
+                                input_trail_path,
+                                &input_trail_file,
+                                &input_trail_armed,
+                                &input_trail_start_frame,
+                                frame_count,
+                                &input,
+                                &runtime)) {
+                            result = JPB_GAME_RUNTIME_LOAD_FAILED;
+                            break;
+                        }
+
+                        if (log_camera) {
+                            jpb_PCLog(
+                                "camera track frame=%d dolly=%d flags=%08x "
+                                "distance=%.1f player=(%.1f,%.1f,%.1f) "
+                                "camera=(%d,%d,%d) angle=%d,%d,%d "
+                                "lead=%d/%d/%d dot=%d target_screen=%d,%d "
+                                "onscreen=%u/%u transitions=%u unique=%u",
+                                frame_count,
+                                dolly,
+                                (unsigned)runtime.authoredCameraDollyFlags,
+                                camera_distance,
+                                runtime.physics->pos.vx,
+                                runtime.physics->pos.vy,
+                                runtime.physics->pos.vz,
+                                runtime.camera.focus.vx,
+                                runtime.camera.focus.vy,
+                                runtime.camera.focus.vz,
+                                runtime.camera.angle.vx,
+                                runtime.camera.angle.vy,
+                                runtime.camera.angle.vz,
+                                (int)runtime.authoredCameraLeadX,
+                                (int)runtime.authoredCameraLeadY,
+                                (int)runtime.authoredCameraLeadZ,
+                                (int)runtime.authoredCameraLeadDot,
+                                (int)runtime.playerOffscreenScreenX,
+                                (int)runtime.playerOffscreenScreenY,
+                                (unsigned)runtime.playerOnscreenFrameCount,
+                                (unsigned)runtime.playerOnscreenSampleCount,
+                                (unsigned)runtime.authoredCameraDollyTransitionCount,
+                                (unsigned)runtime.authoredCameraUniqueDollyCount);
+                            logged_camera_dolly = dolly;
+                            logged_camera_distance = camera_distance;
+                        }
+                        if (camera_diagnostics && camera_transition) {
+                            pc_log_camera_collision_source(
+                                &runtime, frame_count);
+                            pc_log_camera_selection_decision(frame_count);
+                        }
+                        if (camera_diagnostics &&
+                            ((input_trail_file != NULL &&
+                              (frame_count - input_trail_start_frame) % 60 ==
+                                  0) ||
+                             (input_trail_path == NULL &&
+                              frame_count % 60 == 0))) {
+                            const physicsObject *second_physics =
+                                runtime.inactivePlayerPhysics;
+                            const playerObject *second_player =
+                                runtime.world != NULL
+                                    ? runtime.world->player1
+                                    : NULL;
+                            const BAP_CAMERADOLLY *pulse_dolly =
+                                runtime.world != NULL &&
+                                dolly >= 0 && dolly < 256
+                                    ? &runtime.world->aDolly[dolly]
+                                    : NULL;
+                            const BAP_CAMERADOLLY *pulse_backup_dolly =
+                                runtime.world != NULL &&
+                                dolly >= 0 && dolly < 256
+                                    ? &runtime.world->aBkDolly[dolly]
+                                    : NULL;
+                            int pulse_dolly_changed =
+                                pulse_dolly != NULL &&
+                                pulse_backup_dolly != NULL &&
+                                memcmp(
+                                    pulse_dolly,
+                                    pulse_backup_dolly,
+                                    sizeof(*pulse_dolly)) != 0;
+                            float player_dx = 0.0f;
+                            float player_dy = 0.0f;
+                            float player_dz = 0.0f;
+                            int camera_step_x = 0;
+                            int camera_step_y = 0;
+                            int camera_step_z = 0;
+
+                            if (camera_pulse_initialized) {
+                                player_dx = runtime.physics->pos.vx -
+                                    camera_pulse_player_x;
+                                player_dy = runtime.physics->pos.vy -
+                                    camera_pulse_player_y;
+                                player_dz = runtime.physics->pos.vz -
+                                    camera_pulse_player_z;
+                                camera_step_x =
+                                    (int)runtime.camera.focus.vx -
+                                    camera_pulse_focus_x;
+                                camera_step_y =
+                                    (int)runtime.camera.focus.vy -
+                                    camera_pulse_focus_y;
+                                camera_step_z =
+                                    (int)runtime.camera.focus.vz -
+                                    camera_pulse_focus_z;
+                            }
+                            jpb_PCLog(
+                                "camera pulse frame=%d total=%d timer=%u "
+                                "type=%d new_camera=%d view=%08x "
+                                "dolly=%d override=%d flags=%08x "
+                                "backup_flags=%08x dolly_changed=%d "
+                                "player=(%.1f,%.1f,%.1f) "
+                                "player_vpos=(%d,%d,%d) "
+                                "player_delta=(%.1f,%.1f,%.1f) "
+                                "movement=(%.1f,%.1f,%.1f) "
+                                "input=%08x/%08x/%08x "
+                                "player1=(%.1f,%.1f,%.1f) "
+                                "player1_movement=(%.1f,%.1f,%.1f) "
+                                "player1_flags=%08x/%08x "
+                                "camera=(%d,%d,%d) "
+                                "eye=(%d,%d,%d) "
+                                "camera_location=(%d,%d,%d) "
+                                "camera_delta=(%d,%d,%d) "
+                                "destination=(%d,%d,%d) "
+                                "remaining=(%d,%d,%d) "
+                                "angle=%d,%d,%d destination_angle=%d,%d,%d "
+                                "distance=%.1f lead=%d/%d/%d dot=%d "
+                                "axis=%.3f/%.3f target_screen=%d,%d "
+                                "onscreen=%u/%u transitions=%u unique=%u "
+                                "dolly_offset=%d/%d/%d "
+                                "slack=%d/%d/%d off=%d/%d/%d",
+                                frame_count,
+                                totalframes,
+                                (unsigned)gGlobalTimer,
+                                camera_GetCurrentCameraType(),
+                                newcameraflag,
+                                (unsigned)runtime.camera.viewType,
+                                dolly,
+                                runtime.world != NULL
+                                    ? (int)runtime.world->overRideDolly : 0,
+                                (unsigned)runtime.authoredCameraDollyFlags,
+                                pulse_backup_dolly != NULL
+                                    ? (unsigned)pulse_backup_dolly->flags : 0U,
+                                pulse_dolly_changed,
+                                runtime.physics->pos.vx,
+                                runtime.physics->pos.vy,
+                                runtime.physics->pos.vz,
+                                runtime.physics->vpos.vx,
+                                runtime.physics->vpos.vy,
+                                runtime.physics->vpos.vz,
+                                player_dx,
+                                player_dy,
+                                player_dz,
+                                runtime.physics->mov.vx,
+                                runtime.physics->mov.vy,
+                                runtime.physics->mov.vz,
+                                (unsigned)runtime.player->playerPad.cpad[0],
+                                (unsigned)runtime.player->playerPad.cpad[1],
+                                (unsigned)runtime.player->heldMask,
+                                second_physics != NULL
+                                    ? second_physics->pos.vx : 0.0f,
+                                second_physics != NULL
+                                    ? second_physics->pos.vy : 0.0f,
+                                second_physics != NULL
+                                    ? second_physics->pos.vz : 0.0f,
+                                second_physics != NULL
+                                    ? second_physics->mov.vx : 0.0f,
+                                second_physics != NULL
+                                    ? second_physics->mov.vy : 0.0f,
+                                second_physics != NULL
+                                    ? second_physics->mov.vz : 0.0f,
+                                second_player != NULL
+                                    ? (unsigned)second_player->playerRoot.flags
+                                    : 0u,
+                                second_player != NULL
+                                    ? (unsigned)second_player->pFlags
+                                    : 0u,
+                                runtime.camera.focus.vx,
+                                runtime.camera.focus.vy,
+                                runtime.camera.focus.vz,
+                                cameraposition.vx,
+                                cameraposition.vy,
+                                cameraposition.vz,
+                                cameraLocation.vx,
+                                cameraLocation.vy,
+                                cameraLocation.vz,
+                                camera_step_x,
+                                camera_step_y,
+                                camera_step_z,
+                                runtime.camera.focusDest.vx,
+                                runtime.camera.focusDest.vy,
+                                runtime.camera.focusDest.vz,
+                                (int)runtime.camera.focusDest.vx -
+                                    (int)runtime.camera.focus.vx,
+                                (int)runtime.camera.focusDest.vy -
+                                    (int)runtime.camera.focus.vy,
+                                (int)runtime.camera.focusDest.vz -
+                                    (int)runtime.camera.focus.vz,
+                                runtime.camera.angle.vx,
+                                runtime.camera.angle.vy,
+                                runtime.camera.angle.vz,
+                                runtime.camera.angleDest.vx,
+                                runtime.camera.angleDest.vy,
+                                runtime.camera.angleDest.vz,
+                                camera_distance,
+                                (int)runtime.authoredCameraLeadX,
+                                (int)runtime.authoredCameraLeadY,
+                                (int)runtime.authoredCameraLeadZ,
+                                (int)runtime.authoredCameraLeadDot,
+                                runtime.lastControlAxisX[0],
+                                runtime.lastControlAxisY[0],
+                                (int)runtime.playerOffscreenScreenX,
+                                (int)runtime.playerOffscreenScreenY,
+                                (unsigned)runtime.playerOnscreenFrameCount,
+                                (unsigned)runtime.playerOnscreenSampleCount,
+                                (unsigned)runtime.authoredCameraDollyTransitionCount,
+                                (unsigned)runtime.authoredCameraUniqueDollyCount,
+                                pulse_dolly != NULL
+                                    ? pulse_dolly->offset.vx : 0,
+                                pulse_dolly != NULL
+                                    ? pulse_dolly->offset.vy : 0,
+                                pulse_dolly != NULL
+                                    ? pulse_dolly->offset.vz : 0,
+                                pulse_dolly != NULL
+                                    ? (int)pulse_dolly->slackx : 0,
+                                pulse_dolly != NULL
+                                    ? (int)pulse_dolly->slacky : 0,
+                                pulse_dolly != NULL
+                                    ? (int)pulse_dolly->slackz : 0,
+                                pulse_dolly != NULL
+                                    ? (int)pulse_dolly->offx : 0,
+                                pulse_dolly != NULL
+                                    ? (int)pulse_dolly->offy : 0,
+                                pulse_dolly != NULL
+                                    ? (int)pulse_dolly->offz : 0);
+                            pc_log_camera_collision_source(
+                                &runtime, frame_count);
+                            pc_log_camera_selection_decision(frame_count);
+                            camera_pulse_initialized = 1;
+                            camera_pulse_player_x =
+                                runtime.physics->pos.vx;
+                            camera_pulse_player_y =
+                                runtime.physics->pos.vy;
+                            camera_pulse_player_z =
+                                runtime.physics->pos.vz;
+                            camera_pulse_focus_x =
+                                runtime.camera.focus.vx;
+                            camera_pulse_focus_y =
+                                runtime.camera.focus.vy;
+                            camera_pulse_focus_z =
+                                runtime.camera.focus.vz;
+                        }
+                    }
                     if (!logged_gameplay_view && runtime.physics != NULL) {
                         jpb_PCLog(
                             "gameplay view initialized frame=%d "
@@ -10826,6 +14541,7 @@ int main(int argc, char **argv)
                         gameplay_log_states);
                     jpb_PCAudioUpdate(audio);
                 }
+                QueryPerformanceCounter(&present_started);
                 if (!jpb_PCD3D11PresenterPresent(
                         presenter, &framebuffer)) {
                     presentation_error =
@@ -10842,17 +14558,37 @@ int main(int argc, char **argv)
                     result = JPB_GAME_RUNTIME_RENDER_FAILED;
                     break;
                 }
+                QueryPerformanceCounter(&present_submitted);
                 pc_cap_frame_rate(frame_timer, current, frequency);
-                QueryPerformanceCounter(&present_finished);
+                QueryPerformanceCounter(&cap_finished);
                 {
-                    double duration =
-                        (double)(present_finished.QuadPart -
-                                 render_finished.QuadPart) /
+                    double present_duration =
+                        (double)(present_submitted.QuadPart -
+                                 present_started.QuadPart) /
+                        (double)frequency.QuadPart;
+                    double cap_duration =
+                        (double)(cap_finished.QuadPart -
+                                 present_submitted.QuadPart) /
                         (double)frequency.QuadPart;
 
-                    present_seconds += duration;
-                    if (duration > worst_present_seconds) {
-                        worst_present_seconds = duration;
+                    present_seconds += present_duration;
+                    cap_seconds += cap_duration;
+                    last_frame_present_ms = present_duration * 1000.0;
+                    last_frame_cap_ms = cap_duration * 1000.0;
+                    if (present_duration > worst_present_seconds) {
+                        worst_present_seconds = present_duration;
+                    }
+                    if (cap_duration > worst_cap_seconds) {
+                        worst_cap_seconds = cap_duration;
+                    }
+                    if (present_duration > 0.100) {
+                        jpb_PCLog(
+                            "present stall frame=%d present=%.3fms "
+                            "render=%.3fms cap=%.3fms",
+                            frame_count,
+                            present_duration * 1000.0,
+                            last_frame_render_ms,
+                            cap_duration * 1000.0);
                     }
                 }
                 ++presentation_frame_count;
@@ -10869,6 +14605,7 @@ int main(int argc, char **argv)
                     "presentation timing frames=%u wall=%.3fs fps=%.2f "
                     "render_avg=%.3fms render_max=%.3fms "
                     "present_avg=%.3fms present_max=%.3fms "
+                    "cap_avg=%.3fms cap_max=%.3fms "
                     "target_hz=60 missed=%u/%u worst_interval=%.3fms",
                     presentation_frame_count,
                     loop_seconds,
@@ -10881,13 +14618,17 @@ int main(int argc, char **argv)
                     present_seconds * 1000.0 /
                         presentation_frame_count,
                     worst_present_seconds * 1000.0,
+                    cap_seconds * 1000.0 /
+                        presentation_frame_count,
+                    worst_cap_seconds * 1000.0,
                     missed_frame_deadlines,
                     frame_interval_count,
                     worst_frame_interval_seconds * 1000.0);
                 printf(
                     "presentation_timing=(frames=%u,wall=%.3f,fps=%.2f,"
                     "render_avg_ms=%.3f,render_max_ms=%.3f,"
-                    "present_avg_ms=%.3f,present_max_ms=%.3f)\n",
+                    "present_avg_ms=%.3f,present_max_ms=%.3f,"
+                    "cap_avg_ms=%.3f,cap_max_ms=%.3f)\n",
                     presentation_frame_count,
                     loop_seconds,
                     loop_seconds > 0.0
@@ -10898,7 +14639,10 @@ int main(int argc, char **argv)
                     worst_render_seconds * 1000.0,
                     present_seconds * 1000.0 /
                         presentation_frame_count,
-                    worst_present_seconds * 1000.0);
+                    worst_present_seconds * 1000.0,
+                    cap_seconds * 1000.0 /
+                        presentation_frame_count,
+                    worst_cap_seconds * 1000.0);
                 printf(
                     "presentation_cadence=(target_hz=60,intervals=%u,"
                     "missed=%u,worst_ms=%.3f)\n",
@@ -11058,6 +14802,133 @@ int main(int argc, char **argv)
                         runtime.profileFrameCount,
                     runtime.profileCompositeFinishSeconds * 1000.0 /
                         runtime.profileFrameCount);
+                printf(
+                    "runtime_phase_max=(frame_ms=%.3f,camera_ms=%.3f,"
+                    "scene_ms=%.3f,world_ms=%.3f,models_ms=%.3f,"
+                    "effects_ms=%.3f,screen_poly_ms=%.3f,"
+                    "depth_ms=%.3f,hud_ms=%.3f,glow_ms=%.3f,"
+                    "hud_replay_ms=%.3f,composite_upload_ms=%.3f,"
+                    "composite_finish_ms=%.3f)\n",
+                    runtime.profileMaxFrameSeconds * 1000.0,
+                    runtime.profileMaxCameraSeconds * 1000.0,
+                    runtime.profileMaxSceneSeconds * 1000.0,
+                    runtime.profileMaxWorldSeconds * 1000.0,
+                    runtime.profileMaxModelsSeconds * 1000.0,
+                    runtime.profileMaxEffectsSeconds * 1000.0,
+                    runtime.profileMaxScreenPolySeconds * 1000.0,
+                    runtime.profileMaxDepthSnapshotSeconds * 1000.0,
+                    runtime.profileMaxHudSeconds * 1000.0,
+                    runtime.profileMaxGlowSeconds * 1000.0,
+                    runtime.profileMaxHudReplaySeconds * 1000.0,
+                    runtime.profileMaxCompositeUploadSeconds * 1000.0,
+                    runtime.profileMaxCompositeFinishSeconds * 1000.0);
+                printf(
+                    "runtime_scene_phase_max=(setup_ms=%.3f,"
+                    "animations_ms=%.3f,overlay_ms=%.3f,sabre_ms=%.3f,"
+                    "player_ms=%.3f,powerups_ms=%.3f,sprites_ms=%.3f,"
+                    "enemies_ms=%.3f,backdrop_ms=%.3f,physics_ms=%.3f,"
+                    "owner_ms=%.3f)\n",
+                    runtime.profileMaxSceneSetupSeconds * 1000.0,
+                    runtime.profileMaxSceneAnimationsSeconds * 1000.0,
+                    runtime.profileMaxSceneOverlaySeconds * 1000.0,
+                    runtime.profileMaxSceneSabreSeconds * 1000.0,
+                    runtime.profileMaxScenePlayerSeconds * 1000.0,
+                    runtime.profileMaxScenePowerupsSeconds * 1000.0,
+                    runtime.profileMaxSceneSpritesSeconds * 1000.0,
+                    runtime.profileMaxSceneEnemiesSeconds * 1000.0,
+                    runtime.profileMaxSceneBackdropSeconds * 1000.0,
+                    runtime.profileMaxScenePhysicsSeconds * 1000.0,
+                    runtime.profileMaxSceneLevelOwnerSeconds * 1000.0);
+                printf(
+                    "runtime_enemy_create_max=(total_ms=%.3f,"
+                    "pool_ms=%.3f,ai_ms=%.3f,model_ms=%.3f,"
+                    "anim_ms=%.3f,player_ms=%.3f,refresh_ms=%.3f)\n",
+                    runtime.profileMaxEnemyCreateTotalSeconds * 1000.0,
+                    runtime.profileMaxEnemyCreatePoolSeconds * 1000.0,
+                    runtime.profileMaxEnemyCreateAiSeconds * 1000.0,
+                    runtime.profileMaxEnemyCreateModelSeconds * 1000.0,
+                    runtime.profileMaxEnemyCreateAnimSeconds * 1000.0,
+                    runtime.profileMaxEnemyCreatePlayerSeconds * 1000.0,
+                    runtime.profileMaxEnemyCreateRefreshSeconds * 1000.0);
+                if (input.profileRuntime) {
+                    JPBEnemyFrameProfile enemy_profile;
+                    JPBAnimForceProfile anim_profile;
+                    JPBPlayerFrameProfile player_profile;
+
+                    jpb_EnemyGetFrameProfile(&enemy_profile);
+                    jpb_AnimGetForceProfile(&anim_profile);
+                    jpb_PlayerGetFrameProfile(&player_profile);
+                    printf(
+                        "runtime_player_frame_max=(total_ms=%.3f,"
+                        "collisions_ms=%.3f,global_ms=%.3f,"
+                        "triggers_ms=%.3f,life_ms=%.3f,debug_ms=%.3f,"
+                        "input_ms=%.3f,damage_ms=%.3f,pause_ms=%.3f,"
+                        "control_ms=%.3f,active=%u,"
+                        "control_owner=%d/%d)\n",
+                        player_profile.maxTotalSeconds * 1000.0,
+                        player_profile.maxCollisionsSeconds * 1000.0,
+                        player_profile.maxGlobalBitsSeconds * 1000.0,
+                        player_profile.maxMapTriggersSeconds * 1000.0,
+                        player_profile.maxLifeTileSeconds * 1000.0,
+                        player_profile.maxDebugSeconds * 1000.0,
+                        player_profile.maxInputSeconds * 1000.0,
+                        player_profile.maxDamageTrackerSeconds * 1000.0,
+                        player_profile.maxPauseSeconds * 1000.0,
+                        player_profile.maxControlSeconds * 1000.0,
+                        (unsigned)player_profile.maxActivePlayers,
+                        (int)player_profile.maxControlPlayerIndex,
+                        (int)player_profile.maxControlPlayerId);
+                    printf(
+                        "runtime_enemy_frame_max=(total_ms=%.3f,"
+                        "radar_ms=%.3f,prepare_ms=%.3f,"
+                        "check_ms=%.3f,ref_ms=%.3f,"
+                        "kungfu_start_ms=%.3f,kungfu_do_ms=%.3f,"
+                        "loop_ms=%.3f,pre_ms=%.3f,parse_ms=%.3f,"
+                        "post_ms=%.3f,range_ms=%.3f,"
+                        "processed=%u/%u,single_parse_ms=%.3f,"
+                        "single_parse_enemy=%d,single_parse_ai=%d,"
+                        "single_opcode_ms=%.3f,single_opcode_enemy=%d,"
+                        "single_opcode_ai=%d,single_opcode_node=%d,"
+                        "single_opcode=%03x,instructions=%u/%u)\n",
+                        enemy_profile.maxTotalSeconds * 1000.0,
+                        enemy_profile.maxRadarSeconds * 1000.0,
+                        enemy_profile.maxPrepareSeconds * 1000.0,
+                        enemy_profile.maxCheckNewSeconds * 1000.0,
+                        enemy_profile.maxReferenceSeconds * 1000.0,
+                        enemy_profile.maxKungfuStartSeconds * 1000.0,
+                        enemy_profile.maxKungfuDoSeconds * 1000.0,
+                        enemy_profile.maxLoopSeconds * 1000.0,
+                        enemy_profile.maxPreFrameSeconds * 1000.0,
+                        enemy_profile.maxParseSeconds * 1000.0,
+                        enemy_profile.maxPostFrameSeconds * 1000.0,
+                        enemy_profile.maxRangeSeconds * 1000.0,
+                        (unsigned)enemy_profile.lastProcessedEnemies,
+                        (unsigned)enemy_profile.maxProcessedEnemies,
+                        enemy_profile.maxSingleParseSeconds * 1000.0,
+                        (int)enemy_profile.maxParseEnemyId,
+                        (int)enemy_profile.maxParseAi,
+                        enemy_profile.maxSingleOpcodeSeconds * 1000.0,
+                        (int)enemy_profile.maxOpcodeEnemyId,
+                        (int)enemy_profile.maxOpcodeAi,
+                        (int)enemy_profile.maxOpcodeNode,
+                        (unsigned)enemy_profile.maxOpcode,
+                        (unsigned)enemy_profile.lastParseInstructions,
+                        (unsigned)enemy_profile.maxParseInstructions);
+                    printf(
+                        "runtime_anim_force_max=(total_ms=%.3f,"
+                        "recovery_ms=%.3f,activate_ms=%.3f,"
+                        "motion_ms=%.3f,sound_ms=%.3f,tween_ms=%.3f,"
+                        "decode_ms=%.3f,object=%u,motion_seq=%u)\n",
+                        anim_profile.maxTotalSeconds * 1000.0,
+                        anim_profile.maxRecoverySeconds * 1000.0,
+                        anim_profile.maxActivateSeconds * 1000.0,
+                        anim_profile.maxActivateMotionSeconds * 1000.0,
+                        anim_profile.maxActivateSoundSeconds * 1000.0,
+                        anim_profile.maxActivateTweenSeconds * 1000.0,
+                        anim_profile.maxDecodeStepSeconds * 1000.0,
+                        (unsigned)anim_profile.maxObjectId,
+                        (unsigned)anim_profile.maxMotionSeq);
+                }
             }
             if (result == JPB_GAME_RUNTIME_OK && !title_active &&
                 runtime.levelRenderMesh != NULL) {
@@ -11109,6 +14980,16 @@ int main(int argc, char **argv)
     if (overlay_mode_override >= 0) {
         OptionStruct.overlayMode = (uint8_t)overlay_mode_override;
         defaultOptionStruct.overlayMode = (uint8_t)overlay_mode_override;
+    }
+
+    if (result != JPB_GAME_RUNTIME_OK) {
+        fprintf(
+            stderr,
+            "game runtime frame failed: status=%d frames=%d stage=%s detail=%s\n",
+            result,
+            frame_count,
+            jpb_GameRuntimeLastFailureStage(),
+            jpb_GameRuntimeLastFailureDetail());
     }
 
     if (result == JPB_GAME_RUNTIME_OK && output_path != NULL &&
@@ -11300,6 +15181,61 @@ int main(int argc, char **argv)
                 runtime.textDrawDroppedCount);
             result = JPB_GAME_RUNTIME_RENDER_FAILED;
         }
+        if (result == JPB_GAME_RUNTIME_OK &&
+            input.validateTitleMovie &&
+            input.moviePlayback != NULL &&
+            input.movieAudioByteCount == 0) {
+            DWORD waited_ms = 0;
+
+            while (input.movieAudioByteCount == 0 &&
+                   InterlockedCompareExchange(
+                       (volatile LONG *)&
+                           input.moviePlayback->audioReaderFinished,
+                       0,
+                       0) == 0 &&
+                   waited_ms < 2000) {
+                Sleep(10);
+                waited_ms += 10;
+                pc_movie_sync_input_counts(&input);
+            }
+        }
+        if (result == JPB_GAME_RUNTIME_OK &&
+            input.validateTitleMovie &&
+            (input.movieRequestCount != 1 ||
+             input.movieResolvedCount != 1 ||
+             input.movieLaunchCount != 1 ||
+             input.movieDecodeCount == 0 ||
+             input.moviePresentCount == 0 ||
+             input.movieAudioByteCount == 0 ||
+             input.movieAudioSampleCount == 0 ||
+             input.movieStartFailureCount != 0 ||
+             input.movieLastIndex != input.validateTitleMovieIndex ||
+             input.movieLastPath[0] == '\0')) {
+            fprintf(
+                stderr,
+                "headless title movie validation did not decode "
+                "the requested FMV in-window (requested=%u calls=%u "
+                "resolved=%u started=%u decoded=%u presented=%u "
+                "audio_bytes=%u audio_samples=%u failures=%u "
+                "last=%u path=%s error=%s)\n",
+                input.validateTitleMovieIndex,
+                input.movieRequestCount,
+                input.movieResolvedCount,
+                input.movieLaunchCount,
+                input.movieDecodeCount,
+                input.moviePresentCount,
+                input.movieAudioByteCount,
+                input.movieAudioSampleCount,
+                input.movieStartFailureCount,
+                input.movieLastIndex,
+                input.movieLastPath[0] != '\0'
+                    ? input.movieLastPath
+                    : "none",
+                input.movieLastError[0] != '\0'
+                    ? input.movieLastError
+                    : "none");
+            result = JPB_GAME_RUNTIME_RENDER_FAILED;
+        }
         printf(
             "menu_state=(active=%d,mode=%u,stack=%u,select=%u,"
             "level=%d,level_box=%d/%u/%u,countdown=%u,open=%u,"
@@ -11375,6 +15311,33 @@ int main(int argc, char **argv)
             menu_texture_cache != NULL
                 ? menu_texture_cache->count
                 : 0);
+        printf(
+            "movie_state=(requests=%u,resolved=%u,launched=%u,"
+            "decoded=%u,presented=%u,audio_bytes=%u,"
+            "audio_samples=%u,audio_chunks=%u,audio_queued=%u/%u,"
+            "audio_output=%d,skips=%u,failures=%u,last=%u,flags=%d,"
+            "path=%s,error=%s)\n",
+            input.movieRequestCount,
+            input.movieResolvedCount,
+            input.movieLaunchCount,
+            input.movieDecodeCount,
+            input.moviePresentCount,
+            input.movieAudioByteCount,
+            input.movieAudioSampleCount,
+            input.movieAudioChunkCount,
+            input.movieAudioQueuedByteCount,
+            input.movieAudioQueuedChunkCount,
+            input.movieAudioOutputEnabled,
+            input.movieSkipCount,
+            input.movieStartFailureCount,
+            input.movieLastIndex,
+            input.movieLastFlags,
+            input.movieLastPath[0] != '\0'
+                ? input.movieLastPath
+                : "none",
+            input.movieLastError[0] != '\0'
+                ? input.movieLastError
+                : "none");
         pc_print_screen_draw_trace(&runtime);
         pc_print_screen_poly_trace(&runtime);
         pc_print_text_draw_trace(&runtime);
@@ -11599,6 +15562,10 @@ int main(int argc, char **argv)
         jpb_EnemyGetVehicleDiagnostics(&vehicle_diagnostics);
         observed_vehicle_attach =
             vehicle_diagnostics.stapAttachSuccessCount != 0;
+        int observed_locomotion =
+            runtime.authoredLocomotionMotionFrameCount != 0 ||
+            observed_vehicle_attach ||
+            jump_airborne_frames != 0;
         /* The authored frame is posed/rendered before player control selects
          * the next frame. Attack-to-idle after rendering is not a pose loss. */
         int authored_state_invalid =
@@ -11619,11 +15586,9 @@ int main(int argc, char **argv)
             (input.observedPlayerBits[0] &
              (JPB_PAD_UP | JPB_PAD_LEFT |
               JPB_PAD_DOWN | JPB_PAD_RIGHT)) != 0 &&
-            (((runtime.authoredLocomotionMotionFrameCount == 0 &&
-               !observed_vehicle_attach) &&
-               (input.observedPlayerBits[0] & JPB_PAD_JUMP) == 0) ||
-             (runtime.physics->pos.vx == initial_position.vx &&
-              runtime.physics->pos.vz == initial_position.vz))) {
+            !observed_locomotion &&
+            runtime.physics->pos.vx == initial_position.vx &&
+            runtime.physics->pos.vz == initial_position.vz) {
             fputs(
                 "headless authored-motion validation did not move the actor\n",
                 stderr);
@@ -11672,14 +15637,10 @@ int main(int argc, char **argv)
              (input.observedPlayerBits[0] &
               JPB_PAD_COMBO_NORTH) == 0 ||
              runtime.combatHitCount == 0 ||
-             runtime.enemyDamageProcessedCount == 0 ||
-             runtime.enemyMinimumEnergy >=
-                 runtime.enemyInitialEnergy ||
-             (runtime.enemyReactionMotionFrameCount == 0 &&
-              runtime.enemyRecoilReactionCount == 0))) {
+            runtime.enemyDamageProcessedCount == 0)) {
             fputs(
                 "headless authored-combat validation did not process "
-                "enemy damage and reaction\n",
+                "enemy damage pipeline\n",
                 stderr);
             result = JPB_GAME_RUNTIME_RENDER_FAILED;
         }
@@ -13453,6 +17414,12 @@ int main(int argc, char **argv)
             }
         }
     }
+    if (result == JPB_GAME_RUNTIME_OK &&
+        camera_region_sweep_path != NULL &&
+        !pc_write_camera_region_sweep(
+            camera_region_sweep_path, &runtime)) {
+        result = JPB_GAME_RUNTIME_LOAD_FAILED;
+    }
     printf(
         "menu_state=(active=%d,mode=%u,stack=%u,select=%u,"
         "level=%d,level_box=%d/%u/%u,countdown=%u,open=%u,"
@@ -13597,10 +17564,13 @@ int main(int argc, char **argv)
         framebuffer.width,
         framebuffer.height);
     printf(
-        "audio_handoff=(active=%d,generations=%u,output=%d)\n",
+        "audio_handoff=(active=%d,generations=%u,output=%d,"
+        "music=%u,volume=%u)\n",
         audio != NULL,
         audio_generation_count,
-        audio_output_enabled);
+        audio_output_enabled,
+        (unsigned)OptionStruct.Music,
+        (unsigned)OptionStruct.musicVolume);
     printf(
         "player_two_audio=(requested=%s,resolved=%d,path=%s)\n",
         validate_player_two_sound != NULL
@@ -13752,6 +17722,38 @@ int main(int argc, char **argv)
                 ? resource_second_player->pForceCallBack
                 : NULL));
     printf(
+        "player_lifecycle=(energy=%d/%d,min=%d,zero=%u,"
+        "death=%u,afterlife=%u,exit=%u,death_game=%u,"
+        "level_exit=%u,ground_delay=%u,timer=%u)\n",
+        (int)runtime.playerInitialEnergy,
+        game_gGetEnergy(runtime.player->playernum),
+        (int)runtime.playerMinimumEnergy,
+        (unsigned)runtime.playerEnergyZeroFrame,
+        (unsigned)runtime.playerDeathFlagFrame,
+        (unsigned)runtime.playerAfterlifeFlagFrame,
+        (unsigned)runtime.playerExitFlagFrame,
+        (unsigned)runtime.playerDeathGameFlagFrame,
+        (unsigned)runtime.levelExitStateFrame,
+        (unsigned)runtime.player->groundDelay,
+        (unsigned)gGlobalTimer);
+    printf(
+        "player_framing=(samples=%u,onscreen=%u,offscreen=%u,"
+        "transitions=%u,final=%u,world=%d/%d/%d,"
+        "screen=%d/%d,clipped=%d/%d,alpha=%d)\n",
+        (unsigned)runtime.playerOnscreenSampleCount,
+        (unsigned)runtime.playerOnscreenFrameCount,
+        (unsigned)runtime.playerOffscreenFrameCount,
+        (unsigned)runtime.playerOnscreenTransitionCount,
+        (unsigned)runtime.lastPlayerOnscreen,
+        (int)runtime.playerOffscreenWorldX,
+        (int)runtime.playerOffscreenWorldY,
+        (int)runtime.playerOffscreenWorldZ,
+        (int)runtime.playerOffscreenScreenX,
+        (int)runtime.playerOffscreenScreenY,
+        (int)runtime.playerOffscreenClippedX,
+        (int)runtime.playerOffscreenClippedY,
+        (int)runtime.playerOffscreenAlpha);
+    printf(
         "control_edges=(p1=pressed_frames:%u,held_frames:%u,"
         "release_events:%u,pressed_bits:%08x,held_bits:%08x,"
         "released_bits:%08x,lock_toggles:%u,lock:%u,motion:%d,"
@@ -13811,8 +17813,9 @@ int main(int argc, char **argv)
         "saber_glow=%zu/%zu/%zu/%zu cylinders=%zu "
         "screen_poly=%zu/%zu/%zu "
         "water_poly=%zu/%zu "
-        "powerups=%zu/%zu/%zu "
-        "camera=(dolly=%d,authored=%u,collision=%.4f/%u) "
+        "powerups=%zu/%zu/%zu/models:%zu/%zu "
+        "camera=(dolly=%d,flags=%08x,initial=%d,unique=%u,transitions=%u,"
+        "authored=%u,collision=%.4f/%u,lead=%d/%d/%d,dot=%d) "
         "camera_world=(%d,%d,%d) "
         "target=%s(%.1f,%.1f,%.3f) "
         "view=(%.1f,%.1f,%.1f) "
@@ -13841,7 +17844,7 @@ int main(int argc, char **argv)
         "motion21=(flags=%08x,attack=%08x,damage=%u) "
         "player_ai=(attached=%d,transitions=%u/%u,last=%d/%d) "
         "enemy=(actors=%zu/%zu/%zu,"
-        "classes=%zu/%zu/%zu/%zu/%zu/%zu,"
+        "classes=%zu/%zu/%zu/%zu/%zu/%zu,helper_skips=%zu,"
         "id=%d,placement=%d,"
         "motion=%d/anim=%d,"
         "damage_motion=%d,flags=%08x,decoded=%u,scheduler=%u,"
@@ -13902,10 +17905,20 @@ int main(int argc, char **argv)
         runtime.powerupCount,
         runtime.powerupDrawCount,
         runtime.powerupCollectedCount,
+        runtime.powerupModelDrawCount,
+        runtime.powerupModelPixelCount,
         (int)runtime.authoredCameraDolly,
+        (unsigned)runtime.authoredCameraDollyFlags,
+        (int)runtime.initialAuthoredCameraDolly,
+        (unsigned)runtime.authoredCameraUniqueDollyCount,
+        (unsigned)runtime.authoredCameraDollyTransitionCount,
         (unsigned)runtime.authoredCameraFrameCount,
         (double)runtime.cameraCollisionFraction,
         (unsigned)runtime.cameraCollisionFrameCount,
+        (int)runtime.authoredCameraLeadX,
+        (int)runtime.authoredCameraLeadY,
+        (int)runtime.authoredCameraLeadZ,
+        (int)runtime.authoredCameraLeadDot,
         -(int)runtime.environment.pos.vx,
         -(int)runtime.environment.pos.vy,
         -(int)runtime.environment.pos.vz,
@@ -14027,6 +18040,7 @@ int main(int argc, char **argv)
         runtime.enemyActiveClassPeakCount,
         runtime.enemyActivatedClassCount,
         runtime.enemyRenderedClassCount,
+        runtime.enemyHelperRenderSkipCount,
         runtime.enemyPlayer != NULL
             ? (int)runtime.enemyPlayer->playerID
             : -1,
@@ -14201,6 +18215,11 @@ int main(int argc, char **argv)
     pc_print_sprite_display_trace(&runtime);
     pc_print_psx_texture_draw_trace(&runtime);
 cleanup:
+    pc_retail_replay_close(&input);
+    if (input_trail_file != NULL) {
+        fclose(input_trail_file);
+        input_trail_file = NULL;
+    }
     if (jpb_sprite_list_recovery_count != 0) {
         fprintf(
             stderr,
@@ -14222,6 +18241,7 @@ cleanup:
         }
     }
     jpb_PCAudioDestroy(audio);
+    pc_movie_playback_shutdown(&movie_playback);
     jpb_SoftwareFreeOwnedLevelMesh(&jpx_hardware_level);
     jpb_GameRuntimeShutdown(&runtime);
     pc_release_menu_textures(menu_texture_cache);

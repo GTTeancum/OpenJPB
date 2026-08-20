@@ -26,21 +26,45 @@
 #include "jpb/level_world.h"
 #include "jpb/sound.h"
 
+#include "pc_log_win32.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 enum {
     JPB_PC_AUDIO_VOICE_COUNT = 64,
+    JPB_PC_AUDIO_SAMPLE_CACHE_COUNT = 1024,
+    JPB_PC_AUDIO_WARM_VOICES_PER_FORMAT = 4,
+    JPB_PC_AUDIO_WARM_FORMAT_COUNT = 16,
     JPB_PC_AUDIO_PATH_CAPACITY = 1024
 };
+
+typedef struct JPBPCAudioSample {
+    char path[JPB_PC_AUDIO_PATH_CAPACITY];
+    unsigned char *bytes;
+    size_t size;
+    JPBPCAudioWavInfo info;
+} JPBPCAudioSample;
+
+typedef struct JPBPCAudioWarmFormat {
+    uint16_t formatTag;
+    uint16_t channels;
+    uint32_t sampleRate;
+    uint32_t averageBytesPerSecond;
+    uint16_t blockAlign;
+    uint16_t bitsPerSample;
+} JPBPCAudioWarmFormat;
 
 typedef struct JPBPCAudioVoice {
     HWAVEOUT output;
     WAVEHDR header;
+    JPBPCAudioWarmFormat outputFormat;
     unsigned char *fileBytes;
     VECTOR *loopPosition;
+    int borrowedFileBytes;
     int prepared;
+    int outputReady;
     int active;
     int looping;
     int quiet;
@@ -64,7 +88,17 @@ struct JPBPCAudio {
     int musicVolume;
     JPBPCAudioStats stats;
     int outputEnabled;
+    JPBPCAudioSample samples[JPB_PC_AUDIO_SAMPLE_CACHE_COUNT];
+    size_t sampleCount;
+    JPBPCAudioWarmFormat warmFormats[JPB_PC_AUDIO_WARM_FORMAT_COUNT];
+    size_t warmFormatCount;
 };
+
+static void pc_audio_seed_voice_outputs(
+    JPBPCAudio *audio,
+    const JPBPCAudioWavInfo *info,
+    const WAVEFORMATEX *format,
+    const char *path);
 
 static const char *const jpb_looping_sounds[] = {
     "fan_big",
@@ -439,11 +473,298 @@ static int pc_audio_is_looping(const char *sound)
     return 0;
 }
 
-static void pc_audio_release_voice(JPBPCAudioVoice *voice)
+static JPBPCAudioSample *pc_audio_cached_sample(
+    JPBPCAudio *audio,
+    const char *path)
 {
+    JPBPCAudioSample *sample;
+    size_t index;
+    size_t size = 0;
+
+    if (audio == NULL || path == NULL || path[0] == '\0') {
+        return NULL;
+    }
+    for (index = 0; index < audio->sampleCount; ++index) {
+        sample = &audio->samples[index];
+        if (_stricmp(sample->path, path) == 0) {
+            return sample->bytes != NULL ? sample : NULL;
+        }
+    }
+    if (audio->sampleCount >= JPB_PC_AUDIO_SAMPLE_CACHE_COUNT) {
+        jpb_PCLog("audio sample cache full path=%s", path);
+        return NULL;
+    }
+    sample = &audio->samples[audio->sampleCount];
+    memset(sample, 0, sizeof(*sample));
+    if (!pc_audio_copy_string(
+            sample->path,
+            sizeof(sample->path),
+            path,
+            strlen(path))) {
+        return NULL;
+    }
+    sample->bytes = pc_audio_read_file(path, &size);
+    sample->size = size;
+    if (sample->bytes == NULL ||
+        !jpb_PCAudioInspectWavMemory(
+            sample->bytes, sample->size, &sample->info)) {
+        jpb_PCLog(
+            "audio sample preload failed path=%s bytes=%zu",
+            path,
+            size);
+        free(sample->bytes);
+        memset(sample, 0, sizeof(*sample));
+        return NULL;
+    }
+    ++audio->sampleCount;
+    return sample;
+}
+
+static void pc_audio_format_from_wav(
+    const JPBPCAudioWavInfo *info,
+    WAVEFORMATEX *format)
+{
+    memset(format, 0, sizeof(*format));
+    format->wFormatTag = info->formatTag;
+    format->nChannels = info->channels;
+    format->nSamplesPerSec = info->sampleRate;
+    format->nAvgBytesPerSec = info->averageBytesPerSecond;
+    format->nBlockAlign = info->blockAlign;
+    format->wBitsPerSample = info->bitsPerSample;
+    format->cbSize = 0;
+}
+
+static int pc_audio_warm_format_matches(
+    const JPBPCAudioWarmFormat *format,
+    const JPBPCAudioWavInfo *info)
+{
+    return format != NULL && info != NULL &&
+           format->formatTag == info->formatTag &&
+           format->channels == info->channels &&
+           format->sampleRate == info->sampleRate &&
+           format->averageBytesPerSecond ==
+               info->averageBytesPerSecond &&
+           format->blockAlign == info->blockAlign &&
+           format->bitsPerSample == info->bitsPerSample;
+}
+
+static void pc_audio_remember_warm_format(
+    JPBPCAudio *audio,
+    const JPBPCAudioWavInfo *info)
+{
+    JPBPCAudioWarmFormat *format;
+
+    if (audio == NULL || info == NULL ||
+        audio->warmFormatCount >= JPB_PC_AUDIO_WARM_FORMAT_COUNT) {
+        return;
+    }
+    format = &audio->warmFormats[audio->warmFormatCount++];
+    format->formatTag = info->formatTag;
+    format->channels = info->channels;
+    format->sampleRate = info->sampleRate;
+    format->averageBytesPerSecond = info->averageBytesPerSecond;
+    format->blockAlign = info->blockAlign;
+    format->bitsPerSample = info->bitsPerSample;
+}
+
+static void pc_audio_store_format(
+    JPBPCAudioWarmFormat *format,
+    const JPBPCAudioWavInfo *info)
+{
+    if (format == NULL || info == NULL) {
+        return;
+    }
+    format->formatTag = info->formatTag;
+    format->channels = info->channels;
+    format->sampleRate = info->sampleRate;
+    format->averageBytesPerSecond = info->averageBytesPerSecond;
+    format->blockAlign = info->blockAlign;
+    format->bitsPerSample = info->bitsPerSample;
+}
+
+static int pc_audio_output_format_warmed(
+    const JPBPCAudio *audio,
+    const JPBPCAudioWavInfo *info)
+{
+    size_t index;
+
+    if (audio == NULL || info == NULL) {
+        return 0;
+    }
+    for (index = 0; index < audio->warmFormatCount; ++index) {
+        if (pc_audio_warm_format_matches(
+                &audio->warmFormats[index], info)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void pc_audio_warm_output_sample(
+    JPBPCAudio *audio,
+    const JPBPCAudioSample *sample)
+{
+    WAVEFORMATEX format;
+    WAVEHDR header;
+    HWAVEOUT output = NULL;
+    MMRESULT result;
+    DWORD warm_bytes;
+    int warmed;
+
+    if (audio == NULL || sample == NULL ||
+        !audio->outputEnabled ||
+        sample->bytes == NULL ||
+        sample->info.dataOffset >= sample->size ||
+        sample->info.dataSize == 0) {
+        return;
+    }
+    pc_audio_format_from_wav(&sample->info, &format);
+    warmed = pc_audio_output_format_warmed(audio, &sample->info);
+    if (warmed) {
+        pc_audio_seed_voice_outputs(
+            audio, &sample->info, &format, sample->path);
+        return;
+    }
+    if (audio->warmFormatCount >= JPB_PC_AUDIO_WARM_FORMAT_COUNT) {
+        jpb_PCLog("audio output warm format cache full");
+        return;
+    }
+    result = waveOutOpen(
+        &output,
+        WAVE_MAPPER,
+        &format,
+        0,
+        0,
+        CALLBACK_NULL);
+    if (result != MMSYSERR_NOERROR) {
+        jpb_PCLog(
+            "audio output warm waveOutOpen failed path=%s result=%u "
+            "format=%u channels=%u hz=%lu bits=%u",
+            sample->path,
+            (unsigned)result,
+            (unsigned)format.wFormatTag,
+            (unsigned)format.nChannels,
+            (unsigned long)format.nSamplesPerSec,
+            (unsigned)format.wBitsPerSample);
+        return;
+    }
+    warm_bytes = sample->info.dataSize;
+    if (warm_bytes > 4096U) {
+        warm_bytes = 4096U;
+    }
+    if (sample->info.blockAlign > 1) {
+        warm_bytes -=
+            warm_bytes % (DWORD)sample->info.blockAlign;
+    }
+    if (warm_bytes == 0 ||
+        (size_t)sample->info.dataOffset + (size_t)warm_bytes >
+            sample->size) {
+        waveOutClose(output);
+        jpb_PCLog(
+            "audio output warm skipped invalid data path=%s",
+            sample->path);
+        return;
+    }
+    memset(&header, 0, sizeof(header));
+    header.lpData =
+        (LPSTR)(sample->bytes + sample->info.dataOffset);
+    header.dwBufferLength = warm_bytes;
+    result = waveOutPrepareHeader(output, &header, sizeof(header));
+    if (result == MMSYSERR_NOERROR) {
+        result = waveOutWrite(output, &header, sizeof(header));
+        (void)waveOutReset(output);
+        (void)waveOutUnprepareHeader(output, &header, sizeof(header));
+    }
+    (void)waveOutClose(output);
+    if (result != MMSYSERR_NOERROR) {
+        jpb_PCLog(
+            "audio output warm write failed path=%s result=%u",
+            sample->path,
+            (unsigned)result);
+        return;
+    }
+    pc_audio_remember_warm_format(audio, &sample->info);
+    pc_audio_seed_voice_outputs(
+        audio, &sample->info, &format, sample->path);
+}
+
+static int pc_audio_bank_entry_path(
+    const JPBPCAudio *audio,
+    const char *authored_path,
+    char *path,
+    size_t path_capacity)
+{
+    char relative_path[JPB_PC_AUDIO_PATH_CAPACITY];
+    size_t path_index;
+
+    if (audio == NULL || authored_path == NULL ||
+        path == NULL || path_capacity == 0 ||
+        !pc_audio_copy_string(
+            relative_path,
+            sizeof(relative_path),
+            authored_path,
+            strlen(authored_path))) {
+        return 0;
+    }
+    for (path_index = 0;
+         relative_path[path_index] != '\0';
+         ++path_index) {
+        if (relative_path[path_index] == '/') {
+            relative_path[path_index] = '\\';
+        }
+    }
+    return pc_audio_join(
+        path,
+        path_capacity,
+        audio->soundRoot,
+        relative_path);
+}
+
+static int pc_audio_preload_bank_samples(
+    JPBPCAudio *audio,
+    const char *const *paths,
+    int count)
+{
+    int index;
+
+    if (audio == NULL || paths == NULL || count < 0) {
+        return 0;
+    }
+    for (index = 0; index < count; ++index) {
+        char path[JPB_PC_AUDIO_PATH_CAPACITY];
+        JPBPCAudioSample *sample;
+
+        if (!pc_audio_bank_entry_path(
+                audio,
+                paths[index],
+                path,
+                sizeof(path)) ||
+            (sample = pc_audio_cached_sample(audio, path)) == NULL) {
+            jpb_PCLog(
+                "audio bank preload failed index=%d path=%s",
+                index,
+                paths[index] != NULL ? paths[index] : "<null>");
+            return 0;
+        }
+        pc_audio_warm_output_sample(audio, sample);
+    }
+    return 1;
+}
+
+static void pc_audio_clear_voice(
+    JPBPCAudioVoice *voice,
+    int keep_output)
+{
+    HWAVEOUT output;
+    JPBPCAudioWarmFormat output_format;
+    int output_ready;
+
     if (voice == NULL) {
         return;
     }
+    output = voice->output;
+    output_format = voice->outputFormat;
+    output_ready = voice->outputReady;
     if (voice->output != NULL) {
         if (voice->active) {
             (void)waveOutReset(voice->output);
@@ -452,10 +773,167 @@ static void pc_audio_release_voice(JPBPCAudioVoice *voice)
             (void)waveOutUnprepareHeader(
                 voice->output, &voice->header, sizeof(voice->header));
         }
-        (void)waveOutClose(voice->output);
+        if (!keep_output) {
+            (void)waveOutClose(voice->output);
+            output = NULL;
+            output_ready = 0;
+            memset(&output_format, 0, sizeof(output_format));
+        }
     }
-    free(voice->fileBytes);
+    if (!voice->borrowedFileBytes) {
+        free(voice->fileBytes);
+    }
     memset(voice, 0, sizeof(*voice));
+    if (keep_output && output != NULL && output_ready) {
+        voice->output = output;
+        voice->outputFormat = output_format;
+        voice->outputReady = 1;
+    }
+}
+
+static void pc_audio_recycle_voice(JPBPCAudioVoice *voice)
+{
+    pc_audio_clear_voice(voice, 1);
+}
+
+static void pc_audio_release_voice(JPBPCAudioVoice *voice)
+{
+    pc_audio_clear_voice(voice, 0);
+}
+
+static int pc_audio_voice_output_matches(
+    const JPBPCAudioVoice *voice,
+    const JPBPCAudioWavInfo *info)
+{
+    return voice != NULL && info != NULL &&
+           voice->output != NULL &&
+           voice->outputReady &&
+           pc_audio_warm_format_matches(&voice->outputFormat, info);
+}
+
+static int pc_audio_prepare_voice_output(
+    JPBPCAudioVoice *voice,
+    const JPBPCAudioWavInfo *info,
+    const WAVEFORMATEX *format,
+    const char *path)
+{
+    MMRESULT result;
+
+    if (voice == NULL || info == NULL || format == NULL) {
+        return 0;
+    }
+    if (pc_audio_voice_output_matches(voice, info)) {
+        return 1;
+    }
+    pc_audio_release_voice(voice);
+    result = waveOutOpen(
+        &voice->output,
+        WAVE_MAPPER,
+        format,
+        0,
+        0,
+        CALLBACK_NULL);
+    if (result != MMSYSERR_NOERROR) {
+        jpb_PCLog(
+            "audio stream waveOutOpen failed path=%s result=%u "
+            "format=%u channels=%u hz=%lu bits=%u",
+            path,
+            (unsigned)result,
+            (unsigned)format->wFormatTag,
+            (unsigned)format->nChannels,
+            (unsigned long)format->nSamplesPerSec,
+            (unsigned)format->wBitsPerSample);
+        pc_audio_release_voice(voice);
+        return 0;
+    }
+    pc_audio_store_format(&voice->outputFormat, info);
+    voice->outputReady = 1;
+    return 1;
+}
+
+static void pc_audio_seed_voice_outputs(
+    JPBPCAudio *audio,
+    const JPBPCAudioWavInfo *info,
+    const WAVEFORMATEX *format,
+    const char *path)
+{
+    size_t index;
+    int ready_count = 0;
+
+    if (audio == NULL || info == NULL || format == NULL) {
+        return;
+    }
+    for (index = 0; index < JPB_PC_AUDIO_VOICE_COUNT; ++index) {
+        JPBPCAudioVoice *voice = &audio->voices[index];
+
+        if (!voice->active &&
+            pc_audio_voice_output_matches(voice, info)) {
+            ++ready_count;
+        }
+    }
+    while (ready_count < JPB_PC_AUDIO_WARM_VOICES_PER_FORMAT) {
+        JPBPCAudioVoice *voice = NULL;
+
+        for (index = 0; index < JPB_PC_AUDIO_VOICE_COUNT; ++index) {
+            if (!audio->voices[index].active &&
+                audio->voices[index].output == NULL) {
+                voice = &audio->voices[index];
+                break;
+            }
+        }
+        if (voice == NULL ||
+            !pc_audio_prepare_voice_output(voice, info, format, path)) {
+            return;
+        }
+        ++ready_count;
+    }
+}
+
+static JPBPCAudioVoice *pc_audio_choose_voice(
+    JPBPCAudio *audio,
+    const JPBPCAudioWavInfo *info,
+    size_t *voice_index)
+{
+    JPBPCAudioVoice *empty_voice = NULL;
+    size_t empty_index = 0;
+    JPBPCAudioVoice *available_voice = NULL;
+    size_t available_index = 0;
+    size_t index;
+
+    if (audio == NULL || info == NULL) {
+        return NULL;
+    }
+    for (index = 0; index < JPB_PC_AUDIO_VOICE_COUNT; ++index) {
+        JPBPCAudioVoice *voice = &audio->voices[index];
+
+        if (voice->active) {
+            continue;
+        }
+        if (pc_audio_voice_output_matches(voice, info)) {
+            if (voice_index != NULL) {
+                *voice_index = index;
+            }
+            return voice;
+        }
+        if (voice->output == NULL && empty_voice == NULL) {
+            empty_voice = voice;
+            empty_index = index;
+        }
+        if (available_voice == NULL) {
+            available_voice = voice;
+            available_index = index;
+        }
+    }
+    if (empty_voice != NULL) {
+        if (voice_index != NULL) {
+            *voice_index = empty_index;
+        }
+        return empty_voice;
+    }
+    if (available_voice != NULL && voice_index != NULL) {
+        *voice_index = available_index;
+    }
+    return available_voice;
 }
 
 static void pc_audio_gains(
@@ -575,11 +1053,11 @@ static void pc_audio_reap(JPBPCAudio *audio)
             continue;
         }
         if ((voice->header.dwFlags & WHDR_DONE) != 0) {
-            pc_audio_release_voice(voice);
+            pc_audio_recycle_voice(voice);
         } else if (voice->fadeDuration != 0 &&
                    GetTickCount64() - voice->fadeStart >=
                        voice->fadeDuration) {
-            pc_audio_release_voice(voice);
+            pc_audio_recycle_voice(voice);
         } else if (voice->looping || voice->fadeDuration != 0) {
             pc_audio_set_voice_volume(voice);
         }
@@ -597,6 +1075,7 @@ void jpb_PCAudioUpdate(JPBPCAudio *audio)
     if (audio == NULL) {
         return;
     }
+    pc_audio_reap(audio);
     update_looped_sounds();
 }
 
@@ -623,12 +1102,12 @@ static uint16_t pc_audio_play_hook(
 {
     JPBPCAudio *audio = (JPBPCAudio *)user_data;
     JPBPCAudioVoice *voice = NULL;
+    JPBPCAudioSample *sample;
     JPBPCAudioWavInfo info;
     WAVEFORMATEX format;
     char path[JPB_PC_AUDIO_PATH_CAPACITY];
     const char *name = pc_audio_sound_name(sound);
-    size_t size = 0;
-    size_t index;
+    size_t index = 0;
     MMRESULT result;
 
     (void)flag;
@@ -638,41 +1117,24 @@ static uint16_t pc_audio_play_hook(
         return 0;
     }
     pc_audio_reap(audio);
-    for (index = 0; index < JPB_PC_AUDIO_VOICE_COUNT; ++index) {
-        if (!audio->voices[index].active) {
-            voice = &audio->voices[index];
-            break;
-        }
+    sample = pc_audio_cached_sample(audio, path);
+    if (sample == NULL) {
+        jpb_PCLog(
+            "audio sample play failed path=%s reason=cache-load",
+            path);
+        return 0;
     }
+    info = sample->info;
+    pc_audio_format_from_wav(&info, &format);
+    voice = pc_audio_choose_voice(audio, &info, &index);
     if (voice == NULL) {
         return 0;
     }
-    voice->fileBytes = pc_audio_read_file(path, &size);
-    if (voice->fileBytes == NULL ||
-        !jpb_PCAudioInspectWavMemory(
-            voice->fileBytes, size, &info)) {
-        pc_audio_release_voice(voice);
+    if (!pc_audio_prepare_voice_output(voice, &info, &format, path)) {
         return 0;
     }
-    memset(&format, 0, sizeof(format));
-    format.wFormatTag = info.formatTag;
-    format.nChannels = info.channels;
-    format.nSamplesPerSec = info.sampleRate;
-    format.nAvgBytesPerSec = info.averageBytesPerSecond;
-    format.nBlockAlign = info.blockAlign;
-    format.wBitsPerSample = info.bitsPerSample;
-    format.cbSize = 0;
-    result = waveOutOpen(
-        &voice->output,
-        WAVE_MAPPER,
-        &format,
-        0,
-        0,
-        CALLBACK_NULL);
-    if (result != MMSYSERR_NOERROR) {
-        pc_audio_release_voice(voice);
-        return 0;
-    }
+    voice->fileBytes = sample->bytes;
+    voice->borrowedFileBytes = 1;
     memset(&voice->header, 0, sizeof(voice->header));
     voice->header.lpData =
         (LPSTR)(voice->fileBytes + info.dataOffset);
@@ -685,6 +1147,10 @@ static uint16_t pc_audio_play_hook(
     result = waveOutPrepareHeader(
         voice->output, &voice->header, sizeof(voice->header));
     if (result != MMSYSERR_NOERROR) {
+        jpb_PCLog(
+            "audio stream prepare failed path=%s result=%u",
+            path,
+            (unsigned)result);
         pc_audio_release_voice(voice);
         return 0;
     }
@@ -706,6 +1172,10 @@ static uint16_t pc_audio_play_hook(
     result = waveOutWrite(
         voice->output, &voice->header, sizeof(voice->header));
     if (result != MMSYSERR_NOERROR) {
+        jpb_PCLog(
+            "audio stream write failed path=%s result=%u",
+            path,
+            (unsigned)result);
         pc_audio_release_voice(voice);
         return 0;
     }
@@ -729,7 +1199,7 @@ static void pc_audio_stop_hook(
     index = (size_t)handle - 1;
     if (index < JPB_PC_AUDIO_VOICE_COUNT &&
         audio->voices[index].active) {
-        pc_audio_release_voice(&audio->voices[index]);
+        pc_audio_recycle_voice(&audio->voices[index]);
     }
 }
 
@@ -750,7 +1220,7 @@ static void pc_audio_fade_hook(
         return;
     }
     if (fade_time == 0) {
-        pc_audio_release_voice(&audio->voices[index]);
+        pc_audio_recycle_voice(&audio->voices[index]);
         return;
     }
     audio->voices[index].fadeStart = GetTickCount64();
@@ -773,6 +1243,10 @@ static int pc_audio_bank_hook(
     }
     if (load) {
         if (paths == NULL || count < 0) {
+            return 0;
+        }
+        if (audio->outputEnabled &&
+            !pc_audio_preload_bank_samples(audio, paths, count)) {
             return 0;
         }
         audio->bankPaths[bank_id] = paths;
@@ -925,11 +1399,35 @@ static void pc_audio_stream_play_hook(
     char path[JPB_PC_AUDIO_PATH_CAPACITY];
 
     (void)stream_index;
-    if (audio == NULL || !audio->outputEnabled ||
-        !jpb_PCAudioResolveStream(
-            audio, stream_name, path, sizeof(path))) {
+    if (audio == NULL) {
+        jpb_PCLog(
+            "audio stream ignored index=%d name=%s reason=no-audio",
+            stream_index,
+            stream_name != NULL ? stream_name : "<null>");
         return;
     }
+    if (!audio->outputEnabled) {
+        jpb_PCLog(
+            "audio stream ignored index=%d name=%s reason=output-disabled",
+            stream_index,
+            stream_name != NULL ? stream_name : "<null>");
+        return;
+    }
+    if (!jpb_PCAudioResolveStream(
+            audio, stream_name, path, sizeof(path))) {
+        jpb_PCLog(
+            "audio stream resolve failed index=%d name=%s",
+            stream_index,
+            stream_name != NULL ? stream_name : "<null>");
+        return;
+    }
+    jpb_PCLog(
+        "audio stream request index=%d name=%s volume=%d loop=%d path=%s",
+        stream_index,
+        stream_name,
+        volume,
+        loop,
+        path);
     audio->musicVolume = volume;
     if (audio->music.active && audio->musicPaused &&
         _stricmp(path, audio->currentMusicPath) == 0) {
@@ -951,6 +1449,11 @@ static void pc_audio_stream_play_hook(
         path,
         strlen(path));
     ++audio->stats.musicStarted;
+    jpb_PCLog(
+        "audio stream started index=%d name=%s active=%d",
+        stream_index,
+        stream_name,
+        audio->music.active);
 }
 
 static int pc_audio_stream_control_hook(
@@ -1043,6 +1546,16 @@ JPBPCAudio *jpb_PCAudioCreate(
         free(audio);
         return NULL;
     }
+    jpb_PCLog(
+        "audio create roots sound=%s stream=%s level=%d bank=%s output=%d "
+        "music=%u volume=%u",
+        audio->soundRoot,
+        audio->streamRoot,
+        level_index,
+        audio->levelBank,
+        enable_output != 0,
+        (unsigned)OptionStruct.Music,
+        (unsigned)OptionStruct.musicVolume);
     if (player_one_cad_path != NULL &&
         !pc_audio_bank_from_cad(
             player_one_cad_path,
@@ -1073,13 +1586,26 @@ JPBPCAudio *jpb_PCAudioCreate(
             pc_audio_stream_control_hook, audio);
     }
     sound_Init();
+    if (audio->outputEnabled && audio->bankPaths[0] == NULL) {
+        jpb_PCAudioDestroy(audio);
+        return NULL;
+    }
     if (audio->playerBank[0][0] != '\0') {
-        (void)sound_LoadBank(audio->playerBank[0], 1);
+        if (sound_LoadBank(audio->playerBank[0], 1) < 0) {
+            jpb_PCAudioDestroy(audio);
+            return NULL;
+        }
     }
     if (audio->playerBank[1][0] != '\0') {
-        (void)sound_LoadBank(audio->playerBank[1], 2);
+        if (sound_LoadBank(audio->playerBank[1], 2) < 0) {
+            jpb_PCAudioDestroy(audio);
+            return NULL;
+        }
     }
-    (void)sound_LoadBank(audio->levelBank, 3);
+    if (sound_LoadBank(audio->levelBank, 3) < 0) {
+        jpb_PCAudioDestroy(audio);
+        return NULL;
+    }
     return audio;
 }
 
@@ -1107,5 +1633,8 @@ void jpb_PCAudioDestroy(JPBPCAudio *audio)
         pc_audio_release_voice(&audio->voices[index]);
     }
     pc_audio_release_voice(&audio->music);
+    for (index = 0; index < audio->sampleCount; ++index) {
+        free(audio->samples[index].bytes);
+    }
     free(audio);
 }

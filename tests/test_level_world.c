@@ -97,7 +97,7 @@ static int test_streets_cullmesh(void)
 
     CHECK(jpb_ShouldDrawFbxMesh(
         7, JPB_LEVEL_FBX_PASS_OPAQUE, 31, 5, "unused"));
-    CHECK(!jpb_ShouldDrawFbxMesh(
+    CHECK(jpb_ShouldDrawFbxMesh(
         7, JPB_LEVEL_FBX_PASS_OPAQUE, 31, 4, "unused"));
     CHECK(jpb_ShouldDrawFbxMesh(
         7, JPB_LEVEL_FBX_PASS_OPAQUE, 32, 4, "unused"));

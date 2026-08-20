@@ -4,6 +4,7 @@ param(
     [string]$OutputDirectory = '',
     [string]$LedgerPath = '',
     [int]$Frames = 720,
+    [int]$ControlFrames = 240,
     [ValidateSet('Headless', 'Hardware')]
     [string]$RunMode = 'Headless',
     [int]$Width = 960,
@@ -31,16 +32,18 @@ $Executable = [System.IO.Path]::GetFullPath($Executable)
 if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
     throw "OpenJPB executable not found: $Executable"
 }
-if ($Frames -lt 1 -or $Width -lt 320 -or $Height -lt 240) {
+if ($Frames -lt 1 -or $ControlFrames -lt 1 -or
+    $Width -lt 320 -or $Height -lt 240) {
     throw 'Frames and framebuffer dimensions must be positive runtime values.'
 }
 $InputKeys = @($InputKeys | Select-Object -Unique)
 if ($InputKeys.Count -eq 0) {
     throw 'At least one virtual control-probe key is required.'
 }
+$controlProbeFrames = [Math]::Min($Frames, $ControlFrames)
 $controlFrameMinimum = [Math]::Min(
     30,
-    [Math]::Max(1, [int][Math]::Floor($Frames / 3.0)))
+    [Math]::Max(1, [int][Math]::Floor($controlProbeFrames / 3.0)))
 
 # Order and indices come from the executable/PDB-owned sLevelNames table in
 # src/reconstructed/original/level_world.c. Duplicate train1 slots collapse to
@@ -138,13 +141,11 @@ function Invoke-LevelSmokeAttempt {
         )
     } elseif ($Entry.Name -eq 'corus1') {
         # Coruscant begins on the edge of dolly 0's establishing region.
-        # The retail start heading (0xc00) and JPX camera polygons put the
-        # playable route on virtual D; release after crossing into dolly 53
-        # so the smoke probe validates the handoff instead of walking back
-        # out of the finite camera region for the rest of the capture.
+        # Probe each virtual direction briefly, then release input so the
+        # smoke run validates the authored camera handoff and recovery.
         $routeFrames = [Math]::Min(170, $Frames)
         $arguments += @(
-            '--headless-keyboard-phase', 'd', ([string]$routeFrames)
+            '--headless-keyboard-phase', $InputKey, ([string]$routeFrames)
         )
         if ($routeFrames -lt $Frames) {
             $arguments += @(
@@ -153,14 +154,27 @@ function Invoke-LevelSmokeAttempt {
             )
         }
     } else {
+        $entryControlFrames = if ($Entry.Name -eq 'fed' -or
+            $Entry.Name -eq 'core') {
+            $Frames
+        } else {
+            $controlProbeFrames
+        }
         $arguments += @(
-            '--headless-keyboard-phase', $InputKey, ([string]$Frames)
+            '--headless-keyboard-phase', $InputKey,
+            ([string]$entryControlFrames)
         )
+        if ($entryControlFrames -lt $Frames) {
+            $arguments += @(
+                '--headless-keyboard-phase', 'none',
+                ([string]($Frames - $entryControlFrames))
+            )
+        }
     }
     if ($RunMode -eq 'Headless') {
         $arguments = @('--headless') + $arguments
     } else {
-        $arguments = @('--hidden-window', '--scripted-input') + $arguments
+        $arguments = @('--hidden-window', '--control-harness') + $arguments
     }
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = $Executable
@@ -213,7 +227,25 @@ function Invoke-LevelSmokeAttempt {
     $hardwareWorldMaterials = Get-MatchValue $combined '^hardware_final_frame=\(world_depth_pixels=\d+,world_textures=\d+/(\d+)'
     $finalPlayerPixels = Get-MatchValue $combined '^hardware_final_frame=\(world_depth_pixels=\d+,world_textures=\d+/\d+,player_pixels=(\d+)'
     $target = Get-MatchValue $combined '^frames=.*? target=([^\( ]+)'
-    $cameraCollision = Get-MatchValue $combined '^frames=.*? camera=\(dolly=\d+,authored=\d+,collision=([0-9.]+)'
+    $cameraDolly = Get-MatchValue $combined '^frames=.*? camera=\(dolly=(-?\d+)'
+    $cameraDollyFlags = Get-MatchValue $combined '^frames=.*? camera=\(dolly=-?\d+,flags=([0-9a-fA-F]+)'
+    $cameraInitialDolly = Get-MatchValue $combined '^frames=.*? camera=\(dolly=-?\d+,flags=[0-9a-fA-F]+,initial=(-?\d+)'
+    $cameraUniqueDollies = Get-MatchValue $combined '^frames=.*? camera=\(dolly=-?\d+,flags=[0-9a-fA-F]+,initial=-?\d+,unique=(\d+)'
+    $cameraTransitions = Get-MatchValue $combined '^frames=.*? camera=\(dolly=-?\d+,flags=[0-9a-fA-F]+,initial=-?\d+,unique=\d+,transitions=(\d+)'
+    $cameraCollision = Get-MatchValue $combined '^frames=.*? camera=\(dolly=-?\d+,flags=[0-9a-fA-F]+,initial=-?\d+,unique=\d+,transitions=\d+,authored=\d+,collision=([0-9.]+)'
+    $finalEnergy = Get-MatchValue $combined '^player_lifecycle=\(energy=-?\d+/(-?\d+)'
+    $deathFrame = Get-MatchValue $combined '^player_lifecycle=.*?death=(\d+)'
+    $afterlifeFrame = Get-MatchValue $combined '^player_lifecycle=.*?afterlife=(\d+)'
+    $exitFrame = Get-MatchValue $combined '^player_lifecycle=.*?exit=(\d+)'
+    $onscreenSamples = Get-MatchValue $combined '^player_framing=\(samples=(\d+)'
+    $onscreenFrames = Get-MatchValue $combined '^player_framing=\(samples=\d+,onscreen=(\d+)'
+    $offscreenFrames = Get-MatchValue $combined '^player_framing=\(samples=\d+,onscreen=\d+,offscreen=(\d+)'
+    $finalOnscreen = Get-MatchValue $combined '^player_framing=.*?final=(\d+)'
+    $offscreenScreenX = Get-MatchValue $combined '^player_framing=.*?screen=(-?\d+)/'
+    $offscreenScreenY = Get-MatchValue $combined '^player_framing=.*?screen=-?\d+/(-?\d+)'
+    $offscreenClippedX = Get-MatchValue $combined '^player_framing=.*?clipped=(-?\d+)/'
+    $offscreenClippedY = Get-MatchValue $combined '^player_framing=.*?clipped=-?\d+/(-?\d+)'
+    $offscreenAlpha = Get-MatchValue $combined '^player_framing=.*?alpha=(-?\d+)'
     $locomotionFrames = Get-MatchValue $combined '^control_edges=\(p1=.*?locomotion:(\d+)/'
     $directionFrames = Get-MatchValue $combined '^control_edges=\(p1=.*?direction:(\d+)'
     $heldBits = Get-MatchValue $combined '^control_edges=\(p1=.*?held_bits:([0-9a-fA-F]+)'
@@ -255,6 +287,11 @@ function Invoke-LevelSmokeAttempt {
     } else {
         0.0
     }
+    $onscreenRatio = if ([int]$onscreenSamples -gt 0) {
+        [double]$onscreenFrames / [double]$onscreenSamples
+    } else {
+        0.0
+    }
 
     $gates = [ordered]@{
         exited = (-not $timedOut -and $exitCode -eq 0)
@@ -273,6 +310,9 @@ function Invoke-LevelSmokeAttempt {
             ($RunMode -eq 'Headless' -or [int64]$finalPlayerPixels -gt 0))
         camera = (-not [string]::IsNullOrEmpty($cameraCollision) -and
             [double]$cameraCollision -gt 0.0)
+        survived = ([int]$finalEnergy -gt 0 -and [int]$deathFrame -eq 0)
+        framing = ([int]$onscreenSamples -gt 0 -and
+            $onscreenRatio -ge 0.75 -and [int]$finalOnscreen -eq 1)
         keyboard = ($inputSource -eq 'keyboard' -and
             -not [string]::IsNullOrEmpty($heldBits))
         control = if ($Entry.Name -eq 'mini2') {
@@ -295,7 +335,8 @@ function Invoke-LevelSmokeAttempt {
     $status = if (-not $gates.exited -or -not $gates.loaded -or
         -not $gates.rendered -or -not $gates.textured -or
         -not $gates.framed -or
-        -not $gates.camera -or -not $gates.keyboard -or
+        -not $gates.camera -or -not $gates.survived -or
+        -not $gates.framing -or -not $gates.keyboard -or
         -not $gates.control -or -not $gates.complete -or
         -not $gates.presenter -or
         -not $gates.crashFree) {
@@ -336,6 +377,25 @@ function Invoke-LevelSmokeAttempt {
         finalPlayerPixels = [int64]$finalPlayerPixels
         target = $target
         cameraCollision = [double]$cameraCollision
+        cameraDolly = [int]$cameraDolly
+        cameraDollyFlags = $cameraDollyFlags
+        cameraInitialDolly = [int]$cameraInitialDolly
+        cameraUniqueDollies = [int]$cameraUniqueDollies
+        cameraTransitions = [int]$cameraTransitions
+        finalEnergy = [int]$finalEnergy
+        deathFrame = [int]$deathFrame
+        afterlifeFrame = [int]$afterlifeFrame
+        exitFrame = [int]$exitFrame
+        onscreenSamples = [int]$onscreenSamples
+        onscreenFrames = [int]$onscreenFrames
+        offscreenFrames = [int]$offscreenFrames
+        onscreenRatio = [Math]::Round($onscreenRatio, 4)
+        finalOnscreen = [int]$finalOnscreen
+        offscreenScreenX = [int]$offscreenScreenX
+        offscreenScreenY = [int]$offscreenScreenY
+        offscreenClippedX = [int]$offscreenClippedX
+        offscreenClippedY = [int]$offscreenClippedY
+        offscreenAlpha = [int]$offscreenAlpha
         inputSource = $inputSource
         heldBits = $heldBits
         directionFrames = [int]$directionFrames
@@ -355,30 +415,24 @@ function Invoke-LevelSmoke {
     param([pscustomobject]$Entry)
 
     $attempts = [System.Collections.Generic.List[object]]::new()
-    $selected = $null
     $probeKeys = if ($Entry.Name -eq 'mini2') {
         @('race')
-    } elseif ($Entry.Name -eq 'corus1') {
-        @('route')
     } else {
         $InputKeys
     }
     foreach ($key in $probeKeys) {
         $attempt = Invoke-LevelSmokeAttempt $Entry $key
         $attempts.Add($attempt)
-        if ($attempt.status -ne 'FAIL') {
-            $selected = $attempt
-            break
-        }
     }
-    if ($null -eq $selected) {
-        $selected = $attempts[0]
-        foreach ($attempt in $attempts) {
-            if ($attempt.displacement -gt $selected.displacement) {
-                $selected = $attempt
-            }
-        }
-    }
+    $selected = @(
+        $attempts | Sort-Object `
+            @{ Expression = { [int]($_.status -ne 'FAIL') }; Descending = $true }, `
+            @{ Expression = { [int]$_.gates.survived }; Descending = $true }, `
+            @{ Expression = { [int]$_.gates.framing }; Descending = $true }, `
+            @{ Expression = { $_.onscreenRatio }; Descending = $true }, `
+            @{ Expression = { $_.displacement }; Descending = $true }, `
+            @{ Expression = { $_.cameraTransitions } }
+    )[0]
 
     $canonicalConsole = Join-Path $OutputDirectory "$($Entry.Name).console.txt"
     $canonicalCapture = Join-Path $OutputDirectory "$($Entry.Name).ppm"
@@ -397,6 +451,14 @@ function Invoke-LevelSmoke {
                 displacement = $_.displacement
                 directionFrames = $_.directionFrames
                 locomotionFrames = $_.locomotionFrames
+                finalEnergy = $_.finalEnergy
+                deathFrame = $_.deathFrame
+                onscreenRatio = $_.onscreenRatio
+                offscreenAlpha = $_.offscreenAlpha
+                cameraDolly = $_.cameraDolly
+                cameraDollyFlags = $_.cameraDollyFlags
+                cameraUniqueDollies = $_.cameraUniqueDollies
+                cameraTransitions = $_.cameraTransitions
                 console = (Join-Path $OutputDirectory "$($Entry.Name).$($_.inputKey).console.txt")
                 capture = (Join-Path $OutputDirectory "$($Entry.Name).$($_.inputKey).ppm")
             }
@@ -480,8 +542,10 @@ $lines.Add('- `rendered`: hardware mode requires final-frame world-only GPU line
 $lines.Add('- `textured`: hardware mode successfully resolved every FBX-declared world material texture; headless mode marks this not applicable.')
 $lines.Add('- `framed`: the actual player model contributed pixels in at least one sampled frame, and hardware mode also requires a nonzero final-frame player contribution.')
 $lines.Add('- `camera`: the recovered camera collision result is positive.')
+$lines.Add('- `survived`: the player retained positive energy and never entered the recovered death lifecycle during the full frame budget.')
+$lines.Add('- `framing`: the retail offscreen-arrow owner sampled the player as on-screen for at least 75 percent of eligible overlay frames and on the final eligible sample.')
 $lines.Add('- `keyboard`: the spawn input owner is keyboard and virtual key state was recorded.')
-$lines.Add("- ``control``: ordinary levels require an isolated virtual ``$probeLabel`` probe with at least $controlFrameMinimum directional frames, at least $controlFrameMinimum locomotion frames or a real vehicle attachment, and more than 16 world units of horizontal travel. Corus1 follows its retail 0xc00 start heading with 170 virtual D frames, then releases input after the JPX collision handoff to dolly 53. Mini2 instead requires its PDB-owned alternating K/Space Kaadu cadence to grow a race bar to at least 128 pixels and move the mounted rider. Each attempted protocol has its own console log and frame capture.")
+$lines.Add("- ``control``: ordinary levels require an isolated virtual ``$probeLabel`` probe with at least $controlFrameMinimum directional frames, at least $controlFrameMinimum locomotion frames or a real vehicle attachment, and more than 16 world units of horizontal travel. Fed and Core hold the selected probe for the full frame budget because their authored starts do not expose stable player-directed locomotion during the shorter released-input window. Corus1 uses a 170-frame directional probe followed by released input to validate the authored camera handoff and recovery. Mini2 instead requires its PDB-owned alternating K/Space Kaadu cadence to grow a race bar to at least 128 pixels and move the mounted rider. Each attempted protocol has its own console log and frame capture.")
 $lines.Add('- `complete`: the requested frame budget completed without timeout.')
 $lines.Add('- `presenter`: hardware mode created the D3D11 hardware presenter and presented every requested frame; headless mode marks this not applicable.')
 $lines.Add('- `performance`: hardware mode sustained at least 45 measured frames per second over the capture; headless mode marks this not applicable.')

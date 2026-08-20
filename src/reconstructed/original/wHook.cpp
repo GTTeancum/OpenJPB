@@ -2270,14 +2270,6 @@ _Material *_LoadTexture(
         materialtype,
         &width,
         &height);
-    if (texture == nullptr) {
-        texture = jpb_TextureLoadPlatformResource(
-            "../../../res/default\\o_default.tga",
-            0,
-            0,
-            &width,
-            &height);
-    }
     material->samplerType =
         jpb_TextureIsPartOfAtlas(material->filename)
             ? TEXTURSAMPLER_POINTCLAMP

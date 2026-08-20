@@ -57,6 +57,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /*
  * Exact enemy.c globals from the matched PDB. The 20-record pool occupies
@@ -80,6 +81,8 @@ static int32_t processTimer;
 static JPBEnemyOpcodeParseResult jpb_enemy_last_frame_result =
     JPB_ENEMY_OPCODE_PARSE_COMPLETE;
 static uint16_t jpb_enemy_last_unsupported_opcode;
+static JPBEnemyFrameProfile jpb_enemy_frame_profile;
+static int jpb_enemy_frame_profile_enabled;
 
 /* Exact AI flag storage at matched-PC RVAs 0x10DBEF0..0x10DBF7F. */
 uint8_t abGlobalBits[16];
@@ -140,17 +143,123 @@ static int jpb_enemy_ascii_equal_ignore_case(
     return 1;
 }
 
+static double jpb_enemy_profile_seconds(void)
+{
+    if (!jpb_enemy_frame_profile_enabled) {
+        return 0.0;
+    }
+    return (double)clock() / (double)CLOCKS_PER_SEC;
+}
+
+static void jpb_enemy_profile_record(
+    double *last_seconds,
+    double *max_seconds,
+    double seconds)
+{
+    if (last_seconds != NULL) {
+        *last_seconds = seconds;
+    }
+    if (max_seconds != NULL && seconds > *max_seconds) {
+        *max_seconds = seconds;
+    }
+}
+
+static void jpb_enemy_profile_begin_frame(void)
+{
+    jpb_enemy_frame_profile.lastTotalSeconds = 0.0;
+    jpb_enemy_frame_profile.lastRadarSeconds = 0.0;
+    jpb_enemy_frame_profile.lastPrepareSeconds = 0.0;
+    jpb_enemy_frame_profile.lastCheckNewSeconds = 0.0;
+    jpb_enemy_frame_profile.lastReferenceSeconds = 0.0;
+    jpb_enemy_frame_profile.lastKungfuStartSeconds = 0.0;
+    jpb_enemy_frame_profile.lastLoopSeconds = 0.0;
+    jpb_enemy_frame_profile.lastPreFrameSeconds = 0.0;
+    jpb_enemy_frame_profile.lastParseSeconds = 0.0;
+    jpb_enemy_frame_profile.lastPostFrameSeconds = 0.0;
+    jpb_enemy_frame_profile.lastRangeSeconds = 0.0;
+    jpb_enemy_frame_profile.lastKungfuDoSeconds = 0.0;
+    jpb_enemy_frame_profile.lastProcessedEnemies = 0;
+    jpb_enemy_frame_profile.lastParseInstructions = 0;
+}
+
+void jpb_EnemyGetFrameProfile(JPBEnemyFrameProfile *profile)
+{
+    if (profile != NULL) {
+        *profile = jpb_enemy_frame_profile;
+    }
+}
+
+void jpb_EnemySetFrameProfileEnabled(int enabled)
+{
+    jpb_enemy_frame_profile_enabled = enabled != 0;
+    memset(&jpb_enemy_frame_profile, 0, sizeof(jpb_enemy_frame_profile));
+}
+
+static int jpb_enemy_profile_node_index(
+    const wsl_ENEMY *enemy,
+    const BAP_AINODE *node)
+{
+    if (enemy == NULL || enemy->pAI == NULL ||
+        enemy->pAI->aiNodes == NULL || node == NULL ||
+        node < enemy->pAI->aiNodes ||
+        node >= enemy->pAI->aiNodes + enemy->pAI->numNodes) {
+        return -1;
+    }
+    return (int)(node - enemy->pAI->aiNodes);
+}
+
+static void jpb_enemy_profile_record_single_parse(
+    const wsl_ENEMY *enemy,
+    double seconds)
+{
+    if (seconds > jpb_enemy_frame_profile.maxSingleParseSeconds) {
+        jpb_enemy_frame_profile.maxSingleParseSeconds = seconds;
+        jpb_enemy_frame_profile.maxParseEnemyId =
+            enemy != NULL ? enemy->enemyID : -1;
+        jpb_enemy_frame_profile.maxParseAi =
+            enemy != NULL ? enemy->aiNum : -1;
+    }
+}
+
+static void jpb_enemy_profile_record_opcode(
+    const wsl_ENEMY *enemy,
+    const BAP_AINODE *node,
+    uint16_t opcode,
+    double seconds)
+{
+    if (seconds > jpb_enemy_frame_profile.maxSingleOpcodeSeconds) {
+        jpb_enemy_frame_profile.maxSingleOpcodeSeconds = seconds;
+        jpb_enemy_frame_profile.maxOpcodeEnemyId =
+            enemy != NULL ? enemy->enemyID : -1;
+        jpb_enemy_frame_profile.maxOpcodeAi =
+            enemy != NULL ? enemy->aiNum : -1;
+        jpb_enemy_frame_profile.maxOpcodeNode =
+            jpb_enemy_profile_node_index(enemy, node);
+        jpb_enemy_frame_profile.maxOpcode = opcode;
+    }
+}
+
 static void getintank(
     wsl_ENEMY *enemy, int driver_index);
 static void getonstap(
     wsl_ENEMY *enemy, int driver_index);
 static JPBEnemyVehicleDiagnostics jpb_enemy_vehicle_diagnostics;
+static JPBEnemyCameraOpcodeDiagnostics
+    jpb_enemy_camera_opcode_diagnostics;
 
 void jpb_EnemyGetVehicleDiagnostics(
     JPBEnemyVehicleDiagnostics *diagnostics)
 {
     if (diagnostics != NULL) {
         *diagnostics = jpb_enemy_vehicle_diagnostics;
+    }
+}
+
+void jpb_EnemyGetCameraOpcodeDiagnostics(
+    JPBEnemyCameraOpcodeDiagnostics *diagnostics)
+{
+    if (diagnostics != NULL) {
+        *diagnostics = jpb_enemy_camera_opcode_diagnostics;
     }
 }
 
@@ -1230,10 +1339,16 @@ void bapenemy_postFrame(wsl_ENEMY *enemy)
 {
     VECTOR *position;
 
+    if (enemy == NULL || enemy->pPlayer == NULL) {
+        return;
+    }
     game_gSetEnergy(
         enemy->pPlayer->playernum, enemy->hitPoints);
     position = physics_gGetPosition(
         &enemy->pPlayer->playerRoot);
+    if (position == NULL) {
+        return;
+    }
     enemy->location.vx = position->vx;
     enemy->location.vy = position->vy;
     enemy->location.vz = position->vz;
@@ -1514,8 +1629,8 @@ void enemy_CheckTeleport(void)
         if (camera_type == 0 && !player0_active) {
             camera_type = 2;
         }
-        camera_SetCurrentCameraType(camera_type);
         (void)camera_SetCameraPos(camera_type);
+        camera_SnapCamera(&gCamera);
         if (player0_active) {
             scene_gSetSceneModelMatrixFV(
                 0,
@@ -1536,8 +1651,8 @@ void enemy_CheckTeleport(void)
         if (camera_type == 0) {
             camera_type = 1;
         }
-        camera_SetCurrentCameraType(camera_type);
         (void)camera_SetCameraPos(camera_type);
+        camera_SnapCamera(&gCamera);
         scene_gSetSceneModelMatrixFV(
             0,
             &maPhysicsData[0].angle,
@@ -1716,6 +1831,9 @@ JPBEnemyOpcodeParseResult jpb_enemy_ProcessActiveFrame(
 {
     int source_list = mCurEnemyList;
     int destination_list = source_list ^ 1;
+    double frame_started;
+    double stage_started;
+    double loop_started;
     VECTOR *reference_position;
     JPBEnemyOpcodeParseResult frame_result =
         JPB_ENEMY_OPCODE_PARSE_COMPLETE;
@@ -1730,24 +1848,53 @@ JPBEnemyOpcodeParseResult jpb_enemy_ProcessActiveFrame(
     if (unsupported_opcode != NULL) {
         *unsupported_opcode = 0;
     }
+    jpb_enemy_profile_begin_frame();
+    frame_started = jpb_enemy_profile_seconds();
 
     if (OptionStruct.DebugLevel == 3) {
+        stage_started = jpb_enemy_profile_seconds();
         enemy_Radar();
+        jpb_enemy_profile_record(
+            &jpb_enemy_frame_profile.lastRadarSeconds,
+            &jpb_enemy_frame_profile.maxRadarSeconds,
+            jpb_enemy_profile_seconds() - stage_started);
     }
 
+    stage_started = jpb_enemy_profile_seconds();
     jpb_enemy_prepare_active_frame();
+    jpb_enemy_profile_record(
+        &jpb_enemy_frame_profile.lastPrepareSeconds,
+        &jpb_enemy_frame_profile.maxPrepareSeconds,
+        jpb_enemy_profile_seconds() - stage_started);
+    stage_started = jpb_enemy_profile_seconds();
     _checkForNewEnemies();
+    jpb_enemy_profile_record(
+        &jpb_enemy_frame_profile.lastCheckNewSeconds,
+        &jpb_enemy_frame_profile.maxCheckNewSeconds,
+        jpb_enemy_profile_seconds() - stage_started);
+    stage_started = jpb_enemy_profile_seconds();
     reference_position =
         jpb_enemy_frame_reference_position();
+    jpb_enemy_profile_record(
+        &jpb_enemy_frame_profile.lastReferenceSeconds,
+        &jpb_enemy_frame_profile.maxReferenceSeconds,
+        jpb_enemy_profile_seconds() - stage_started);
+    stage_started = jpb_enemy_profile_seconds();
     shaolin_StartKungfu();
+    jpb_enemy_profile_record(
+        &jpb_enemy_frame_profile.lastKungfuStartSeconds,
+        &jpb_enemy_frame_profile.maxKungfuStartSeconds,
+        jpb_enemy_profile_seconds() - stage_started);
     list_InitList(&enemyList[destination_list]);
     gShowAI = OptionStruct.AIDebug > 2;
 
+    loop_started = jpb_enemy_profile_seconds();
     while ((enemy =
                 (wsl_ENEMY *)list_RemoveHead(
                     &enemyList[source_list])) != NULL) {
         JPBEnemyOpcodeParseResult parse_result =
             JPB_ENEMY_OPCODE_PARSE_COMPLETE;
+        int preframe_result;
         if (OptionStruct.AIDebug < 3 ||
             enemy->pPlayer->playerRoot.objectID !=
                 (int)OptionStruct.AIDebug - 3) {
@@ -1756,14 +1903,32 @@ JPBEnemyOpcodeParseResult jpb_enemy_ProcessActiveFrame(
             gShowAI = 1;
         }
         ++processed;
-        if (bapenemy_preFrame(enemy) == 0 &&
+        stage_started = jpb_enemy_profile_seconds();
+        preframe_result = bapenemy_preFrame(enemy);
+        jpb_enemy_profile_record(
+            &jpb_enemy_frame_profile.lastPreFrameSeconds,
+            &jpb_enemy_frame_profile.maxPreFrameSeconds,
+            jpb_enemy_frame_profile.lastPreFrameSeconds +
+                jpb_enemy_profile_seconds() - stage_started);
+        if (preframe_result == 0 &&
             OptionStruct.AIDebug != 1 &&
             enemy->active == 1) {
             uint16_t opcode = 0;
+            double parse_seconds;
 
+            stage_started = jpb_enemy_profile_seconds();
             parse_result =
                 jpb_enemy_ParseOpcodes(
                     enemy, &opcode);
+            parse_seconds =
+                jpb_enemy_profile_seconds() - stage_started;
+            jpb_enemy_profile_record(
+                &jpb_enemy_frame_profile.lastParseSeconds,
+                &jpb_enemy_frame_profile.maxParseSeconds,
+                jpb_enemy_frame_profile.lastParseSeconds +
+                    parse_seconds);
+            jpb_enemy_profile_record_single_parse(
+                enemy, parse_seconds);
             if (frame_result ==
                     JPB_ENEMY_OPCODE_PARSE_COMPLETE &&
                 parse_result !=
@@ -1774,7 +1939,14 @@ JPBEnemyOpcodeParseResult jpb_enemy_ProcessActiveFrame(
                 }
             }
         }
+        stage_started = jpb_enemy_profile_seconds();
         bapenemy_postFrame(enemy);
+        jpb_enemy_profile_record(
+            &jpb_enemy_frame_profile.lastPostFrameSeconds,
+            &jpb_enemy_frame_profile.maxPostFrameSeconds,
+            jpb_enemy_frame_profile.lastPostFrameSeconds +
+                jpb_enemy_profile_seconds() - stage_started);
+        stage_started = jpb_enemy_profile_seconds();
         jpb_enemy_apply_level_frame_overrides(enemy);
 
         if (enemy->exit_flag == 0) {
@@ -1797,6 +1969,11 @@ JPBEnemyOpcodeParseResult jpb_enemy_ProcessActiveFrame(
                 list_AddTail(
                     &enemyList[destination_list],
                     &enemy->node);
+                jpb_enemy_profile_record(
+                    &jpb_enemy_frame_profile.lastRangeSeconds,
+                    &jpb_enemy_frame_profile.maxRangeSeconds,
+                    jpb_enemy_frame_profile.lastRangeSeconds +
+                        jpb_enemy_profile_seconds() - stage_started);
                 continue;
             }
             _deleteEnemy(enemy, 0);
@@ -1805,11 +1982,35 @@ JPBEnemyOpcodeParseResult jpb_enemy_ProcessActiveFrame(
         }
         list_AddTail(
             &enemyFreeList, &enemy->node);
+        jpb_enemy_profile_record(
+            &jpb_enemy_frame_profile.lastRangeSeconds,
+            &jpb_enemy_frame_profile.maxRangeSeconds,
+            jpb_enemy_frame_profile.lastRangeSeconds +
+                jpb_enemy_profile_seconds() - stage_started);
     }
+    jpb_enemy_profile_record(
+        &jpb_enemy_frame_profile.lastLoopSeconds,
+        &jpb_enemy_frame_profile.maxLoopSeconds,
+        jpb_enemy_profile_seconds() - loop_started);
 
     nEnemy = processed;
+    jpb_enemy_frame_profile.lastProcessedEnemies = (uint32_t)processed;
+    if ((uint32_t)processed >
+        jpb_enemy_frame_profile.maxProcessedEnemies) {
+        jpb_enemy_frame_profile.maxProcessedEnemies =
+            (uint32_t)processed;
+    }
+    stage_started = jpb_enemy_profile_seconds();
     shaolin_DoKungfu();
+    jpb_enemy_profile_record(
+        &jpb_enemy_frame_profile.lastKungfuDoSeconds,
+        &jpb_enemy_frame_profile.maxKungfuDoSeconds,
+        jpb_enemy_profile_seconds() - stage_started);
     mCurEnemyList = destination_list;
+    jpb_enemy_profile_record(
+        &jpb_enemy_frame_profile.lastTotalSeconds,
+        &jpb_enemy_frame_profile.maxTotalSeconds,
+        jpb_enemy_profile_seconds() - frame_started);
     return frame_result;
 }
 
@@ -2342,6 +2543,7 @@ jpb_enemy_execute_authored_opcode(
 
     case 0x20c: {
         uint32_t toggle_mask = 0;
+        BAP_CAMERADOLLY *dolly;
 
         variables = jpb_enemy_resolve_opcode_variables(
             enemy, node, 1);
@@ -2360,9 +2562,22 @@ jpb_enemy_execute_authored_opcode(
         } else if (variables[0].si == 6) {
             toggle_mask = UINT32_C(0x1e0);
         }
-        gpWorld->aDolly[
-            gpWorld->currentDolly].flags ^=
-                toggle_mask;
+        dolly = &gpWorld->aDolly[gpWorld->currentDolly];
+        ++jpb_enemy_camera_opcode_diagnostics.sequence;
+        jpb_enemy_camera_opcode_diagnostics.enemyID = enemy->enemyID;
+        jpb_enemy_camera_opcode_diagnostics.aiNum = enemy->aiNum;
+        jpb_enemy_camera_opcode_diagnostics.nodeIndex =
+            jpb_enemy_profile_node_index(enemy, node);
+        jpb_enemy_camera_opcode_diagnostics.encodedOpcode =
+            encoded_opcode;
+        jpb_enemy_camera_opcode_diagnostics.value = variables[0].si;
+        jpb_enemy_camera_opcode_diagnostics.dolly =
+            gpWorld->currentDolly;
+        jpb_enemy_camera_opcode_diagnostics.flagsBefore = dolly->flags;
+        dolly->flags ^= toggle_mask;
+        jpb_enemy_camera_opcode_diagnostics.flagsAfter = dolly->flags;
+        jpb_enemy_camera_opcode_diagnostics.totalFrames = totalframes;
+        jpb_enemy_camera_opcode_diagnostics.globalTimer = gGlobalTimer;
         return JPB_ENEMY_OPCODE_PARSE_COMPLETE;
     }
 
@@ -2660,7 +2875,7 @@ jpb_enemy_execute_authored_opcode(
         }
         if (GameStruct.CurrentLevel == 5 &&
             enemy->aiNum == 0x10 &&
-            GameStruct.checkpoint[5] < 6) {
+            GameStruct.checkpoint[5] >= 6) {
             return JPB_ENEMY_OPCODE_PARSE_COMPLETE;
         }
         if (variables[0].si < 0) {
@@ -3540,9 +3755,19 @@ jpb_enemy_parse_opcodes_internal(
             : 1;
     while (node != NULL) {
         JPBEnemyOpcodeParseResult result;
+        double opcode_started;
+        double opcode_seconds;
+        uint16_t encoded_opcode;
+        uint16_t opcode;
         int branch_flag;
 
         ++instructions;
+        ++jpb_enemy_frame_profile.lastParseInstructions;
+        if (jpb_enemy_frame_profile.lastParseInstructions >
+            jpb_enemy_frame_profile.maxParseInstructions) {
+            jpb_enemy_frame_profile.maxParseInstructions =
+                jpb_enemy_frame_profile.lastParseInstructions;
+        }
         if (diagnostic &&
             instructions > instruction_limit) {
             return
@@ -3553,12 +3778,22 @@ jpb_enemy_parse_opcodes_internal(
             return JPB_ENEMY_OPCODE_PARSE_COMPLETE;
         }
 
+        encoded_opcode = (uint16_t)node->opcode;
+        opcode =
+            (encoded_opcode & UINT16_C(0x4000)) != 0
+                ? encoded_opcode & UINT16_C(0x0fff)
+                : encoded_opcode;
+        opcode_started = jpb_enemy_profile_seconds();
         result = jpb_enemy_execute_authored_opcode(
             enemy,
             node,
             &branch_flag,
             unsupported_opcode,
             diagnostic);
+        opcode_seconds =
+            jpb_enemy_profile_seconds() - opcode_started;
+        jpb_enemy_profile_record_opcode(
+            enemy, node, opcode, opcode_seconds);
         if (result !=
             JPB_ENEMY_OPCODE_PARSE_COMPLETE) {
             return result;

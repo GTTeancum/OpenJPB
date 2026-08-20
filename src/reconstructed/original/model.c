@@ -418,6 +418,30 @@ void model_MakeNode(
     }
 }
 
+static int model_prepare_geometry_tree(geomData *node)
+{
+    int child;
+
+    if (!model_geometry_record_valid(node) ||
+        node->numChildren < 0 ||
+        node->numChildren > JPB_BMD_CHILD_CAPACITY) {
+        return 0;
+    }
+    if (!model_prepare_geometry(node)) {
+        return 0;
+    }
+    for (child = 0; child < node->numChildren; ++child) {
+        geomData *child_node = model_geometry_record(
+            model_child_index(node, child));
+
+        if (child_node == NULL ||
+            !model_prepare_geometry_tree(child_node)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 /* Reference RVA 0xDA060, 158 bytes. */
 int model_RegisterModel(char *name)
 {
@@ -442,6 +466,39 @@ int model_RegisterModel(char *name)
         [JPB_MODEL_REGISTERED_NAME_CAPACITY - 1] = '\0';
     ++mNumRegisteredModels;
     return 0;
+}
+
+int jpb_ModelPrepareRegisteredGeometry(
+    geomData *pRoot, const char *name)
+{
+    int index;
+    char registered_name[JPB_MODEL_REGISTERED_NAME_CAPACITY];
+
+    if (pRoot == NULL || name == NULL) {
+        return 0;
+    }
+    for (index = 0; index < mNumRegisteredModels; ++index) {
+        if (strcmp(name, maRegisteredModels[index]) == 0) {
+            return 1;
+        }
+    }
+    if (jpb_model_geometry_base != NULL &&
+        (uint8_t *)pRoot != jpb_model_geometry_base) {
+        return 0;
+    }
+    mModelID = -1;
+    mpGeomArray = pRoot;
+    jediloading = 0;
+    jpb_model_build_failed = 0;
+    if (!model_prepare_geometry_tree(model_geometry_record(1))) {
+        return 0;
+    }
+    strncpy(
+        registered_name,
+        name,
+        sizeof(registered_name) - 1);
+    registered_name[sizeof(registered_name) - 1] = '\0';
+    return model_RegisterModel(registered_name) >= 0;
 }
 
 /* Reference RVA 0xDA100, 450 bytes. */

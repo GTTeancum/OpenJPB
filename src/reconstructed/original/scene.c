@@ -803,6 +803,10 @@ void scene_middleRender(MATRIX *matrix)
         320.0f,
         180.0f);
     isTatoMaul = 0;
+    if (scene_middle_render_hooks.afterCameraSetup != NULL) {
+        scene_middle_render_hooks.afterCameraSetup(
+            scene_middle_render_user_data, view);
+    }
 
     simulation_enabled =
         scene_middle_render_simulation_enabled();
@@ -815,6 +819,10 @@ void scene_middleRender(MATRIX *matrix)
     }
 
     game_DisplayOverlay();
+    if (scene_middle_render_hooks.afterOverlay != NULL) {
+        scene_middle_render_hooks.afterOverlay(
+            scene_middle_render_user_data, view);
+    }
     if (gSTROBE_MODE < 2) {
         PushMatrix();
         cube_NewWorldRender(view);
@@ -837,6 +845,10 @@ void scene_middleRender(MATRIX *matrix)
     PopMatrix();
 
     player_HandleSabre();
+    if (scene_middle_render_hooks.afterSabre != NULL) {
+        scene_middle_render_hooks.afterSabre(
+            scene_middle_render_user_data, view);
+    }
     if (simulation_enabled) {
         if (scene_middle_render_hooks.beforePlayerProcess != NULL) {
             scene_middle_render_hooks.beforePlayerProcess(
@@ -844,12 +856,32 @@ void scene_middleRender(MATRIX *matrix)
         }
         player_gProcessPlayers();
     }
+    if (scene_middle_render_hooks.afterPlayerProcess != NULL) {
+        scene_middle_render_hooks.afterPlayerProcess(
+            scene_middle_render_user_data, view);
+    }
     pwrup_CheckPowerUps();
+    if (scene_middle_render_hooks.afterPowerups != NULL) {
+        scene_middle_render_hooks.afterPowerups(
+            scene_middle_render_user_data, view);
+    }
     sprite_SpriteWork(view);
+    if (scene_middle_render_hooks.afterSprites != NULL) {
+        scene_middle_render_hooks.afterSprites(
+            scene_middle_render_user_data, view);
+    }
     if (simulation_enabled) {
         enemy_HandleEnemies();
     }
+    if (scene_middle_render_hooks.afterEnemies != NULL) {
+        scene_middle_render_hooks.afterEnemies(
+            scene_middle_render_user_data, view);
+    }
     _HandleBackDrop();
+    if (scene_middle_render_hooks.afterBackdrop != NULL) {
+        scene_middle_render_hooks.afterBackdrop(
+            scene_middle_render_user_data, view);
+    }
 
     if (gpWorld != NULL) {
         world_position.vx = (int16_t)gpWorld->location.vx;
@@ -866,7 +898,15 @@ void scene_middleRender(MATRIX *matrix)
     if (simulation_enabled) {
         ProcessPhysicsObjects();
     }
+    if (scene_middle_render_hooks.afterPhysics != NULL) {
+        scene_middle_render_hooks.afterPhysics(
+            scene_middle_render_user_data, view);
+    }
     scene_run_level_owner();
+    if (scene_middle_render_hooks.afterLevelOwner != NULL) {
+        scene_middle_render_hooks.afterLevelOwner(
+            scene_middle_render_user_data, view);
+    }
 }
 
 /* 0xF6290, 128 bytes, global, 1 named locals

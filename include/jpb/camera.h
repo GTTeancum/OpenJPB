@@ -26,6 +26,25 @@ typedef struct Camera {
     uint32_t userData;
 } Camera;
 
+typedef struct JPBCameraSelectionDiagnostics {
+    int valid;
+    int previousDolly;
+    int candidateDolly;
+    int cameraType;
+    int height;
+    int boxMask;
+    int player0Active;
+    int player1Active;
+    int player0Clip;
+    int player1Clip;
+    int offscreen;
+    int accepted;
+    int distances0[5];
+    int distances1[5];
+    _svector testFocus;
+    VECTOR testAngle;
+} JPBCameraSelectionDiagnostics;
+
 enum {
     JPB_CAMERA_VIEW_RELATIVE_FOCUS = 0x0200,
     JPB_CAMERA_VIEW_ABSOLUTE_FOCUS = 0x0800
@@ -71,6 +90,9 @@ void camera_Camera2ViewVector(
     Camera *camera, sceneGeometryEnv *environment);
 Camera *camera_GetCamera(VECTOR *angle, _svector *focus);
 int camera_GetCurrentCameraType(void);
+void camera_GetLeadDiagnostics(_svector *lead_out, int32_t *camera_lead);
+void camera_GetSelectionDiagnostics(
+    JPBCameraSelectionDiagnostics *diagnostics);
 void camera_GetLocation(VECTOR *location);
 int camera_GetViewType(void);
 void camera_RestoreCameras(void);

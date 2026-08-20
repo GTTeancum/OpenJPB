@@ -386,10 +386,10 @@ static int test_kadu_race_hud_bars(void)
     zerobss_ResetBoss = 1;
     CHECK(ai_Kadu(NULL, &kadu) == -1);
     CHECK(trace.calls == 3);
-    CHECK(trace.x[2] == 86);
-    CHECK(trace.y[2] == 481);
+    CHECK(trace.x[2] == 305);
+    CHECK(trace.y[2] == 514);
     CHECK(trace.width[2] == 64);
-    CHECK(trace.height[2] == 13);
+    CHECK(trace.height[2] == 6);
     CHECK(trace.color[2] == UINT32_C(0x7fff4010));
 
     kadu.playernum = 3;
@@ -397,10 +397,10 @@ static int test_kadu_race_hud_bars(void)
     zerobss_ResetBoss = 1;
     CHECK(ai_Kadu(NULL, &kadu) == -1);
     CHECK(trace.calls == 4);
-    CHECK(trace.x[3] == 809);
-    CHECK(trace.y[3] == 481);
+    CHECK(trace.x[3] == 591);
+    CHECK(trace.y[3] == 514);
     CHECK(trace.width[3] == 64);
-    CHECK(trace.height[3] == 13);
+    CHECK(trace.height[3] == 6);
     CHECK(trace.color[3] == UINT32_C(0x7f1040ff));
 
     jpb_GameSetBarHook(NULL, NULL);

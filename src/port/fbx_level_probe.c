@@ -52,6 +52,7 @@ static void probe_face_bounds(
     const ufbx_mesh *mesh,
     const ufbx_mesh_material *mesh_material,
     ProbeBounds *bounds,
+    ProbeBounds *material_game_bounds,
     ProbeBounds *game_bounds,
     int level_index,
     int reference_space)
@@ -87,6 +88,7 @@ static void probe_face_bounds(
                 game_position.x = game.vx;
                 game_position.y = game.vy;
                 game_position.z = game.vz;
+                probe_bounds_add(material_game_bounds, game_position);
                 probe_bounds_add(game_bounds, game_position);
             }
         }
@@ -312,7 +314,11 @@ int main(int argc, char **argv)
             "node[%zu] opaque_mesh=%zu transparent_start=%lld "
             "glass_start=%lld node_name=%.*s mesh_name=%.*s "
             "vertices=%zu faces=%zu triangles=%zu materials=%zu "
-            "passes=%zu/%zu/%zu\n",
+            "passes=%zu/%zu/%zu "
+            "geometry_to_world="
+            "%.9g,%.9g,%.9g,%.9g/"
+            "%.9g,%.9g,%.9g,%.9g/"
+            "%.9g,%.9g,%.9g,%.9g\n",
             scene_node_index,
             opaque_mesh_index,
             transparent_count != 0
@@ -328,7 +334,19 @@ int main(int argc, char **argv)
             mesh->materials.count,
             opaque_count,
             transparent_count,
-            glass_count);
+            glass_count,
+            node->geometry_to_world.m00,
+            node->geometry_to_world.m01,
+            node->geometry_to_world.m02,
+            node->geometry_to_world.m03,
+            node->geometry_to_world.m10,
+            node->geometry_to_world.m11,
+            node->geometry_to_world.m12,
+            node->geometry_to_world.m13,
+            node->geometry_to_world.m20,
+            node->geometry_to_world.m21,
+            node->geometry_to_world.m22,
+            node->geometry_to_world.m23);
 
         for (material_index = 0;
              material_index < mesh->materials.count;
@@ -347,18 +365,21 @@ int main(int argc, char **argv)
                 base, level_index);
             int glass = transparent && jpb_IsGlassTexture(base);
             ProbeBounds bounds = {0};
+            ProbeBounds material_game_bounds = {0};
 
             if (mesh_material->num_faces == 0) {
                 continue;
             }
             probe_face_bounds(
                 node, mesh, mesh_material, &bounds,
+                &material_game_bounds,
                 &game_bounds, level_index, reference_space);
             printf(
                 "  material[%zu] name=%.*s texture=%.*s "
                 "texture_path=%.*s pass=%s "
                 "faces=%zu triangles=%zu "
-                "bounds=%.6f,%.6f,%.6f..%.6f,%.6f,%.6f\n",
+                "bounds=%.6f,%.6f,%.6f..%.6f,%.6f,%.6f "
+                "game_bounds=%.3f,%.3f,%.3f..%.3f,%.3f,%.3f\n",
                 material_index,
                 mesh_material->material != NULL
                     ? (int)mesh_material->material->name.length : 0,
@@ -376,7 +397,13 @@ int main(int argc, char **argv)
                 bounds.minZ,
                 bounds.maxX,
                 bounds.maxY,
-                bounds.maxZ);
+                bounds.maxZ,
+                material_game_bounds.minX,
+                material_game_bounds.minY,
+                material_game_bounds.minZ,
+                material_game_bounds.maxX,
+                material_game_bounds.maxY,
+                material_game_bounds.maxZ);
             if (dump_triangle_mode != 0) {
                 probe_dump_dynamic_triangles(
                     scene_node_index,

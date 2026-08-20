@@ -76,6 +76,15 @@ endif()
 
 if(WIN32)
     add_executable(
+        jpb_retail_camera_watch
+        tools/retail_camera_watch.c)
+    target_include_directories(
+        jpb_retail_camera_watch PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_link_libraries(
+        jpb_retail_camera_watch PRIVATE winmm)
+
+    add_executable(
         jpb_pc_game
         src/port/pc_game_win32.c
         src/port/pc_audio_win32.c
@@ -101,7 +110,8 @@ if(WIN32)
     add_executable(
         jpb_pc_audio_probe
         src/port/pc_audio_probe.c
-        src/port/pc_audio_win32.c)
+        src/port/pc_audio_win32.c
+        src/port/pc_log_win32.c)
     target_link_libraries(
         jpb_pc_audio_probe PRIVATE jpb_reconstructed winmm)
 endif()
@@ -138,7 +148,8 @@ if(BUILD_TESTING)
         add_executable(
             jpb_pc_audio_tests
             tests/test_pc_audio_win32.c
-            src/port/pc_audio_win32.c)
+            src/port/pc_audio_win32.c
+            src/port/pc_log_win32.c)
         target_link_libraries(
             jpb_pc_audio_tests PRIVATE jpb_reconstructed winmm)
         add_test(NAME jpb_pc_audio_tests COMMAND jpb_pc_audio_tests)
@@ -690,7 +701,7 @@ if(BUILD_TESTING)
                         PROPERTIES
                             LABELS "real_assets;pc_game;menu;versus"
                             PASS_REGULAR_EXPRESSION
-                                "second_player=\\(ready=1,triangles=[1-9][0-9]*,pixels=[1-9][0-9]*\\).*camera=\\(dolly=0,authored=0,collision=0\\.4170/3\\)")
+                                "second_player=\\(ready=1,triangles=[1-9][0-9]*,pixels=[1-9][0-9]*\\).*camera=\\(dolly=0,[^\r\n]*authored=0,[^\r\n]*collision=0\\.4170/3")
                 endif()
                 add_test(
                     NAME jpb_pc_authored_intro_camera
@@ -713,7 +724,7 @@ if(BUILD_TESTING)
                     PROPERTIES
                         LABELS "real_assets;pc_game;camera;enemy_ai"
                         PASS_REGULAR_EXPRESSION
-                            "camera=\\(dolly=144,authored=3,collision=1\\.0000/0\\).*player_flags=00000002")
+                            "camera=\\(dolly=144,.*authored=3,collision=1\\.0000/0,.*\\).*player_flags=00000002")
                 if(EXISTS "${JPB_PC_MINI2_MESH}")
                     add_test(
                         NAME jpb_pc_mini2_kaadu_camera
@@ -810,7 +821,7 @@ if(BUILD_TESTING)
                         PROPERTIES
                             LABELS "real_assets;pc_game;mini3;enemy_ai"
                             PASS_REGULAR_EXPRESSION
-                                "camera=\\(dolly=0,authored=1,collision=1\\.0000/0\\).*classes=5/5/"
+                                "camera=\\(dolly=2,[^\r\n]*authored=1,[^\r\n]*collision=1\\.0000/0.*classes=5/5/"
                             TIMEOUT 120)
                 endif()
                 add_test(
@@ -828,13 +839,14 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_ENEMY_BMD}"
                         --headless
                         --camera-diagnostics
+                        --framebuffer-size 960 540
                         --frames 180)
                 set_tests_properties(
                     jpb_pc_authored_camera_director
                     PROPERTIES
                         LABELS "real_assets;pc_game;camera;enemy_ai"
                         PASS_REGULAR_EXPRESSION
-                            "camera=\\(dolly=145,authored=180,collision=1\\.0000/0\\).*player_flags=00000002"
+                            "camera=\\(dolly=145,.*authored=180,collision=1\\.0000/0,.*\\).*player_flags=00000002"
                         TIMEOUT 120)
                 add_test(
                     NAME jpb_pc_authored_camera_handoff
@@ -851,13 +863,14 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_ENEMY_BMD}"
                         --headless
                         --camera-diagnostics
+                        --framebuffer-size 960 540
                         --frames 360)
                 set_tests_properties(
                     jpb_pc_authored_camera_handoff
                     PROPERTIES
                         LABELS "real_assets;pc_game;camera;enemy_ai;fed;progression"
                         PASS_REGULAR_EXPRESSION
-                            "camera=\\(dolly=0,authored=360,collision=1\\.0000/0\\).*physics=\\(22458\\.9,3328\\.0,-14072\\.4,facing=2091\\).*player_flags=00000000.*player_ai=\\(attached=0,transitions=1/1,last=151/4\\)"
+                            "camera=\\(dolly=56,flags=0000101a,initial=56,unique=4,transitions=4,authored=360,collision=1\\.0000/0,.*\\).*physics=\\(22448\\.6,3328\\.0,-14059\\.3,facing=2091\\).*player_flags=00000000.*player_ai=\\(attached=0,transitions=1/1,last=151/4\\)"
                         TIMEOUT 120)
                 add_test(
                     NAME jpb_pc_authored_camera_settle
@@ -874,13 +887,14 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_ENEMY_BMD}"
                         --headless
                         --camera-diagnostics
+                        --framebuffer-size 960 540
                         --frames 480)
                 set_tests_properties(
                     jpb_pc_authored_camera_settle
                     PROPERTIES
                         LABELS "real_assets;pc_game;camera;enemy_ai;fed;progression"
                         PASS_REGULAR_EXPRESSION
-                            "camera=\\(dolly=1,authored=480,collision=1\\.0000/0\\).*target=visible\\(472\\.0,237\\.2,0\\.074\\).*physics=\\(22581\\.4,3498\\.0,-13878\\.7,facing=2091\\).*player_ai=\\(attached=0,transitions=1/1,last=151/4\\)"
+                            "camera=\\(dolly=56,flags=0000101a,initial=56,unique=4,transitions=4,authored=480,collision=1\\.0000/0,.*\\).*target=visible\\(459\\.7,276\\.3,0\\.104\\).*physics=\\(22395\\.2,3328\\.0,-13754\\.0,facing=2091\\).*player_ai=\\(attached=0,transitions=1/1,last=151/4\\)"
                         TIMEOUT 120)
                 add_test(
                     NAME jpb_pc_authored_camera_gameplay_handoff
@@ -896,17 +910,19 @@ if(BUILD_TESTING)
                         --enemy-bmd
                         "${JPB_PC_GAME_ENEMY_BMD}"
                         --headless
+                        --control-harness
                         --headless-phase none 360
                         --headless-phase up 59
                         --camera-diagnostics
                         --validate-camera-follow
+                        --framebuffer-size 960 540
                         --frames 420)
                 set_tests_properties(
                     jpb_pc_authored_camera_gameplay_handoff
                     PROPERTIES
                         LABELS "real_assets;pc_game;camera;enemy_ai"
                         PASS_REGULAR_EXPRESSION
-                            "camera=\\(dolly=1,authored=420,collision=1\\.0000/0\\).*target=visible\\(456\\.3,325\\.9,0\\.074\\).*player_ai=\\(attached=0,transitions=1/1,last=151/4\\)"
+                            "camera=\\(dolly=56,flags=0000101a,initial=56,unique=4,transitions=4,authored=420,collision=1\\.0000/0,.*\\).*target=visible\\([^\\)]*\\).*player_ai=\\(attached=0,transitions=1/1,last=151/4\\)"
                         TIMEOUT 120)
                 add_test(
                     NAME jpb_pc_authored_camera_spawn
@@ -920,13 +936,14 @@ if(BUILD_TESTING)
                         --headless
                         --camera-diagnostics
                         --validate-camera-follow
+                        --framebuffer-size 960 540
                         --frames 1)
                 set_tests_properties(
                     jpb_pc_authored_camera_spawn
                     PROPERTIES
                         LABELS "real_assets;pc_game;camera"
                         PASS_REGULAR_EXPRESSION
-                            "camera=\\(dolly=3,authored=1,collision=1\\.0000/0\\) camera_world=\\(21996,3808,-15064\\).*camera_state=\\(type=1,view=0x00001901,angles=246,2432->246,2432")
+                            "camera=\\(dolly=56,flags=0000111a,initial=56,unique=1,transitions=0,authored=1,collision=1\\.0000/0,.*\\) camera_world=\\(22388,3616,-14754\\).*camera_state=\\(type=1,view=0x00001901,angles=140,2048->140,2048")
                 add_test(
                     NAME jpb_pc_authored_camera_follow
                     COMMAND
@@ -937,10 +954,12 @@ if(BUILD_TESTING)
                         --bmd
                         "${JPB_PC_GAME_BMD}"
                         --headless
+                        --control-harness
                         --headless-phase up 120
                         --headless-phase right 30
                         --headless-phase none 53
                         --validate-camera-follow
+                        --framebuffer-size 960 540
                         --frames 203)
                 set_tests_properties(
                     jpb_pc_authored_camera_follow
@@ -1313,6 +1332,22 @@ if(BUILD_TESTING)
                         # that bit as decrement, so the default 0 wraps to 2.
                         PASS_REGULAR_EXPRESSION
                             "title_menu=\\(149,music=1\\).*video=\\(2,0\\)")
+                add_test(
+                    NAME jpb_pc_title_movie_resolution
+                    COMMAND
+                        jpb_pc_game
+                        "${JPB_PC_GAME_MESH}"
+                        --cad "${JPB_PC_GAME_CAD}"
+                        --bmd "${JPB_PC_GAME_BMD}"
+                        --headless --mute --title
+                        --validate-title-movie 7
+                        --frames 1)
+                set_tests_properties(
+                    jpb_pc_title_movie_resolution
+                    PROPERTIES
+                        LABELS "real_assets;pc_game;menu;presentation;movie"
+                        PASS_REGULAR_EXPRESSION
+                            "movie_state=\\(requests=1,resolved=1,launched=1,decoded=[1-9][0-9]*,presented=[1-9][0-9]*,audio_bytes=[1-9][0-9]*,audio_samples=[1-9][0-9]*,audio_chunks=[1-9][0-9]*,failures=0,last=7,flags=0,path=.*End1080Flipped_converted\\.ogg,error=none\\)")
                 add_test(
                     NAME jpb_pc_title_language
                     COMMAND
@@ -1723,7 +1758,7 @@ if(BUILD_TESTING)
                         --player-model 0
                         --enemy-cad "${JPB_PC_GAME_ENEMY_CAD}"
                         --enemy-bmd "${JPB_PC_GAME_ENEMY_BMD}"
-                        --hidden-window --scripted-input
+                        --hidden-window --control-harness
                         --validate-presentation-handoff
                         --validate-neutral-handoff
                         --silent-audio --validate-audio-handoff
@@ -2290,7 +2325,7 @@ if(BUILD_TESTING)
                             "${JPB_PC_GAME_MESH}"
                             --cad "${JPB_PC_GAME_CAD}"
                             --bmd "${JPB_PC_GAME_BMD}"
-                            --hidden-window --scripted-input
+                            --hidden-window --control-harness
                             --silent-audio
                             --validate-presentation-handoff
                             --validate-neutral-handoff

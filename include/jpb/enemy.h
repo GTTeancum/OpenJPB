@@ -47,6 +47,66 @@ typedef struct JPBEnemyVehicleDiagnostics {
 
 void jpb_EnemyGetVehicleDiagnostics(
     JPBEnemyVehicleDiagnostics *diagnostics);
+
+typedef struct JPBEnemyCameraOpcodeDiagnostics {
+    uint32_t sequence;
+    int32_t enemyID;
+    int32_t aiNum;
+    int32_t nodeIndex;
+    uint16_t encodedOpcode;
+    int16_t reserved;
+    int32_t value;
+    int32_t dolly;
+    uint32_t flagsBefore;
+    uint32_t flagsAfter;
+    int32_t totalFrames;
+    uint32_t globalTimer;
+} JPBEnemyCameraOpcodeDiagnostics;
+
+void jpb_EnemyGetCameraOpcodeDiagnostics(
+    JPBEnemyCameraOpcodeDiagnostics *diagnostics);
+
+typedef struct JPBEnemyFrameProfile {
+    double lastTotalSeconds;
+    double lastRadarSeconds;
+    double lastPrepareSeconds;
+    double lastCheckNewSeconds;
+    double lastReferenceSeconds;
+    double lastKungfuStartSeconds;
+    double lastLoopSeconds;
+    double lastPreFrameSeconds;
+    double lastParseSeconds;
+    double lastPostFrameSeconds;
+    double lastRangeSeconds;
+    double lastKungfuDoSeconds;
+    double maxTotalSeconds;
+    double maxRadarSeconds;
+    double maxPrepareSeconds;
+    double maxCheckNewSeconds;
+    double maxReferenceSeconds;
+    double maxKungfuStartSeconds;
+    double maxLoopSeconds;
+    double maxPreFrameSeconds;
+    double maxParseSeconds;
+    double maxPostFrameSeconds;
+    double maxRangeSeconds;
+    double maxKungfuDoSeconds;
+    double maxSingleParseSeconds;
+    double maxSingleOpcodeSeconds;
+    uint32_t lastProcessedEnemies;
+    uint32_t maxProcessedEnemies;
+    uint32_t lastParseInstructions;
+    uint32_t maxParseInstructions;
+    int32_t maxParseEnemyId;
+    int32_t maxParseAi;
+    int32_t maxOpcodeEnemyId;
+    int32_t maxOpcodeAi;
+    int32_t maxOpcodeNode;
+    uint16_t maxOpcode;
+} JPBEnemyFrameProfile;
+
+void jpb_EnemyGetFrameProfile(JPBEnemyFrameProfile *profile);
+void jpb_EnemySetFrameProfileEnabled(int enabled);
 extern uint8_t abGlobalBits[16];
 extern int32_t _aiFlagsTimer[4];
 extern int32_t _aiFlagsSave[4];

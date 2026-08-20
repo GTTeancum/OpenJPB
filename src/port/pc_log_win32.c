@@ -38,7 +38,6 @@ static void pc_log_write(const char *text)
         text += written;
         length -= written;
     }
-    FlushFileBuffers(pc_log_file);
 }
 
 static LONG WINAPI pc_log_unhandled_exception(
@@ -49,6 +48,9 @@ static LONG WINAPI pc_log_unhandled_exception(
     (void)jpb_PCLogFormatException(
         exception, message, sizeof(message));
     pc_log_write(message);
+    if (pc_log_file != INVALID_HANDLE_VALUE) {
+        FlushFileBuffers(pc_log_file);
+    }
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
@@ -230,6 +232,7 @@ void jpb_PCLogStop(int exit_code)
         return;
     }
     jpb_PCLog("clean shutdown exit=%d", exit_code);
+    FlushFileBuffers(pc_log_file);
     CloseHandle(pc_log_file);
     pc_log_file = INVALID_HANDLE_VALUE;
 }

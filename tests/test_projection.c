@@ -303,6 +303,29 @@ int main(void)
     CHECK(screen.vy == 270.0f);
     CHECK(screen.vz == 1.0f / 10240.0f);
     {
+        float viewport_x;
+        float viewport_y;
+        float viewport_width;
+        float viewport_height;
+
+        jpb_PcGameplayViewport(
+            1920.0f,
+            1080.0f,
+            &viewport_x,
+            &viewport_y,
+            &viewport_width,
+            &viewport_height);
+        CHECK(viewport_x == 0.0f);
+        CHECK(viewport_y == 0.0f);
+        CHECK(viewport_width == 1920.0f);
+        CHECK(viewport_height == 1080.0f);
+        CHECK(jpb_ProjectPcGameplayToViewport(
+                  &view, &eye, 1920.0f, 1080.0f, &screen) == 1);
+        CHECK(screen.vx == 960.0f);
+        CHECK(screen.vy == 540.0f);
+        CHECK(screen.vz == 1.0f / 10240.0f);
+    }
+    {
         FVECTOR near_plane = {10.0f, -5.0f, 1.0f};
 
         CHECK(jpb_ProjectPcCameraToViewport(
@@ -601,6 +624,12 @@ int main(void)
             {2000.0f, 40.0f, 100.0f, UINT32_C(0xffffffff), 0.0f, 1.0f},
             {2100.0f, 40.0f, 100.0f, UINT32_C(0xffffffff), 1.0f, 1.0f}
         };
+        JPBScreenPolyVertex behind_camera_quad[4] = {
+            {4600.0f, -300.0f, -400.0f, UINT32_C(0xffffffff), 0.0f, 0.0f},
+            {5400.0f, -300.0f, -400.0f, UINT32_C(0xffffffff), 1.0f, 0.0f},
+            {4600.0f, 300.0f, 350.0f, UINT32_C(0xffffffff), 0.0f, 1.0f},
+            {5400.0f, 300.0f, 350.0f, UINT32_C(0xffffffff), 1.0f, 1.0f}
+        };
 
         material.texture = &class_two_texture;
         material.flags = JPB_MATERIAL_MODE_BACKFACE_REJECT;
@@ -617,6 +646,21 @@ int main(void)
                   &poly_stats) == JPB_SOFTWARE_RENDER_OK);
         CHECK(poly_stats.triangles == 2);
         CHECK(poly_stats.pixels == 0);
+        class_two_texture.materialType = 0;
+        memset(poly_pixels, 0, sizeof(poly_pixels));
+        memset(&poly_stats, 0, sizeof(poly_stats));
+        CHECK(jpb_SoftwareClearDepthBuffer(&poly_depth));
+        CHECK(jpb_SoftwareDrawScreenPoly(
+                  &material,
+                  4,
+                  behind_camera_quad,
+                  1,
+                  &poly_framebuffer,
+                  &poly_depth,
+                  &poly_stats) == JPB_SOFTWARE_RENDER_OK);
+        CHECK(poly_stats.triangles == 2);
+        CHECK(poly_stats.pixels == 0);
+        class_two_texture.materialType = 2;
         material.flags = JPB_MATERIAL_MODE_SCREEN_TILE;
         memset(poly_pixels, 0, sizeof(poly_pixels));
         memset(&poly_stats, 0, sizeof(poly_stats));

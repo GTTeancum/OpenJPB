@@ -43,6 +43,18 @@ int jpb_PCD3D11PresenterRenderLevel(
     void *texture_user_data,
     JPBSoftwareDepthBuffer *depth_buffer,
     JPBSoftwareRenderStats *stats);
+int jpb_PCD3D11PresenterRenderLevelPass(
+    JPBPCD3D11Presenter *presenter,
+    const JPBSoftwareLevelMesh *mesh,
+    JPBLevelFbxMeshPass pass,
+    const JPBSoftwareJpxScene *world_scene,
+    MATRIX *view_matrix,
+    JPBSoftwareFramebuffer *framebuffer,
+    uint32_t clear_color,
+    JPBPCPresentTextureResolver resolve_texture,
+    void *texture_user_data,
+    JPBSoftwareDepthBuffer *depth_buffer,
+    JPBSoftwareRenderStats *stats);
 void jpb_PCD3D11PresenterWorldTiming(
     const JPBPCD3D11Presenter *presenter,
     unsigned *frames,

@@ -200,6 +200,84 @@ int jpb_ProjectPcCameraToViewport(
     return clipped;
 }
 
+void jpb_PcGameplayViewport(
+    float framebuffer_width,
+    float framebuffer_height,
+    float *viewport_x,
+    float *viewport_y,
+    float *viewport_width,
+    float *viewport_height)
+{
+    float width = framebuffer_width > 0.0f ? framebuffer_width : 0.0f;
+    float height = framebuffer_height > 0.0f ? framebuffer_height : 0.0f;
+
+    if (viewport_x != NULL) *viewport_x = 0.0f;
+    if (viewport_y != NULL) *viewport_y = 0.0f;
+    if (viewport_width != NULL) *viewport_width = width;
+    if (viewport_height != NULL) *viewport_height = height;
+}
+
+int jpb_ProjectPcGameplayCameraToViewport(
+    const FVECTOR *camera,
+    float framebuffer_width,
+    float framebuffer_height,
+    FVECTOR *screen)
+{
+    float viewport_x;
+    float viewport_y;
+    float viewport_width;
+    float viewport_height;
+    int result;
+
+    if (screen == NULL) {
+        return JPB_PROJECTION_INVALID_VIEWPORT;
+    }
+    jpb_PcGameplayViewport(
+        framebuffer_width,
+        framebuffer_height,
+        &viewport_x,
+        &viewport_y,
+        &viewport_width,
+        &viewport_height);
+    result = jpb_ProjectPcCameraToViewport(
+        camera,
+        viewport_width,
+        viewport_height,
+        screen);
+    if (result >= 0) {
+        screen->vx += viewport_x;
+        screen->vy += viewport_y;
+    }
+    return result;
+}
+
+int jpb_ProjectPcGameplayToViewport(
+    MATRIX *view,
+    const FVECTOR *world,
+    float framebuffer_width,
+    float framebuffer_height,
+    FVECTOR *screen)
+{
+    FVECTOR source;
+    FVECTOR transformed;
+
+    if (view == NULL || world == NULL || screen == NULL ||
+        !(framebuffer_width > 0.0f) ||
+        !(framebuffer_height > 0.0f)) {
+        return JPB_PROJECTION_INVALID_VIEWPORT;
+    }
+    source = *world;
+    fApplyMatrixFV(view, &source, &transformed);
+    transformed.vx += (float)view->t[0];
+    transformed.vy += (float)view->t[1];
+    transformed.vz += (float)view->t[2];
+    return jpb_ProjectPcGameplayCameraToViewport(
+        &transformed,
+        framebuffer_width,
+        framebuffer_height,
+        screen);
+}
+
 int jpb_ProjectCameraToViewport(
     Camera *camera,
     sceneGeometryEnv *environment,

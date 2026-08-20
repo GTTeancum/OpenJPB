@@ -43,18 +43,28 @@ static int32_t first;
 
 static playerObject *shaolin_node_player(kfNode *kungfu)
 {
-    sceneObject *scene =
-        (sceneObject *)kungfu->id->pParent;
+    sceneObject *scene;
 
+    if (kungfu == NULL ||
+        kungfu->id == NULL ||
+        kungfu->id->pParent == NULL) {
+        return NULL;
+    }
+    scene = (sceneObject *)kungfu->id->pParent;
     return (playerObject *)scene->pPlayer;
 }
 
 static physicsObject *shaolin_node_physics(
     kfNode *kungfu)
 {
-    sceneObject *scene =
-        (sceneObject *)kungfu->id->pParent;
+    sceneObject *scene;
 
+    if (kungfu == NULL ||
+        kungfu->id == NULL ||
+        kungfu->id->pParent == NULL) {
+        return NULL;
+    }
+    scene = (sceneObject *)kungfu->id->pParent;
     return (physicsObject *)scene->pPhysics;
 }
 
@@ -92,14 +102,24 @@ void shaolin_Attack(kfNode *n)
         shaolin_node_player(n);
     physicsObject *phy =
         shaolin_node_physics(n);
-    wsl_ENEMY *pEnemy = player->pEnemy;
-    aiData *pAiData = player->paiMemory;
+    wsl_ENEMY *pEnemy;
+    aiData *pAiData;
     playerObject *other;
     int16_t *attacker_count;
     int closingRange;
     int dist;
     int move;
 
+    if (player == NULL ||
+        phy == NULL ||
+        player->pEnemy == NULL ||
+        player->paiMemory == NULL ||
+        player->target == NULL ||
+        gpWorld == NULL) {
+        return;
+    }
+    pEnemy = player->pEnemy;
+    pAiData = player->paiMemory;
     if (player->target == gpWorld->player0) {
         ++a[0];
         attacker_count = &a[0];
@@ -442,9 +462,14 @@ void shaolin_DoKungfu(void)
         physicsObject *p =
             shaolin_node_physics(n);
         int closest = 0;
-        uint32_t close =
-            vec_DistanceLV(
-                &p->vpos, &point[0]);
+        uint32_t close;
+
+        if (player == NULL || p == NULL) {
+            n->flags = 1;
+            continue;
+        }
+        close = vec_DistanceLV(
+            &p->vpos, &point[0]);
 
         n->flags = 0;
         player->pFlags &=
@@ -486,6 +511,12 @@ void shaolin_DoKungfu(void)
             playerObject *player =
                 shaolin_node_player(atkr);
 
+            if (player == NULL ||
+                player->target == NULL ||
+                player->paMotions == NULL) {
+                atkr->flags = 1;
+                continue;
+            }
             if ((player->target->pFlags &
                  UINT32_C(0x80)) != 0) {
                 (void)animctrl_MotionLockLevel(

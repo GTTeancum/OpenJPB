@@ -402,6 +402,49 @@ static void test_kungfu_coordinator(void)
           &fixture.motions[0]);
 }
 
+static void test_malformed_kungfu_owner_chains(void)
+{
+    ShaolinFixture fixture;
+
+    shaolin_InitKungfu();
+    shaolin_StartKungfu();
+    shaolin_Attack(NULL);
+    CHECK(a[0] == 0);
+    CHECK(a[1] == 0);
+
+    init_fixture(&fixture);
+    shaolin_InitKungfu();
+    shaolin_StartKungfu();
+    fixture.kungfu.id = NULL;
+    shaolin_Attack(&fixture.kungfu);
+    CHECK(a[0] == 0);
+    CHECK(a[1] == 0);
+
+    init_fixture(&fixture);
+    shaolin_InitKungfu();
+    shaolin_StartKungfu();
+    fixture.attacker.playerRoot.pParent = NULL;
+    shaolin_Attack(&fixture.kungfu);
+    CHECK(a[0] == 0);
+    CHECK(a[1] == 0);
+
+    init_fixture(&fixture);
+    shaolin_InitKungfu();
+    shaolin_StartKungfu();
+    fixture.attacker_scene.pPlayer = NULL;
+    shaolin_Attack(&fixture.kungfu);
+    CHECK(a[0] == 0);
+    CHECK(a[1] == 0);
+
+    init_fixture(&fixture);
+    shaolin_InitKungfu();
+    shaolin_StartKungfu();
+    fixture.kungfu.id = NULL;
+    shaolin_AddKungfu(&fixture.kungfu);
+    shaolin_DoKungfu();
+    CHECK(fixture.kungfu.flags == 1);
+}
+
 int main(void)
 {
     test_pool_and_list_lifecycle();
@@ -410,6 +453,7 @@ int main(void)
     test_attack_scheduler();
     test_ai_attack_opcode_owners();
     test_kungfu_coordinator();
+    test_malformed_kungfu_owner_chains();
 
     if (failures != 0) {
         fprintf(

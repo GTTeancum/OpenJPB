@@ -93,6 +93,11 @@ static int test_static_map_walk_height(void)
     VECTOR pos = {128, 300, 128, 0};
     VECTOR normal = {1, 2, 3, 4};
     FVECTOR float_pos = {128.9f, 300.9f, 128.9f};
+    _jheightstuff camera_result = {
+        (int32_t *)(uintptr_t)1,
+        (int32_t *)(uintptr_t)2,
+        (int32_t *)(uintptr_t)3
+    };
 
     CHECK(storage != NULL);
     mapbase = storage + 4;
@@ -123,6 +128,15 @@ static int test_static_map_walk_height(void)
     CHECK(
         intersec_FindWalkHeightFV(
             &float_pos, NULL, NULL, 0) == 256);
+    CHECK(
+        intersec_FindWalkHeight(
+            &pos,
+            NULL,
+            (objectRoot *)(void *)&camera_result,
+            1) == 256);
+    CHECK(camera_result.cube == &mapbase[CUBE_INDEX]);
+    CHECK(camera_result.entry == &mapbase[CUBE_INDEX + 2]);
+    CHECK(camera_result.poly == &mapbase[LIB_INDEX + 2]);
 
     pos.vx = 0x10000;
     CHECK(

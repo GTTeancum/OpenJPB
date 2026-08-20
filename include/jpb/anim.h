@@ -155,6 +155,28 @@ typedef struct animObject {
 
 extern animObject maAnimationData[JPB_ANIMATION_CAPACITY];
 
+typedef struct JPBAnimForceProfile {
+    double lastTotalSeconds;
+    double lastRecoverySeconds;
+    double lastActivateSeconds;
+    double lastActivateMotionSeconds;
+    double lastActivateSoundSeconds;
+    double lastActivateTweenSeconds;
+    double lastDecodeStepSeconds;
+    double maxTotalSeconds;
+    double maxRecoverySeconds;
+    double maxActivateSeconds;
+    double maxActivateMotionSeconds;
+    double maxActivateSoundSeconds;
+    double maxActivateTweenSeconds;
+    double maxDecodeStepSeconds;
+    uint32_t maxObjectId;
+    uint16_t maxMotionSeq;
+} JPBAnimForceProfile;
+
+void jpb_AnimGetForceProfile(JPBAnimForceProfile *profile);
+void jpb_AnimSetForceProfileEnabled(int enabled);
+
 int anim_AddNextAnimSeq(
     animObject *animation, Motion *motion, int replace_queue);
 int anim_ForceNextAnimSeq(animObject *animation, int IsTween);

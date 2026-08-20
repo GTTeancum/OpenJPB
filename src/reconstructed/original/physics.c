@@ -427,8 +427,12 @@ static float physics_merge_slope_component(
 
 static physicsObject *physics_from_root(objectRoot *object)
 {
-    sceneObject *scene = (sceneObject *)object->pParent;
+    sceneObject *scene;
 
+    if (object == NULL || object->pParent == NULL) {
+        return NULL;
+    }
+    scene = (sceneObject *)object->pParent;
     return (physicsObject *)scene->pPhysics;
 }
 
@@ -4141,7 +4145,9 @@ int32_t physics_ForceFaceLock(
  */
 int32_t *physics_GetPoly(objectRoot *object)
 {
-    return physics_from_root(object)->lastpolyhit;
+    physicsObject *physics = physics_from_root(object);
+
+    return physics != NULL ? physics->lastpolyhit : NULL;
 }
 
 /* 0xE0A30, 169 bytes, global, 0 named locals
@@ -4314,6 +4320,9 @@ void physics_gClrConstantVector(objectRoot *object)
 {
     physicsObject *physics = physics_from_root(object);
 
+    if (physics == NULL) {
+        return;
+    }
     physics->constmov.vy = 0.0f;
     physics->constmov.vz = 0.0f;
     physics->constmov.vx = 0.0f;
@@ -4349,14 +4358,16 @@ physicsObject *physics_gCreateObject(sceneObject *scene)
 int32_t physics_gFaceTarget(
     objectRoot *player, objectRoot *target)
 {
+    physicsObject *player_physics = physics_from_root(player);
+    physicsObject *target_physics = physics_from_root(target);
     VECTOR *playerpos = NULL;
     VECTOR *targetpos = NULL;
 
-    if (player != NULL) {
-        playerpos = &physics_from_root(player)->vpos;
+    if (player_physics != NULL) {
+        playerpos = &player_physics->vpos;
     }
-    if (target != NULL) {
-        targetpos = &physics_from_root(target)->vpos;
+    if (target_physics != NULL) {
+        targetpos = &target_physics->vpos;
     }
     if (playerpos != NULL && targetpos != NULL) {
         int32_t dx = (int32_t)(
@@ -4381,12 +4392,16 @@ int32_t physics_gForceFaceTarget(
 {
     physicsObject *p = physics_from_root(player);
 
+    if (p == NULL) {
+        return 0;
+    }
     if ((p->flags & UINT32_C(0x400000)) == 0) {
+        physicsObject *target_physics = physics_from_root(target);
         VECTOR *targetpos = NULL;
         int32_t aoa = 0;
 
-        if (target != NULL) {
-            targetpos = &physics_from_root(target)->vpos;
+        if (target_physics != NULL) {
+            targetpos = &target_physics->vpos;
         }
         if (targetpos != NULL) {
             int32_t dx = (int32_t)(
@@ -4410,7 +4425,9 @@ int32_t physics_gForceFaceTarget(
  */
 FVECTOR *physics_gGetConstantVector(objectRoot *object)
 {
-    return &physics_from_root(object)->constmov;
+    physicsObject *physics = physics_from_root(object);
+
+    return physics != NULL ? &physics->constmov : NULL;
 }
 
 /* 0xE15C0, 132 bytes, global, 6 named locals
@@ -4421,16 +4438,18 @@ FVECTOR *physics_gGetConstantVector(objectRoot *object)
 int32_t physics_gGetFaceTargetDelta(
     objectRoot *player, objectRoot *target)
 {
+    physicsObject *player_physics = physics_from_root(player);
+    physicsObject *target_physics = physics_from_root(target);
     VECTOR *playerpos = NULL;
     VECTOR *targetpos = NULL;
     int32_t aoa = 0;
     physicsObject *p;
 
-    if (player != NULL) {
-        playerpos = &physics_from_root(player)->vpos;
+    if (player_physics != NULL) {
+        playerpos = &player_physics->vpos;
     }
-    if (target != NULL) {
-        targetpos = &physics_from_root(target)->vpos;
+    if (target_physics != NULL) {
+        targetpos = &target_physics->vpos;
     }
     if (playerpos != NULL && targetpos != NULL) {
         int32_t dx = (int32_t)(
@@ -4552,10 +4571,9 @@ physicsObject *physics_gGetNewObject(int ID)
  */
 VECTOR *physics_gGetPosition(objectRoot *object)
 {
-    if (object != NULL) {
-        return &physics_from_root(object)->vpos;
-    }
-    return NULL;
+    physicsObject *physics = physics_from_root(object);
+
+    return physics != NULL ? &physics->vpos : NULL;
 }
 
 /* 0xE1830, 113 bytes, global, 6 named locals
