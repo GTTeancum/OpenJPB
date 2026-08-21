@@ -136,6 +136,18 @@ static void test_two_player_banks(void)
         audio, 2, "vjdie", path, sizeof(path)));
     CHECK(strstr(path, "\\qui_gon\\vjdie.wav") != NULL);
     jpb_PCAudioDestroy(audio);
+
+    audio = jpb_PCAudioCreate(
+        "C:\\Game\\res\\level\\jpx\\arena\\arena.jpx",
+        "C:\\Game\\res\\animation\\obi_wan.cad",
+        "C:\\Game\\res\\animation\\qui_gon.cad",
+        25,
+        0);
+    CHECK(audio != NULL);
+    CHECK(jpb_PCAudioResolveSound(
+        audio, 2, "vjdie", path, sizeof(path)));
+    CHECK(strstr(path, "\\qui_gon\\vjdie.wav") != NULL);
+    jpb_PCAudioDestroy(audio);
 }
 
 static void test_real_wav(int argc, char **argv)

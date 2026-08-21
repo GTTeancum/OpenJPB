@@ -1,9 +1,11 @@
 #include "jpb/menu.h"
 
 #include "jpb/alltext.h"
+#include "jpb/audio_stream.h"
 #include "jpb/game.h"
 #include "jpb/input.h"
 #include "jpb/jedi.h"
+#include "jpb/camera.h"
 #include "jpb/resources.h"
 #include "jpb/sprite.h"
 #include "jpb/text.h"
@@ -41,6 +43,8 @@ typedef struct PlatformTrace {
     int lastMovieFlags;
     int cleanupCalls;
     int saveCalls;
+    int settingsSaveCalls;
+    optionstruct savedSettings;
     int inMenuCalls;
     int lastInMenu;
     int scanCalls;
@@ -54,6 +58,8 @@ typedef struct PlatformTrace {
     unsigned controllerCount;
     int controllerCountCalls;
     int fallbackCalls;
+    int openUrlCalls;
+    char openedUrl[64];
     int exitCalls;
 } PlatformTrace;
 
@@ -111,6 +117,47 @@ typedef struct MenuTextureDrawTrace {
     CVECTOR colors[64];
     float layers[64];
 } MenuTextureDrawTrace;
+
+typedef struct MenuAudioControlTrace {
+    int calls;
+    JPBAudioStreamControl lastControl;
+    int lastValue;
+    int playCalls;
+    int lastTrack;
+    int lastVolume;
+    int lastLoop;
+} MenuAudioControlTrace;
+
+static int capture_menu_audio_control(
+    JPBAudioStreamControl control,
+    int value,
+    void *user_data)
+{
+    MenuAudioControlTrace *trace =
+        (MenuAudioControlTrace *)user_data;
+
+    ++trace->calls;
+    trace->lastControl = control;
+    trace->lastValue = value;
+    return 1;
+}
+
+static void capture_menu_audio_play(
+    int track,
+    const char *stream_name,
+    int volume,
+    int loop,
+    void *user_data)
+{
+    MenuAudioControlTrace *trace =
+        (MenuAudioControlTrace *)user_data;
+
+    (void)stream_name;
+    ++trace->playCalls;
+    trace->lastTrack = track;
+    trace->lastVolume = volume;
+    trace->lastLoop = loop;
+}
 
 static void capture_menu_texture_draw(
     void *user_data,
@@ -339,6 +386,15 @@ static void trace_save(void *user_data)
     ++((PlatformTrace *)user_data)->saveCalls;
 }
 
+static void trace_save_settings(
+    const optionstruct *options, void *user_data)
+{
+    PlatformTrace *trace = (PlatformTrace *)user_data;
+
+    ++trace->settingsSaveCalls;
+    trace->savedSettings = *options;
+}
+
 static void trace_in_menu(int in_menu, void *user_data)
 {
     PlatformTrace *trace = (PlatformTrace *)user_data;
@@ -403,6 +459,15 @@ static void trace_request_exit(void *user_data)
     ++((PlatformTrace *)user_data)->exitCalls;
 }
 
+static void trace_open_url(const char *url, void *user_data)
+{
+    PlatformTrace *trace = (PlatformTrace *)user_data;
+
+    ++trace->openUrlCalls;
+    strncpy(trace->openedUrl, url, sizeof(trace->openedUrl) - 1u);
+    trace->openedUrl[sizeof(trace->openedUrl) - 1u] = '\0';
+}
+
 static void reset_menu_state(void)
 {
     memset(&menuVars, 0, sizeof(menuVars));
@@ -417,6 +482,8 @@ static void reset_menu_state(void)
     screenSaverFlag = 0;
     saverAlpha = 0;
     memset(saverPads, 0, sizeof(saverPads));
+    slider = 0;
+    memset(padCurrentBits, 0, sizeof(padCurrentBits));
     keyboardBufferIndex = 0;
     keyboardKeyPressed = 0;
     memset(keyboardBuffer, 0, sizeof(keyboardBuffer));
@@ -816,6 +883,274 @@ static int test_character_select_arrows(void)
     return 0;
 }
 
+static int test_audio_menu_sliders(void)
+{
+    MenuTextureDrawTrace trace;
+    MenuAudioControlTrace audio_trace;
+    _Material gradient;
+    _Material mask;
+    _Material background;
+    int first_slider;
+
+    reset_menu_state();
+    memset(&trace, 0, sizeof(trace));
+    memset(&audio_trace, 0, sizeof(audio_trace));
+    memset(&gradient, 0, sizeof(gradient));
+    memset(&mask, 0, sizeof(mask));
+    memset(&background, 0, sizeof(background));
+    OptionStruct.ScreenWidth = 960;
+    OptionStruct.ScreenHeight = 540;
+    OptionStruct.ResolutionChanged = 0;
+    OptionStruct.Music = 1;
+    OptionStruct.musicVolume = 30;
+    OptionStruct.SFXVolume = 45;
+    scaleAdjustmentMM = 0.5f;
+    generateAllText(0);
+    menuTextures[166] = &gradient;
+    menuTextures[167] = &mask;
+    menuTextures[168] = &background;
+    jpb_WHookSetDrawTextureHook(
+        capture_menu_texture_draw, &trace);
+    jpb_AudioStreamSetControlHook(
+        capture_menu_audio_control, &audio_trace);
+
+    menu_slideco(0.45f, 0.25f, 850, 710, 30.0f, 75.0f);
+    CHECK(trace.calls == 3);
+    CHECK(trace.materials[0] == &gradient);
+    CHECK(trace.materials[1] == &background);
+    CHECK(trace.materials[2] == &mask);
+    CHECK(trace.destinations[0].left == 425);
+    CHECK(trace.destinations[0].top == 355);
+    CHECK(trace.destinations[0].right == 512);
+    CHECK(trace.destinations[0].bottom == 371);
+    CHECK(trace.sources[0].left == 200);
+    CHECK(trace.sources[0].top == 0);
+    CHECK(trace.sources[0].right == 242);
+    CHECK(trace.sources[0].bottom == 135);
+    CHECK(trace.destinations[1].left == 420);
+    CHECK(trace.destinations[1].top == 353);
+    CHECK(trace.destinations[1].right == 646);
+    CHECK(trace.destinations[1].bottom == 372);
+    CHECK(trace.colors[0].r == 255);
+    CHECK(trace.colors[0].g == 255);
+    CHECK(trace.colors[0].b == 255);
+    CHECK(trace.colors[0].cd == 255);
+    CHECK(trace.layers[0] == 0.002f);
+    CHECK(trace.layers[1] == 0.003f);
+    CHECK(trace.layers[2] == 0.001f);
+
+    memset(&trace, 0, sizeof(trace));
+    menuVars.menuModeSP = 0;
+    menuVars.menuMode[0] = 0x10;
+    GameStruct.gameMode = 0;
+    menu_mainLoop();
+    CHECK(trace.calls >= 6);
+    first_slider = trace.calls - 6;
+    CHECK(trace.materials[first_slider] == &gradient);
+    CHECK(trace.materials[first_slider + 1] == &background);
+    CHECK(trace.materials[first_slider + 2] == &mask);
+    CHECK(trace.materials[first_slider + 3] == &gradient);
+    CHECK(trace.materials[first_slider + 4] == &background);
+    CHECK(trace.materials[first_slider + 5] == &mask);
+    CHECK(trace.destinations[first_slider].left == 425);
+    CHECK(trace.destinations[first_slider].top == 355);
+    CHECK(trace.destinations[first_slider + 3].left == 425);
+    CHECK(trace.destinations[first_slider + 3].top == 385);
+    CHECK(trace.sources[first_slider + 3].right == 363);
+    CHECK(audio_trace.calls == 1);
+    CHECK(audio_trace.lastControl == JPB_AUDIO_STREAM_SET_VOLUME);
+    CHECK(audio_trace.lastValue == 30);
+
+    jpb_AudioStreamSetControlHook(NULL, NULL);
+    jpb_WHookSetDrawTextureHook(NULL, NULL);
+    memset(menuTextures, 0, sizeof(menuTextures));
+    return 0;
+}
+
+static int test_reachable_menu_entry_initialization(void)
+{
+    JPBMenuPlatformHooks hooks;
+    PlatformTrace trace;
+
+    reset_menu_state();
+    memset(&hooks, 0, sizeof(hooks));
+    memset(&trace, 0, sizeof(trace));
+    hooks.scanLevel = trace_scan_level;
+    hooks.saveSettingsData = trace_save_settings;
+    jpb_MenuSetPlatformHooks(&hooks, &trace);
+
+    menuVars.menuMode[0] = 0;
+    menuVars.menuMode[4] = UINT16_C(0x7777);
+    menuVars.pplayers[0] = 2;
+    menuVars.pplayers[1] = 4;
+    menuVars.mcount = 9;
+    menuVars.titleArt = 0;
+    menuVars.titleDispEnable = 2;
+    GameStruct.ModelSelect[0] = 12;
+    GameStruct.ModelSelect[1] = 13;
+    GameStruct.NumPlayers = 2;
+    GameStruct.gameMode = 7;
+    GameStruct.letterboxFlag = 1;
+    GameStruct.letterboxFlag2 = 1;
+    totalframes = 20;
+    menu_initNewMenu();
+    CHECK(totalframes == 36);
+    CHECK(GameStruct.letterboxFlag == 1);
+    CHECK(GameStruct.letterboxFlag2 == 1);
+    CHECK(GameStruct.ModelSelect[0] == obi_wan_model);
+    CHECK(GameStruct.ModelSelect[1] == qui_gon_model);
+    CHECK(GameStruct.gameMode == 0);
+    CHECK(menuVars.mcount == 0);
+    CHECK(menuVars.subplayers[0] == 2);
+    CHECK(menuVars.subplayers[1] == 4);
+    CHECK((abGlobalBits[0] & UINT8_C(0xf8)) == UINT8_C(0x08));
+    CHECK((abGlobalBits[1] & UINT8_C(0x1f)) == UINT8_C(0x02));
+    CHECK(menuVars.titleArt == 1);
+    CHECK(menuVars.titleDispEnable == 3);
+    CHECK(menuVars.menuModeSP == 1);
+    CHECK(menuVars.menuMode[0] == 0);
+    CHECK(menuVars.menuMode[1] == 0);
+    CHECK(menuVars.menuMode[4] == 0);
+    menuVars.menuModeSP = 0;
+
+    menuVars.oldpad[0] = UINT32_C(0x12345678);
+    menuVars.oldpad[1] = UINT32_C(0x87654321);
+    menuVars.itemSelect = 9;
+    menuVars.vramx = 10;
+    menuVars.vramy = 11;
+    menuVars.pSelect = 9;
+    menuVars.mmX = 99;
+    menuVars.mmY = 98;
+    menuVars.mmColorSelect = 97;
+    menuVars.mmColorNotSelect = 96;
+    menuVars.mmvCount = 6;
+
+    GameStruct.NumPlayers = 2;
+    menuVars.menuMode[0] = 0x0c;
+    menu_initNewMenu();
+    CHECK(savedNumPlayer == 2);
+    CHECK(menuVars.oldpad[0] == UINT32_C(0x12345678));
+    CHECK(menuVars.oldpad[1] == UINT32_C(0x87654321));
+    CHECK(menuVars.itemSelect == 0);
+    CHECK(menuVars.vramx == 0);
+    CHECK(menuVars.vramy == 11);
+    CHECK(menuVars.pSelect == 0);
+    CHECK(menuVars.mmX == 99);
+    CHECK(menuVars.mmY == 98);
+    CHECK(menuVars.mmColorSelect == 11);
+    CHECK(menuVars.mmColorNotSelect == 12);
+    CHECK(menuVars.mmvCount == 0);
+
+    menuVars.menuMode[0] = 0x0b;
+    menuVars.titleArt = 0;
+    menuVars.titleDispEnable = 2;
+    OptionStruct.Music = 0;
+    OptionStruct.Language = 4;
+    menu_initNewMenu();
+    CHECK(menuVars.titleArt == 1);
+    CHECK(menuVars.titleDispEnable == 3);
+    CHECK(trace.settingsSaveCalls == 1);
+    CHECK(trace.savedSettings.Language == 4);
+
+    GameStruct.CurrentLevel = 9;
+    menuVars.menuModeSP = 0;
+    menuVars.menuMode[0] = 4;
+    menu_initNewMenu();
+    CHECK(GameStruct.CurrentLevel == 0);
+    CHECK(menuVars.menuModeSP == 1);
+    CHECK(menuVars.menuMode[1] == 0x0e);
+
+    GameStruct.NumPlayers = 1;
+    tempPlayersVs = 2;
+    menuVars.menuModeSP = 0;
+    menuVars.menuMode[0] = 0x0d;
+    menu_initNewMenu();
+    CHECK(savedNumPlayer == 1);
+    CHECK(GameStruct.NumPlayers == 2);
+
+    OptionStruct.musicVolume = 255;
+    OptionStruct.SFXVolume = 254;
+    menuVars.menuMode[0] = 0x10;
+    menu_initNewMenu();
+    CHECK(OptionStruct.musicVolume == 75);
+    CHECK(OptionStruct.SFXVolume == 75);
+    CHECK(menuVars.sfxVolume == 75);
+
+    menuVars.scoreScore = 1234;
+    menuVars.menuMode[0] = 0x1b;
+    menu_initNewMenu();
+    CHECK(menuVars.scoreScore == 0);
+
+    menuVars.menuModeSP = 0;
+    menuVars.menuMode[0] = 0x0e;
+    LevelSelect = 9;
+    OptionStruct.ScreenWidth = 1920;
+    OptionStruct.ScreenHeight = 1080;
+    GameStruct.NumPlayers = 2;
+    GameStruct.ModelSelect[0] = 0;
+    GameStruct.ModelSelect[1] = 4;
+    menuVars.pselectMode[0] = 1;
+    menuVars.pselectMode[1] = 1;
+    menu_pushMenu(0x1a);
+    CHECK(menuVars.menuModeSP == 1);
+    CHECK(LevelSelect == 9);
+    menu_initNewMenu();
+    CHECK(trace.scanCalls == 31);
+    CHECK(trace.lastScanLevel == 30);
+    CHECK(menuVars.menuModeSP == 3);
+    CHECK(menuVars.menuMode[2] == 0);
+    CHECK(menuVars.menuMode[3] == 0x1a);
+    CHECK(LevelSelect == 1);
+    CHECK(menuVars.bgWidth == 1920);
+    CHECK(menuVars.bgHeight == 1080);
+    CHECK(menuVars.titleDispEnable == 1);
+    CHECK(GameStruct.gameMode == 0);
+    CHECK(menuVars.dstSelector == 0);
+    CHECK(menuVars.selbox.y == 0x86);
+    CHECK(menuVars.selbox.w == 0x78);
+    CHECK(menuVars.selbox.h == 2);
+    CHECK(menuVars.selCount == 0);
+    CHECK(menuVars.artload == 1);
+    CHECK(menuVars.artLevel == 1);
+    CHECK(menuVars.artloadPos == -256);
+    CHECK(menuVars.mmvCount == 4);
+    CHECK(menuVars.mmv[0].mmvSrc == frameBottomMover);
+    CHECK(menuVars.mmv[1].mmvSrc == frameRightMover);
+    CHECK(menuVars.mmv[2].mmvSrc == frameLeftMover);
+    CHECK(menuVars.mmv[3].mmvSrc == frameTopMover);
+    CHECK(menuVars.mmv[0].mmvPtr == 0);
+    CHECK(menuVars.mmv[0].mmvCounter == 0);
+    CHECK(menuVars.mmv[0].mmvX == 0);
+    CHECK(menuVars.mmv[0].mmvY == 0);
+    CHECK(menuVars.mmv[0].mmvMenu == NULL);
+    CHECK(menuVars.mmv[0].state == 1);
+    CHECK(GameStruct.ModelSelect[0] == 6);
+    CHECK(GameStruct.ModelSelect[1] == 7);
+
+    reset_menu_state();
+    menuVars.menuModeSP = 1;
+    menuVars.menuMode[0] = 0;
+    menuVars.menuMode[1] = 0x90;
+    GameStruct.continueAble = 0;
+    GameStruct.jediScorePerLevel[0][0] = 1234;
+    menu_initNewMenu();
+    CHECK(menuVars.menuModeSP == 1);
+    CHECK(menuVars.menuMode[1] == 3);
+    CHECK(GameStruct.jediScorePerLevel[0][0] == 0);
+
+    reset_menu_state();
+    menuVars.menuModeSP = 1;
+    menuVars.menuMode[0] = 0;
+    menuVars.menuMode[1] = 0x90;
+    GameStruct.continueAble = 1;
+    menu_initNewMenu();
+    CHECK(menuVars.menuModeSP == 1);
+    CHECK(menuVars.menuMode[1] == 0x90);
+
+    jpb_MenuSetPlatformHooks(NULL, NULL);
+    return 0;
+}
+
 static int test_p1_character_select_presentation(void)
 {
     MenuTextureDrawTrace texture_trace;
@@ -838,6 +1173,7 @@ static int test_p1_character_select_presentation(void)
     OptionStruct.ResolutionChanged = 0;
     scaleAdjustmentMM = 0.5f;
     generateAllText(0);
+    lastUsedInputType = 1;
     GameStruct.NumPlayers = 1;
     GameStruct.ModelSelect[0] = obi_wan_model;
     newMenu_currentModelSelectBaseP1 = obi_wan_model;
@@ -864,9 +1200,9 @@ static int test_p1_character_select_presentation(void)
     CHECK(texture_trace.materials[16] == menuTextures[185]);
     CHECK(texture_trace.materials[17] == menuTextures[189]);
     CHECK(texture_trace.materials[18] == menuTextures[178]);
-    CHECK(text_trace.calls == 4);
-    CHECK(wcscmp(text_trace.text[0], allText[332]) == 0);
-    CHECK(wcscmp(text_trace.text[1], allText[481]) == 0);
+    CHECK(text_trace.calls == 6);
+    CHECK(wcscmp(text_trace.text[2], allText[332]) == 0);
+    CHECK(wcscmp(text_trace.text[3], allText[481]) == 0);
 
     jpb_MenuSetP1CharacterSelectDrawHook(NULL, NULL);
     jpb_TextSetDrawHook(NULL, NULL);
@@ -897,6 +1233,7 @@ static int test_p2_character_select_presentation(void)
     OptionStruct.ResolutionChanged = 0;
     scaleAdjustmentMM = 0.5f;
     generateAllText(0);
+    lastUsedInputType = 1;
     GameStruct.NumPlayers = 2;
     GameStruct.ModelSelect[0] = obi_wan_model;
     GameStruct.ModelSelect[1] = qui_gon_model;
@@ -931,17 +1268,128 @@ static int test_p2_character_select_presentation(void)
     CHECK(texture_trace.destinations[7].right == 349);
     CHECK(texture_trace.destinations[15].left == 610);
     CHECK(texture_trace.destinations[15].right == 839);
-    CHECK(text_trace.calls == 8);
-    CHECK(wcscmp(text_trace.text[0], allText[481]) == 0);
-    CHECK(wcscmp(text_trace.text[1], allText[332]) == 0);
-    CHECK(wcscmp(text_trace.text[4], allText[482]) == 0);
-    CHECK(wcscmp(text_trace.text[5], allText[333]) == 0);
+    CHECK(text_trace.calls == 10);
+    CHECK(wcscmp(text_trace.text[2], allText[481]) == 0);
+    CHECK(wcscmp(text_trace.text[3], allText[332]) == 0);
+    CHECK(wcscmp(text_trace.text[6], allText[482]) == 0);
+    CHECK(wcscmp(text_trace.text[7], allText[333]) == 0);
     CHECK(player2IconOverride == 0);
 
     jpb_MenuSetP2CharacterSelectDrawHook(NULL, NULL);
     jpb_TextSetDrawHook(NULL, NULL);
     jpb_WHookSetDrawTextureHook(NULL, NULL);
     memset(menuTextures, 0, sizeof(menuTextures));
+    return 0;
+}
+
+static int test_character_select_reconnect_presentation(void)
+{
+    MenuTextureDrawTrace texture_trace;
+    MenuDrawTrace text_trace;
+    CharacterDrawTrace p1_trace;
+    P2CharacterDrawTrace p2_trace;
+    _Material reconnect_material;
+
+    reset_menu_state();
+    memset(&texture_trace, 0, sizeof(texture_trace));
+    memset(&text_trace, 0, sizeof(text_trace));
+    memset(&p1_trace, 0, sizeof(p1_trace));
+    memset(&p2_trace, 0, sizeof(p2_trace));
+    memset(&reconnect_material, 0, sizeof(reconnect_material));
+    generateAllText(0);
+    OptionStruct.ScreenWidth = 960;
+    OptionStruct.ScreenHeight = 540;
+    scaleAdjustmentMM = 0.5f;
+    menuTextures[241] = &reconnect_material;
+    jpb_WHookSetDrawTextureHook(
+        capture_menu_texture_draw, &texture_trace);
+    jpb_TextSetDrawHook(capture_menu_text, &text_trace);
+    jpb_MenuSetP1CharacterSelectDrawHook(
+        capture_p1_character_select, &p1_trace);
+    jpb_MenuSetP2CharacterSelectDrawHook(
+        capture_p2_character_select, &p2_trace);
+
+    p1Disconnected = 1;
+    GameStruct.gameMode = 9;
+    menu_drawReconnect();
+    CHECK(p1_trace.calls == 0);
+    CHECK(text_trace.calls == 1);
+    CHECK(text_trace.tint[0] == 15);
+    CHECK(text_trace.mode[0] == 0);
+    CHECK(text_trace.x[0] == 242);
+    CHECK(text_trace.y[0] == 217);
+    CHECK(text_trace.scale[0] == 2.5f);
+    CHECK(wcsncmp(text_trace.text[0], allText[494], 63) == 0);
+    CHECK(texture_trace.calls == 1);
+    CHECK(texture_trace.materials[0] == &reconnect_material);
+    CHECK(texture_trace.destinations[0].left == 217);
+    CHECK(texture_trace.destinations[0].top == 200);
+    CHECK(texture_trace.destinations[0].right == 742);
+    CHECK(texture_trace.destinations[0].bottom == 386);
+    CHECK(texture_trace.colors[0].r == 255);
+    CHECK(texture_trace.colors[0].g == 255);
+    CHECK(texture_trace.colors[0].b == 255);
+    CHECK(texture_trace.colors[0].cd == 255);
+    CHECK(texture_trace.layers[0] == 0.99f);
+
+    memset(&texture_trace, 0, sizeof(texture_trace));
+    memset(&text_trace, 0, sizeof(text_trace));
+    GameStruct.gameMode = 6;
+    CHECK(newMenu_P1CharacterSelect() == 0);
+    CHECK(p1_trace.calls == 0);
+    CHECK(text_trace.calls == 1);
+    CHECK(texture_trace.calls == 1);
+
+    memset(&texture_trace, 0, sizeof(texture_trace));
+    memset(&text_trace, 0, sizeof(text_trace));
+    p1Disconnected = 0;
+    p2Disconnected = 1;
+    CHECK(newMenu_P2CharacterSelect(0) == 0);
+    CHECK(p2_trace.calls == 0);
+    CHECK(text_trace.calls == 1);
+    CHECK(text_trace.y[0] == 167);
+    CHECK(texture_trace.calls == 1);
+    CHECK(texture_trace.destinations[0].top == 150);
+    CHECK(texture_trace.destinations[0].bottom == 336);
+
+    memset(&texture_trace, 0, sizeof(texture_trace));
+    memset(&text_trace, 0, sizeof(text_trace));
+    p2Disconnected = 0;
+    p1Disconnected = 1;
+    GameStruct.gameMode = 6;
+    CHECK(newMenu_Training() == 0);
+    CHECK(text_trace.calls == 1);
+    CHECK(texture_trace.calls == 1);
+    CHECK(texture_trace.materials[0] == &reconnect_material);
+
+    memset(&texture_trace, 0, sizeof(texture_trace));
+    memset(&text_trace, 0, sizeof(text_trace));
+    menuConceptMenu();
+    CHECK(text_trace.calls == 1);
+    CHECK(texture_trace.calls == 1);
+    CHECK(texture_trace.materials[0] == &reconnect_material);
+
+    memset(&texture_trace, 0, sizeof(texture_trace));
+    memset(&text_trace, 0, sizeof(text_trace));
+    menuVars.menuModeSP = 0;
+    menuVars.menuMode[0] = 0;
+    menu_mainLoop();
+    CHECK(text_trace.calls == 1);
+    CHECK(texture_trace.calls == 1);
+    CHECK(texture_trace.materials[0] == &reconnect_material);
+
+    p1Disconnected = 0;
+    menuVars.menuModeSP = 1;
+    menuVars.menuMode[0] = 0;
+    menuVars.menuMode[1] = 0x0e;
+    menu_drawReconnect();
+    CHECK(menuVars.menuModeSP == 0);
+
+    jpb_MenuSetP2CharacterSelectDrawHook(NULL, NULL);
+    jpb_MenuSetP1CharacterSelectDrawHook(NULL, NULL);
+    jpb_TextSetDrawHook(NULL, NULL);
+    jpb_WHookSetDrawTextureHook(NULL, NULL);
+    menuTextures[241] = NULL;
     return 0;
 }
 
@@ -956,6 +1404,7 @@ static int test_character_select_controller_tabs(void)
     memset(&texture_trace, 0, sizeof(texture_trace));
     memset(&primary, 0, sizeof(primary));
     memset(&secondary, 0, sizeof(secondary));
+    memset(kbmTextures, 0, sizeof(kbmTextures));
     for (index = 0;
          index < sizeof(menuTextures) / sizeof(menuTextures[0]);
          ++index) {
@@ -1002,20 +1451,81 @@ static int test_character_select_controller_tabs(void)
     CHECK(texture_trace.calls == 26);
     CHECK(texture_trace.materials[7] == &secondary);
     CHECK(texture_trace.materials[8] == &primary);
-    CHECK(texture_trace.destinations[7].left == 60);
-    CHECK(texture_trace.destinations[7].right == 110);
-    CHECK(texture_trace.destinations[8].left == 360);
-    CHECK(texture_trace.destinations[8].right == 410);
+    CHECK(texture_trace.destinations[7].left == 35);
+    CHECK(texture_trace.destinations[7].right == 85);
+    CHECK(texture_trace.destinations[8].left == 385);
+    CHECK(texture_trace.destinations[8].right == 435);
     CHECK(texture_trace.materials[17] == &primary);
     CHECK(texture_trace.materials[18] == &secondary);
-    CHECK(texture_trace.destinations[17].left == 850);
-    CHECK(texture_trace.destinations[17].right == 900);
-    CHECK(texture_trace.destinations[18].left == 550);
-    CHECK(texture_trace.destinations[18].right == 600);
+    CHECK(texture_trace.destinations[17].left == 875);
+    CHECK(texture_trace.destinations[17].right == 925);
+    CHECK(texture_trace.destinations[18].left == 525);
+    CHECK(texture_trace.destinations[18].right == 575);
 
     jpb_WHookSetDrawTextureHook(NULL, NULL);
     memset(menuTextures, 0, sizeof(menuTextures));
     memset(kbmTextures, 0, sizeof(kbmTextures));
+    return 0;
+}
+
+static int test_keyboard_prompt_glyph_owner(void)
+{
+    MenuTextureDrawTrace texture_trace;
+    MenuDrawTrace text_trace;
+    _Material escape_material;
+    _Material select_material;
+
+    reset_menu_state();
+    memset(&texture_trace, 0, sizeof(texture_trace));
+    memset(&text_trace, 0, sizeof(text_trace));
+    memset(&escape_material, 0, sizeof(escape_material));
+    memset(&select_material, 0, sizeof(select_material));
+    escape_material.iw = 128;
+    escape_material.ih = 128;
+    select_material.iw = 128;
+    select_material.ih = 128;
+    kbmTextures[9] = &escape_material;
+    kbmTextures[2] = &select_material;
+    OptionStruct.ScreenWidth = 960;
+    OptionStruct.ScreenHeight = 540;
+    scaleAdjustmentMM = 0.5f;
+    generateAllText(0);
+    jpb_WHookSetDrawTextureHook(
+        capture_menu_texture_draw, &texture_trace);
+    jpb_TextSetDrawHook(capture_menu_text, &text_trace);
+
+    drawControlsIcon();
+
+    CHECK(texture_trace.calls == 0);
+    CHECK(text_trace.calls == 2);
+    CHECK(wcscmp(text_trace.text[0], allText[476]) == 0);
+    CHECK(wcscmp(text_trace.text[1], allText[475]) == 0);
+    CHECK(text_trace.x[0] == 50);
+    CHECK(text_trace.x[1] == 910);
+    CHECK(text_trace.y[0] == 490);
+    CHECK(text_trace.y[1] == 490);
+    CHECK(text_trace.mode[0] == 0);
+    CHECK(text_trace.mode[1] == 1);
+
+    scaleAdjustmentMM = 1.0f;
+    newDrawControllerIcon(9, 0.35f, 130, 119, 255, 0);
+    newDrawControllerIcon(2, 0.35f, 820, 119, 255, 0);
+    CHECK(texture_trace.calls == 2);
+    CHECK(texture_trace.materials[0] == &escape_material);
+    CHECK(texture_trace.materials[1] == &select_material);
+    CHECK(texture_trace.destinations[0].left == 107);
+    CHECK(texture_trace.destinations[0].top == 98);
+    CHECK(texture_trace.destinations[0].right == 151);
+    CHECK(texture_trace.destinations[0].bottom == 142);
+    CHECK(texture_trace.destinations[1].left == 797);
+    CHECK(texture_trace.destinations[1].top == 98);
+    CHECK(texture_trace.destinations[1].right == 841);
+    CHECK(texture_trace.destinations[1].bottom == 142);
+
+    jpb_TextSetDrawHook(NULL, NULL);
+    jpb_WHookSetDrawTextureHook(NULL, NULL);
+    kbmTextures[9] = NULL;
+    kbmTextures[2] = NULL;
     return 0;
 }
 
@@ -1039,6 +1549,7 @@ static int test_training_selection_owner(void)
     OptionStruct.ResolutionChanged = 0;
     scaleAdjustmentMM = 0.5f;
     generateAllText(0);
+    lastUsedInputType = 1;
     GameStruct.NumPlayers = 1;
     GameStruct.ModelSelect[0] = obi_wan_model;
     newMenu_state = 0x16;
@@ -1081,6 +1592,7 @@ static int test_training_selection_owner(void)
     OptionStruct.ScreenHeight = 540;
     scaleAdjustmentMM = 0.5f;
     generateAllText(0);
+    lastUsedInputType = 1;
     GameStruct.ModelSelect[0] = obi_wan_model;
     GameStruct.aCharacterData[0].Items = 7;
     GameStruct.aCharacterData[1].Items = 8;
@@ -1176,88 +1688,74 @@ static int test_level_selection_owner(void)
     menu_pushMenu(0x1a);
     CHECK(menuVars.menuModeSP == 1);
     CHECK(menuVars.menuMode[1] == 0x1a);
+    menu_initNewMenu();
+    CHECK(menuVars.menuModeSP == 3);
+    CHECK(menuVars.menuMode[3] == 0x1a);
     CHECK(LevelSelect == 1);
 
     menu_drawLevelSelectScreen(0);
-    CHECK(texture_trace.calls == 42);
+    CHECK(texture_trace.calls == 40);
     CHECK(texture_trace.materials[0] == menuTextures[164]);
-    CHECK(texture_trace.materials[1] == menuTextures[80]);
+    CHECK(texture_trace.materials[1] == menuTextures[165]);
     CHECK(texture_trace.materials[2] == menuTextures[3]);
-    CHECK(texture_trace.materials[5] == menuTextures[3]);
-    CHECK(texture_trace.materials[13] == menuTextures[3]);
-    CHECK(texture_trace.materials[36] == menuTextures[165]);
+    CHECK(texture_trace.materials[4] == menuTextures[80]);
+    CHECK(texture_trace.materials[8] == menuTextures[3]);
+    CHECK(texture_trace.materials[16] == menuTextures[3]);
     CHECK(texture_trace.layers[0] == 0.9f);
-    CHECK(texture_trace.layers[1] == 0.5f);
-    CHECK(texture_trace.layers[2] == 0.5f);
-    CHECK(texture_trace.layers[34] == 0.64f);
-    CHECK(texture_trace.layers[35] == 0.64f);
-    CHECK(texture_trace.layers[36] == 0.4f);
-    CHECK(texture_trace.layers[41] == 1.0f);
+    CHECK(texture_trace.layers[1] == 0.4f);
+    CHECK(texture_trace.layers[2] == 0.2f);
+    CHECK(texture_trace.layers[4] == 0.5f);
+    CHECK(texture_trace.layers[39] == 1.0f);
     CHECK(texture_trace.destinations[0].left == 0);
     CHECK(texture_trace.destinations[0].top == 0);
     CHECK(texture_trace.destinations[0].right == 1920);
     CHECK(texture_trace.destinations[0].bottom == 1080);
-    CHECK(texture_trace.destinations[1].left == 116);
-    CHECK(texture_trace.destinations[1].top == 92);
-    CHECK(texture_trace.destinations[1].right == 960);
-    CHECK(texture_trace.destinations[1].bottom == 725);
-    CHECK(texture_trace.destinations[2].left >= 1150);
-    CHECK(texture_trace.destinations[3].left >= 1350);
-    CHECK(texture_trace.destinations[4].left >= 1560);
-    CHECK(texture_trace.destinations[13].left >= 1398);
-    CHECK(texture_trace.destinations[13].right > texture_trace.destinations[13].left);
-    CHECK(texture_trace.materials[34] == menuTextures[164]);
-    CHECK(texture_trace.destinations[34].left == 0);
-    CHECK(texture_trace.destinations[34].top == 0);
-    CHECK(texture_trace.destinations[34].right == 1920);
-    CHECK(texture_trace.destinations[34].bottom == 112);
-    CHECK(texture_trace.sources[34].left == 0);
-    CHECK(texture_trace.sources[34].top == 0);
-    CHECK(texture_trace.sources[34].right == 1920);
-    CHECK(texture_trace.sources[34].bottom == 112);
-    CHECK(texture_trace.materials[35] == menuTextures[164]);
-    CHECK(texture_trace.destinations[35].left == 0);
-    CHECK(texture_trace.destinations[35].top == 804);
-    CHECK(texture_trace.destinations[35].right == 1920);
-    CHECK(texture_trace.destinations[35].bottom == 1080);
-    CHECK(texture_trace.sources[35].left == 0);
-    CHECK(texture_trace.sources[35].top == 804);
-    CHECK(texture_trace.sources[35].right == 1920);
-    CHECK(texture_trace.sources[35].bottom == 1080);
-    CHECK(texture_trace.destinations[36].left == 0);
-    CHECK(texture_trace.destinations[36].top == 0);
-    CHECK(texture_trace.destinations[36].right == 1920);
-    CHECK(texture_trace.destinations[36].bottom == 1080);
-    CHECK(texture_trace.materials[41] == whitemat);
-    CHECK(texture_trace.destinations[41].left == 0);
-    CHECK(texture_trace.destinations[41].top == 0);
-    CHECK(texture_trace.destinations[41].right == 1920);
-    CHECK(texture_trace.destinations[41].bottom == 1080);
-    CHECK(texture_trace.colors[41].r == 0);
-    CHECK(texture_trace.colors[41].g == 0);
-    CHECK(texture_trace.colors[41].b == 2);
-    CHECK(texture_trace.colors[41].cd == 255);
-    CHECK(texture_trace.sources[37].left == 216);
-    CHECK(texture_trace.sources[37].top == 0);
-    CHECK(texture_trace.sources[37].right == 328);
-    CHECK(texture_trace.sources[37].bottom == 104);
-    CHECK(texture_trace.sources[38].left == 104);
-    CHECK(texture_trace.sources[38].top == 0);
-    CHECK(texture_trace.sources[38].right == 216);
-    CHECK(texture_trace.sources[38].bottom == 104);
-    CHECK(texture_trace.sources[2].left == 712);
-    CHECK(texture_trace.sources[2].top == 248);
-    CHECK(texture_trace.sources[2].right == 884);
-    CHECK(texture_trace.sources[2].bottom == 316);
-    CHECK(texture_trace.sources[13].left == 32);
-    CHECK(texture_trace.sources[13].top == 340);
-    CHECK(texture_trace.sources[13].right == 64);
-    CHECK(texture_trace.sources[13].bottom == 384);
+    CHECK(texture_trace.destinations[1].left == 0);
+    CHECK(texture_trace.destinations[1].top == 0);
+    CHECK(texture_trace.destinations[1].right == 1920);
+    CHECK(texture_trace.destinations[1].bottom == 1080);
+    CHECK(texture_trace.destinations[4].left == 116);
+    CHECK(texture_trace.destinations[4].top == 92);
+    CHECK(texture_trace.destinations[4].right == 960);
+    CHECK(texture_trace.destinations[4].bottom == 725);
+    CHECK(texture_trace.destinations[5].left >= 1150);
+    CHECK(texture_trace.destinations[6].left >= 1350);
+    CHECK(texture_trace.destinations[7].left >= 1560);
+    CHECK(texture_trace.destinations[16].left >= 1398);
+    CHECK(texture_trace.destinations[16].right > texture_trace.destinations[16].left);
+    CHECK(texture_trace.materials[39] == whitemat);
+    CHECK(texture_trace.destinations[39].left == 0);
+    CHECK(texture_trace.destinations[39].top == 0);
+    CHECK(texture_trace.destinations[39].right == 1920);
+    CHECK(texture_trace.destinations[39].bottom == 1080);
+    CHECK(texture_trace.colors[39].r == 0);
+    CHECK(texture_trace.colors[39].g == 0);
+    CHECK(texture_trace.colors[39].b == 2);
+    CHECK(texture_trace.colors[39].cd == 255);
+    CHECK(texture_trace.sources[2].left == 216);
+    CHECK(texture_trace.sources[2].top == 0);
+    CHECK(texture_trace.sources[2].right == 328);
+    CHECK(texture_trace.sources[2].bottom == 104);
+    CHECK(texture_trace.sources[3].left == 104);
+    CHECK(texture_trace.sources[3].top == 0);
+    CHECK(texture_trace.sources[3].right == 216);
+    CHECK(texture_trace.sources[3].bottom == 104);
+    CHECK(texture_trace.sources[5].left == 712);
+    CHECK(texture_trace.sources[5].top == 248);
+    CHECK(texture_trace.sources[5].right == 884);
+    CHECK(texture_trace.sources[5].bottom == 316);
+    CHECK(texture_trace.sources[16].left == 32);
+    CHECK(texture_trace.sources[16].top == 340);
+    CHECK(texture_trace.sources[16].right == 64);
+    CHECK(texture_trace.sources[16].bottom == 384);
     CHECK(text_trace.calls == 4);
     CHECK(wcscmp(text_trace.text[0], allText[190]) == 0);
-    CHECK(wcscmp(text_trace.text[1], allText[306]) == 0);
+    CHECK(wcscmp(text_trace.text[1], allText[476]) == 0);
+    CHECK(wcscmp(text_trace.text[2], allText[475]) == 0);
+    CHECK(wcscmp(text_trace.text[3], allText[306]) == 0);
     CHECK(text_trace.scale[0] == 2.5f);
-    CHECK(text_trace.scale[1] == 2.5f);
+    CHECK(text_trace.scale[1] == 1.75f);
+    CHECK(text_trace.scale[3] == 2.5f);
 
     memset(&texture_trace, 0, sizeof(texture_trace));
     memset(&text_trace, 0, sizeof(text_trace));
@@ -1266,20 +1764,21 @@ static int test_level_selection_owner(void)
     hooks.controllerName = read_menu_controller_name;
     jpb_MenuSetPlatformHooks(&hooks, &platform_trace);
     menu_drawLevelSelectScreen(0);
-    CHECK(texture_trace.calls == 42);
-    CHECK(texture_trace.materials[34] == menuTextures[164]);
-    CHECK(texture_trace.materials[35] == menuTextures[164]);
-    CHECK(texture_trace.materials[36] == menuTextures[165]);
-    CHECK(texture_trace.materials[39] == kbmTextures[9]);
-    CHECK(texture_trace.materials[40] == kbmTextures[2]);
-    CHECK(texture_trace.materials[41] == whitemat);
-    CHECK(texture_trace.destinations[39].left >= 1500);
-    CHECK(texture_trace.destinations[39].top >= 804);
-    CHECK(texture_trace.destinations[40].left >= 1500);
-    CHECK(texture_trace.destinations[40].top >= 804);
+    CHECK(texture_trace.calls == 40);
+    CHECK(texture_trace.materials[0] == menuTextures[164]);
+    CHECK(texture_trace.materials[1] == menuTextures[165]);
+    CHECK(texture_trace.materials[37] ==
+          menuTextures[fontSpec[0x113].clut]);
+    CHECK(texture_trace.materials[38] ==
+          menuTextures[fontSpec[0x114].clut]);
+    CHECK(texture_trace.materials[39] == whitemat);
+    CHECK(texture_trace.destinations[37].left == 1458);
+    CHECK(texture_trace.destinations[37].top == 94);
+    CHECK(texture_trace.destinations[38].left == 1758);
+    CHECK(texture_trace.destinations[38].top == 274);
     CHECK(text_trace.calls == 4);
-    CHECK(wcscmp(text_trace.text[2], L"Exit") == 0);
-    CHECK(wcscmp(text_trace.text[3], L"Select") == 0);
+    CHECK(wcscmp(text_trace.text[1], allText[239]) == 0);
+    CHECK(wcscmp(text_trace.text[2], allText[241]) == 0);
 
     secretBits = 0;
     GameStruct.NumPlayers = 1;
@@ -1298,8 +1797,8 @@ static int test_level_selection_owner(void)
     LevelSelect = 1;
     menuVars.pad[0] = JPB_PAD_COMBO_SOUTH;
     menu_levelSelectMenu(levelSelectMdef);
-    CHECK(menuVars.menuModeSP == 2);
-    CHECK(menuVars.menuMode[2] == 0x66);
+    CHECK(menuVars.menuModeSP == 4);
+    CHECK(menuVars.menuMode[4] == 0x66);
     CHECK(savedNumPlayer == 1);
     CHECK(strcmp(platform_trace.lastCue, "xlvselct") == 0);
 
@@ -1332,6 +1831,11 @@ static int test_title_command_interpreter(void)
     jpb_MenuSetPlatformHooks(&hooks, &platform_trace);
     OptionStruct.ScreenWidth = 960;
     OptionStruct.ScreenHeight = 540;
+    g_resolutionsCount = 2;
+    g_resolutions[0].width = 1280;
+    g_resolutions[0].height = 720;
+    g_resolutions[1].width = 1920;
+    g_resolutions[1].height = 1080;
     scaleAdjustment = getScaleAdjustment();
     scaleAdjustmentMM = getScaleAdjustmentMM();
     generateAllText(0);
@@ -1382,6 +1886,20 @@ static int test_title_command_interpreter(void)
     CHECK(gDST.bottom == 412);
     CHECK(gColor.r == 255 && gColor.g == 255);
     CHECK(gColor.b == 255 && gColor.cd == 0xbe);
+
+    memset(&trace, 0, sizeof(trace));
+    lastUsedInputType = 0;
+    mmDraw(exitSelectMdef);
+    CHECK(trace.calls == 2);
+    CHECK(wcscmp(trace.text[0], allText[476]) == 0);
+    CHECK(wcscmp(trace.text[1], allText[475]) == 0);
+    memset(&trace, 0, sizeof(trace));
+    lastUsedInputType = 1;
+    mmDraw(exitSelectMdef);
+    CHECK(trace.calls == 2);
+    CHECK(wcscmp(trace.text[0], allText[239]) == 0);
+    CHECK(wcscmp(trace.text[1], allText[241]) == 0);
+    lastUsedInputType = 0;
 
     menuVars.pad[0] = JPB_PAD_COMBO_SOUTH;
     menu_mainMenu(mainMdef);
@@ -1490,6 +2008,13 @@ static int test_title_command_interpreter(void)
         CHECK(found_options_box == 1);
     }
 
+    memset(&trace, 0, sizeof(trace));
+    menuVars.mmSelect1[0] = 1;
+    OptionStruct.ResolutionChanged = 1;
+    mmDraw(videoMdef);
+    CHECK(trace.calls == 6);
+    CHECK(wcscmp(trace.text[1], L"> Resolution: 1920x1080 <") == 0);
+
     menuVars.menuMode[0] = 1;
     menuVars.menuModeSP = 0;
     CHECK(menu_handleMenuTriggers(0x90) == 0);
@@ -1513,9 +2038,19 @@ static int test_title_command_interpreter(void)
 static int test_main_loop_dispatch(void)
 {
     MenuDrawTrace trace;
+    MenuTextureDrawTrace texture_trace;
+    MenuInputTrace input_trace;
+    JPBMenuPlatformHooks hooks;
+    PlatformTrace platform_trace;
 
     reset_menu_state();
     memset(&trace, 0, sizeof(trace));
+    memset(&texture_trace, 0, sizeof(texture_trace));
+    memset(&input_trace, 0, sizeof(input_trace));
+    memset(&hooks, 0, sizeof(hooks));
+    memset(&platform_trace, 0, sizeof(platform_trace));
+    hooks.openUrl = trace_open_url;
+    jpb_MenuSetPlatformHooks(&hooks, &platform_trace);
     OptionStruct.ScreenWidth = 960;
     OptionStruct.ScreenHeight = 540;
     scaleAdjustment = getScaleAdjustment();
@@ -1533,12 +2068,54 @@ static int test_main_loop_dispatch(void)
     menu_mainLoop();
     CHECK(menuVars.mmSelectPtr == &mainMdef[10]);
 
+    ClearInput();
+    jpb_InputSetProvider(read_menu_pad, &input_trace);
+    GameStruct.inMenuFlag = 1;
+    GameStruct.gameMode = 0;
+    menu_mainLoop();
+    input_trace.pads[0] = JPB_PAD_START;
+    menu_mainLoop();
+    CHECK(menuVars.menuModeSP == 1);
+    CHECK(menuVars.menuMode[1] == 3);
+    input_trace.pads[0] = 0;
+    jpb_InputSetProvider(NULL, NULL);
+    menuVars.menuModeSP = 0;
+    menuVars.menuMode[0] = 0;
+
     GameStruct.continueAble = 1;
     GameStruct.difficulty = 0;
     menu_mainLoop();
     CHECK(menuVars.mmSelectPtr >= continuemainMdef);
     CHECK(menuVars.mmSelectPtr <
           continuemainMdef + 73);
+
+    menuVars.menuMode[0] = 0x0b;
+    slider = 0;
+    padCurrentBits[0].padLevel1 = UINT32_C(0x8000);
+    menu_mainLoop();
+    CHECK(slider == 0);
+    slider = UINT32_C(0xfe);
+    padCurrentBits[0].padLevel1 = UINT32_C(0x2000);
+    menu_mainLoop();
+    CHECK(slider == UINT32_C(0xff));
+    menu_mainLoop();
+    CHECK(slider == UINT32_C(0xff));
+    padCurrentBits[0].padLevel1 = UINT32_C(0x8000);
+    menu_mainLoop();
+    CHECK(slider == UINT32_C(0xfe));
+    padCurrentBits[0].padLevel1 = 0;
+
+    menuVars.menuModeSP = 0;
+    menuVars.menuMode[0] = 0x8f;
+    menu_mainLoop();
+    CHECK(platform_trace.openUrlCalls == 1);
+    CHECK(strcmp(
+              platform_trace.openedUrl,
+              "https://ctep.aspyr.com/pb_pc") == 0);
+    CHECK(menuVars.menuModeSP == 2);
+    CHECK(menuVars.menuMode[1] == 0);
+    CHECK(menuVars.menuMode[2] == 0);
+    menuVars.menuModeSP = 0;
 
     menuVars.menuMode[0] = 4;
     GameStruct.NumPlayers = 2;
@@ -1582,6 +2159,27 @@ static int test_main_loop_dispatch(void)
     CHECK(menuVars.controlPlayer == 0);
     CHECK(menuVars.mmSelectPtr >= controls1Mdef);
     CHECK(menuVars.mmSelectPtr < controls1Mdef + 42);
+
+    memset(&trace, 0, sizeof(trace));
+    jpb_WHookSetDrawTextureHook(
+        capture_menu_texture_draw, &texture_trace);
+    menuVars.menuMode[0] = 0x2d;
+    GameStruct.GameState = 0;
+    menu_mainLoop();
+    CHECK((GameStruct.GameState & UINT32_C(0x02000000)) != 0);
+    CHECK(trace.calls == 2);
+    CHECK(wcscmp(trace.text[0], allText[375]) == 0);
+    CHECK(wcscmp(trace.text[1], allText[477]) == 0);
+    CHECK(texture_trace.calls == 1);
+    CHECK(texture_trace.materials[0] == menuTextures[237]);
+    jpb_WHookSetDrawTextureHook(NULL, NULL);
+    menuVars.pad[0] = JPB_PAD_COMBO_SOUTH;
+    menu_mainMenu(gameoverMdef);
+    CHECK((GameStruct.GameState & UINT32_C(0x02000000)) != 0);
+    CHECK(menuVars.menuModeSP == 1);
+    CHECK(menuVars.menuMode[1] == 6);
+    menuVars.menuModeSP = 0;
+    menuVars.pad[0] = 0;
 
     menuVars.menuMode[0] = 0x0c;
     menu_mainLoop();
@@ -1636,7 +2234,7 @@ static int test_concept_art_presentation(void)
     CHECK(texture_trace.destinations[2].bottom == 720);
     CHECK(text_trace.calls == 2);
     CHECK(wcscmp(text_trace.text[0], L"01 / 42") == 0);
-    CHECK(wcscmp(text_trace.text[1], L"Exit") == 0);
+    CHECK(wcscmp(text_trace.text[1], allText[476]) == 0);
 
     memset(&texture_trace, 0, sizeof(texture_trace));
     menuVars.pad[0] = JPB_PAD_RIGHT;
@@ -1697,23 +2295,34 @@ static int test_credit_presentation(void)
     CHECK(trace.calls == 2);
     CHECK(trace.tint[0] == 16);
     CHECK(wcscmp(trace.text[0], L"LucasArts") == 0);
-    CHECK(wcscmp(trace.text[1], L"Exit") == 0);
+    CHECK(wcscmp(trace.text[1], allText[476]) == 0);
+    CHECK(trace.clipEnabled[0] == 1);
+    CHECK(trace.clipLeft[0] == 18);
+    CHECK(trace.clipTop[0] == 22);
+    CHECK(trace.clipRight[0] == 1901);
+    CHECK(trace.clipBottom[0] == 1057);
+    CHECK(trace.clipEnabled[1] == 1);
+    CHECK(jpb_TextGetClipRect(NULL, NULL, NULL, NULL) == 0);
 
     memset(&trace, 0, sizeof(trace));
     creditBarPosition = 100000.0f;
     menu_drawCredits();
     CHECK(creditBarPosition == 0.0f);
     CHECK(trace.calls == 1);
-    CHECK(wcscmp(trace.text[0], L"Exit") == 0);
+    CHECK(wcscmp(trace.text[0], allText[476]) == 0);
 
     menuVars.menuModeSP = 0;
     menuVars.scoreScore = 17;
     CHECK(menu_handleMenuTriggers(0x1b) == 0);
     CHECK(menuVars.menuMode[1] == 0x1b);
+    CHECK(menuVars.scoreScore == 17);
+    menu_initNewMenu();
     CHECK(menuVars.scoreScore == 0);
     menuVars.menuModeSP = 0;
     CHECK(menu_handleMenuTriggers(0x13) == 0);
     CHECK(menuVars.menuMode[1] == 0x13);
+    CHECK(skipCreditForFrame == 0);
+    menu_initNewMenu();
     CHECK(skipCreditForFrame == 1);
 
     jpb_TextSetDrawHook(NULL, NULL);
@@ -2072,7 +2681,7 @@ static int test_trigger_dispatcher(void)
     menuVars.subplayers[0] = 2;
     CHECK(menu_handleMenuTriggers(0x18) == 0);
     CHECK(GameStruct.ModelSelect[0] == modisorder2[2]);
-    CHECK(menuVars.pSelect == 0);
+    CHECK(menuVars.pSelect == 1);
     CHECK(menuVars.menuMode[1] == 0x1a);
     CHECK(strcmp(trace.lastCue, "xjedsel") == 0);
     menuVars.menuModeSP = 0;
@@ -2081,7 +2690,7 @@ static int test_trigger_dispatcher(void)
     menuVars.subplayers[1] = 3;
     CHECK(menu_handleMenuTriggers(0x19) == 0);
     CHECK(GameStruct.ModelSelect[1] == modisorder2[3]);
-    CHECK(menuVars.pSelect == 0);
+    CHECK(menuVars.pSelect == 3);
     CHECK(menuVars.menuMode[1] == 0x1a);
     CHECK(strcmp(trace.lastCue, "xjedsel") == 0);
 
@@ -2530,8 +3139,8 @@ static int test_p1_character_selection_state(void)
     input_trace.pads[0] = 0;
     menu_mainLoop();
     CHECK(GameStruct.CurrentLevel == 9);
-    CHECK(menuVars.menuModeSP == 1);
-    CHECK(menuVars.menuMode[1] == 0x1a);
+    CHECK(menuVars.menuModeSP == 3);
+    CHECK(menuVars.menuMode[3] == 0x1a);
 
     reset_menu_state();
     memset(&input_trace, 0, sizeof(input_trace));
@@ -2651,8 +3260,8 @@ static int test_p2_character_selection_state(void)
     input_trace.pads[1] = 0;
     menu_mainLoop();
     CHECK(GameStruct.CurrentLevel == 9);
-    CHECK(menuVars.menuModeSP == 1);
-    CHECK(menuVars.menuMode[1] == 0x1a);
+    CHECK(menuVars.menuModeSP == 3);
+    CHECK(menuVars.menuMode[3] == 0x1a);
     CHECK(draw_trace.calls >= 5);
 
     reset_menu_state();
@@ -2687,6 +3296,7 @@ static int test_mod_value_accessors(void)
     uint32_t md[5] = {9, 0, 0, 0, 0};
     JPBMenuPlatformHooks hooks;
     PlatformTrace platform_trace;
+    MenuAudioControlTrace audio_trace;
     uint8_t byte_value = UINT8_C(0x7a);
     uint16_t word_value = UINT16_C(0x1234);
     uint32_t dword_value = UINT32_C(0x89abcdef);
@@ -2695,8 +3305,13 @@ static int test_mod_value_accessors(void)
     memset(&mod, 0, sizeof(mod));
     memset(&hooks, 0, sizeof(hooks));
     memset(&platform_trace, 0, sizeof(platform_trace));
+    memset(&audio_trace, 0, sizeof(audio_trace));
     hooks.soundCue = trace_sound_cue;
     jpb_MenuSetPlatformHooks(&hooks, &platform_trace);
+    jpb_AudioStreamSetControlHook(
+        capture_menu_audio_control, &audio_trace);
+    jpb_AudioStreamSetPlayHook(
+        capture_menu_audio_play, &audio_trace);
     mod.src = &byte_value;
     CHECK(mmGetModVal(&mod) == UINT8_C(0x7a));
     CHECK(mmSetModVal(&mod, UINT32_C(0x1ab), 0) == 1);
@@ -2731,8 +3346,6 @@ static int test_mod_value_accessors(void)
     mod.src = NULL;
     CHECK(mmGetModVal(&mod) == 0);
     CHECK(mmSetModVal(&mod, 1, 0) == 1);
-    CHECK(mmGetModVal(NULL) == 0);
-    CHECK(mmSetModVal(NULL, 1, 0) == 0);
 
     CHECK(sizeof(modVars) / sizeof(modVars[0]) == 74);
     CHECK(modVars[1].src == &GameStruct.NumPlayers);
@@ -2799,11 +3412,38 @@ static int test_mod_value_accessors(void)
     mmUpdateModSet(md, 14, 1);
     CHECK(LevelSelect == 13);
 
+    OptionStruct.Music = 1;
     OptionStruct.musicVolume = 37;
     GameStruct.xaVol = 0;
+    GameStruct.gameMode = 0;
+    GameStruct.CurrentLevel = 0;
+    GameStruct.GameState = 0;
     md[4] = 21;
     mmUpdateModSet(md, 0, 0);
     CHECK(GameStruct.xaVol == 74);
+    CHECK(strcmp(platform_trace.lastCue, "xopt_sel") == 0);
+    CHECK(audio_trace.calls == 2);
+    CHECK(audio_trace.lastControl == JPB_AUDIO_STREAM_STOP);
+    CHECK(audio_trace.playCalls == 1);
+    CHECK(audio_trace.lastTrack == 1);
+    CHECK(audio_trace.lastVolume == 74);
+    CHECK(audio_trace.lastLoop == 1);
+
+    memset(&audio_trace, 0, sizeof(audio_trace));
+    GameStruct.gameMode = 6;
+    GameStruct.CurrentLevel = 2;
+    mmUpdateModSet(md, 0, 0);
+    CHECK(audio_trace.calls == 1);
+    CHECK(audio_trace.lastControl == JPB_AUDIO_STREAM_SET_CHANNEL_TYPE);
+    CHECK(audio_trace.lastValue == 2);
+    CHECK(audio_trace.playCalls == 1);
+    CHECK(audio_trace.lastTrack == aLevelXATracks[2]);
+
+    md[4] = 71;
+    OptionStruct.Language = 4;
+    platform_trace.cueCalls = 0;
+    mmUpdateModSet(md, 4, 0);
+    CHECK(platform_trace.cueCalls == 1);
     CHECK(strcmp(platform_trace.lastCue, "xopt_sel") == 0);
 
     GameStruct.GameState = 0;
@@ -2815,6 +3455,8 @@ static int test_mod_value_accessors(void)
     mmUpdateModSet(md, 0, 1);
     CHECK((GameStruct.GameState & UINT32_C(0x04000000)) == 0);
 
+    jpb_AudioStreamSetPlayHook(NULL, NULL);
+    jpb_AudioStreamSetControlHook(NULL, NULL);
     jpb_MenuSetPlatformHooks(NULL, NULL);
     return 0;
 }
@@ -2926,7 +3568,13 @@ static int test_player_and_flow_selection(void)
 
 static int test_message_transitions(void)
 {
+    int saved_camera_type = camera_GetCurrentCameraType();
+
     reset_menu_state();
+    gGlobalTimer = 0;
+    gCamera.cameraTimer = 0;
+    gCamera.userData = 0;
+    camera_SetCurrentCameraType(4);
     menu_enterTitleMode();
     menuVars.menuModeSP = 0;
     menu_handleObjectiveMessage();
@@ -2950,6 +3598,7 @@ static int test_message_transitions(void)
     CHECK(GameStruct.inMenuFlag == 0);
     CHECK(menuVars.mmSelect1[0] == 0);
     CHECK(menuVars.mmSelect2[7] == 0);
+    camera_SetCurrentCameraType(saved_camera_type);
     return 0;
 }
 
@@ -2967,9 +3616,13 @@ int main(void)
         test_recovered_title_menu_data() != 0 ||
         test_recovered_menu_texture_bank() != 0 ||
         test_character_select_arrows() != 0 ||
+        test_audio_menu_sliders() != 0 ||
+        test_reachable_menu_entry_initialization() != 0 ||
         test_p1_character_select_presentation() != 0 ||
         test_p2_character_select_presentation() != 0 ||
+        test_character_select_reconnect_presentation() != 0 ||
         test_character_select_controller_tabs() != 0 ||
+        test_keyboard_prompt_glyph_owner() != 0 ||
         test_training_selection_owner() != 0 ||
         test_level_selection_owner() != 0 ||
         test_title_command_interpreter() != 0 ||

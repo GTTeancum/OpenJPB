@@ -396,7 +396,14 @@ static int game_runtime_capture_text(
 {
     JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
     JPBGameRuntimeTextDraw *draw;
+    JPBPortableTextControlGlyph control_glyphs[
+        JPB_PORTABLE_TEXT_CONTROL_GLYPH_CAPACITY];
+    wchar_t prepared_text[JPB_GAME_RUNTIME_TEXT_CAPACITY];
+    const wchar_t *captured_text = text;
+    int prepared_x = x;
+    int control_glyph_count;
     size_t length;
+    int control_glyph_index;
 
     if (runtime == NULL || text == NULL) {
         return 0;
@@ -405,6 +412,44 @@ static int game_runtime_capture_text(
         JPB_GAME_RUNTIME_TEXT_DRAW_CAPACITY) {
         ++runtime->textDrawDroppedCount;
         return 0;
+    }
+    length = wcslen(text);
+    if (length >= JPB_GAME_RUNTIME_TEXT_CAPACITY) {
+        length = JPB_GAME_RUNTIME_TEXT_CAPACITY - 1;
+    }
+    wmemcpy(prepared_text, text, length);
+    prepared_text[length] = L'\0';
+    control_glyph_count = jpb_PortableTextPrepareControlGlyphs(
+        prepared_text,
+        JPB_GAME_RUNTIME_TEXT_CAPACITY,
+        mode,
+        x,
+        y,
+        scale,
+        font_style,
+        OptionStruct.Language,
+        scale_adjustment,
+        &prepared_x,
+        control_glyphs,
+        JPB_PORTABLE_TEXT_CONTROL_GLYPH_CAPACITY);
+    if (control_glyph_count > 0) {
+        for (control_glyph_index = 0;
+             control_glyph_index < control_glyph_count;
+             ++control_glyph_index) {
+            const JPBPortableTextControlGlyph *glyph =
+                &control_glyphs[control_glyph_index];
+
+            newDrawControllerIcon(
+                glyph->iconIndex,
+                0.35f,
+                glyph->x,
+                glyph->y,
+                glyph->alpha,
+                font_style);
+        }
+        captured_text = prepared_text;
+        x = prepared_x;
+        mode &= ~0x7f;
     }
     draw = &runtime->textDraws[runtime->textDrawCount++];
     draw->order = runtime->drawOrder++;
@@ -422,11 +467,11 @@ static int game_runtime_capture_text(
         &draw->clipRight,
         &draw->clipBottom);
     draw->compositePixels = 0;
-    length = wcslen(text);
+    length = wcslen(captured_text);
     if (length >= JPB_GAME_RUNTIME_TEXT_CAPACITY) {
         length = JPB_GAME_RUNTIME_TEXT_CAPACITY - 1;
     }
-    wmemcpy(draw->text, text, length);
+    wmemcpy(draw->text, captured_text, length);
     draw->text[length] = L'\0';
     return (int)length;
 }
@@ -2972,12 +3017,7 @@ static int game_runtime_build_camera(JPBGameRuntime *runtime)
     float planar_distance =
         0.0f;
 
-    /* The portable VS bridge still lacks the retail Arena camera setup that
-     * precedes camera_SetCameraPos. Keep its dependency-light midpoint orbit
-     * isolated here; ordinary gameplay remains owned by the authored camera. */
-    if (!(GameStruct.versusModeFlag != 0 &&
-          runtime->secondPlayerState != NULL) &&
-        game_runtime_build_authored_camera(runtime)) {
+    if (game_runtime_build_authored_camera(runtime)) {
         return 1;
     }
     desired_eye.vx = eye_x;
@@ -3950,6 +3990,7 @@ int jpb_GameRuntimeInitWithPlayerAssets(
     menu_setNumPlayers(1);
     menuVars.pplayers[0] = 0;
     menu_setPlayer(0, (unsigned)player_model_id);
+    jedi_InitLives();
     GameStruct.CurrentLevel =
         (uint8_t)(level_index == JPB_LEVEL_INDEX_NONE
                       ? 0
@@ -5606,6 +5647,19 @@ int jpb_GameRuntimeAddSecondPlayerComboData(
     runtime->inactivePlayer->maxCombos = combo_count;
     game_initPlayerStartCombos(1);
     combo_InitComboData(runtime->inactivePlayer);
+    /* loader_LoadJedi selects camera type 0 once both players exist, then
+     * runs the post-create refresh for each player. The portable front-end
+     * constructs P2 after the base runtime, so complete that same ownership
+     * here after P2's final motion resource (the combo table) is attached. */
+    camera_SetCurrentCameraType(0);
+    player_RefreshPlayer(runtime->player);
+    player_RefreshPlayer(runtime->inactivePlayer);
+    if (jpb_PhysicsUpdateSceneObject(runtime->physics) !=
+            JPB_PHYSICS_PARTIAL_OK ||
+        jpb_PhysicsUpdateSceneObject(runtime->inactivePlayerPhysics) !=
+            JPB_PHYSICS_PARTIAL_OK) {
+        return JPB_GAME_RUNTIME_LOAD_FAILED;
+    }
     return JPB_GAME_RUNTIME_OK;
 }
 
@@ -7447,15 +7501,14 @@ int jpb_GameRuntimeFrame(
     ++runtime->profileFrameCount;
     game_runtime_observe_player_lifecycle(runtime);
     /*
-     * Exact game_ProcessStatus ordering: scene/input processing completes,
-     * then each live world player conforms its authored model nodes.
+     * game_OneGameLoop draws an already-active in-game menu before
+     * game_runStage consumes this frame's status bits. A newly triggered
+     * game-over menu therefore first appears on the following frame.
      */
-    brainutl_ConformGeomNodes(runtime->player);
-    if (GameStruct.NumPlayers == 2 &&
-        runtime->secondPlayerState != NULL &&
-        runtime->inactivePlayer != NULL) {
-        brainutl_ConformGeomNodes(runtime->inactivePlayer);
+    if (GameStruct.inMenuFlag != 0) {
+        menu_mainLoop();
     }
+    game_runStage();
     view = scene_GetSceneMatrix();
     runtime->camera = gCamera;
     /*

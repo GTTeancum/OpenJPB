@@ -134,8 +134,13 @@ JPBSaveResult jpb_SaveGameReadFile(const char *path)
 JPBSaveResult jpb_SaveOptionsWriteFile(const char *path)
 {
     OptionStruct.saveFileVer = 0;
-    return jpb_save_write_payload(
-        path, &OptionStruct, sizeof(OptionStruct));
+    return jpb_SaveOptionsWriteFileData(path, &OptionStruct);
+}
+
+JPBSaveResult jpb_SaveOptionsWriteFileData(
+    const char *path, const optionstruct *options)
+{
+    return jpb_save_write_payload(path, options, sizeof(*options));
 }
 
 JPBSaveResult jpb_SaveOptionsReadFile(const char *path)

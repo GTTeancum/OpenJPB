@@ -4,6 +4,7 @@
 #include "jpb/boss.h"
 #include "jpb/brain.h"
 #include "jpb/brainutl.h"
+#include "jpb/camera.h"
 #include "jpb/combo.h"
 #include "jpb/debugtext.h"
 #include "jpb/force.h"
@@ -48,6 +49,69 @@ static void reset_game_state(void)
     memset(gaPlayerData, 0, sizeof(gaPlayerData));
     gGlobalTimer = 0;
     LevelSelect = 0;
+}
+
+static int test_process_status_death_routes(void)
+{
+    WorldData world;
+    WorldData *saved_world = gpWorld;
+    playerObject *saved_afterlife = afterLife;
+
+    reset_game_state();
+    memset(&world, 0, sizeof(world));
+    memset(&menuVars, 0, sizeof(menuVars));
+    world.player0 = &gaPlayerData[0];
+    world.player1 = &gaPlayerData[1];
+    gpWorld = &world;
+    gaPlayerData[0].playerRoot.objectID = 0;
+    gaPlayerData[0].playernum = 0;
+    gaPlayerData[1].playerRoot.objectID = -1;
+    gaPlayerData[1].playernum = 1;
+    GameStruct.CurrentLevel = 1;
+    GameStruct.NumPlayers = 1;
+    GameStruct.mNumContinues = 1000;
+    GameStruct.GameState = UINT32_C(0xa0);
+    newcameraflag = 0;
+
+    game_ProcessStatus();
+    CHECK((GameStruct.GameState & UINT32_C(0xa0)) == 0);
+    CHECK(GameStruct.StageExit == 1);
+    CHECK(GameStruct.Continuing == 1);
+    CHECK(GameStruct.LevelExit == 0);
+    CHECK(GameStruct.ContinuesUsed == 1);
+    CHECK(newcameraflag == 1);
+
+    memset(&GameStruct, 0, sizeof(GameStruct));
+    memset(&menuVars, 0, sizeof(menuVars));
+    gaPlayerData[0].playerRoot.objectID = -1;
+    gaPlayerData[1].playerRoot.objectID = -1;
+    GameStruct.CurrentLevel = 1;
+    GameStruct.NumPlayers = 1;
+    GameStruct.mNumContinues = 0;
+    GameStruct.GameState = UINT32_C(0x20);
+    OptionStruct.Music = 0;
+    menuVars.menuMode[0] = UINT16_C(0x66);
+
+    game_ProcessStatus();
+    CHECK((GameStruct.GameState & UINT32_C(0x20)) == 0);
+    CHECK((GameStruct.GameState & UINT32_C(0x02000000)) != 0);
+    CHECK(GameStruct.StageExit == 1);
+    CHECK(GameStruct.LevelExit == 1);
+    CHECK(GameStruct.inMenuFlag == 1);
+    CHECK(menuVars.menuModeSP == 1);
+    CHECK(menuVars.menuMode[1] == UINT16_C(0x2d));
+    CHECK(afterLife == NULL);
+
+    memset(&GameStruct, 0, sizeof(GameStruct));
+    GameStruct.CurrentLevel = 1;
+    GameStruct.GameState = UINT32_C(0x00010080);
+    game_ProcessStatus();
+    CHECK((GameStruct.GameState & UINT32_C(0x80)) == 0);
+    CHECK(GameStruct.StageExit == 1);
+
+    gpWorld = saved_world;
+    afterLife = saved_afterlife;
+    return 0;
 }
 
 typedef struct OverlayTrace {
@@ -2810,6 +2874,7 @@ static int test_save_game_persistence(void)
 
 int main(void)
 {
+    CHECK(test_process_status_death_routes() == 0);
     CHECK(test_energy_access_and_clamps() == 0);
     CHECK(test_energy_line_scaling() == 0);
     CHECK(test_exact_setters() == 0);

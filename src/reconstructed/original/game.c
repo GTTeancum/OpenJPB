@@ -22,17 +22,27 @@
 
 #include "jpb/game.h"
 #include "jpb/ai.h"
+#include "jpb/audio_stream.h"
 #include "jpb/boss.h"
 #include "jpb/brain.h"
+#include "jpb/braindmg.h"
 #include "jpb/brainutl.h"
+#include "jpb/camera.h"
 #include "jpb/combo.h"
+#include "jpb/cube.h"
 #include "jpb/debugtext.h"
 #include "jpb/extracharacters.h"
 #include "jpb/force.h"
+#include "jpb/generic_hook.h"
 #include "jpb/jedi.h"
+#include "jpb/jonny.h"
+#include "jpb/menu.h"
+#include "jpb/objroot.h"
 #include "jpb/physics.h"
 #include "jpb/player.h"
+#include "jpb/pwrup.h"
 #include "jpb/scene.h"
+#include "jpb/sound.h"
 #include "jpb/sprite.h"
 #include "jpb/text.h"
 #include "jpb/vehicle.h"
@@ -60,6 +70,12 @@ static int32_t b[16];
 /* Exact initialized PDB global charStuff at RVA 0x4BABD0. */
 uint16_t charStuff[10] = {
     45, 46, 45, 48, 47, 45, 45, 45, 48, 46
+};
+
+/* Exact initialized PDB global at matched-PC RVA 0x4BD9B0. */
+int8_t aLevelXATracks[26] = {
+    1, 7, 9, 14, 18, 21, 26, 31, 33, 35, 38, 18, 92,
+    10, 13, 27, 35, 33, 7, 13, 35, 33, 7, 13, 13, 38
 };
 
 static void game_hide_overlay_scb(SCB *scb)
@@ -1059,12 +1075,137 @@ char game_ModGameCounter(int amount)
  * PDB type: void (<no type>)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+void game_ProcessStatus(void)
+{
+    playerObject *player0 = gpWorld->player0;
+    playerObject *player1 = gpWorld->player1;
+    uint32_t state;
+    int previous_continues;
+
+    brainutl_ConformGeomNodes(player0);
+    brainutl_ConformGeomNodes(player1);
+    state = GameStruct.GameState;
+    if ((state & UINT32_C(0x60)) == UINT32_C(0x60)) {
+        GameStruct.GameState = state & ~UINT32_C(0x60);
+        afterLife = NULL;
+        GameStruct.StageExit = 1;
+    } else if ((state & UINT32_C(0x40)) != 0) {
+        GameStruct.GameState = state & ~UINT32_C(0x40);
+        if (GameStruct.NumPlayers != 1 &&
+            (player0->pFlags & UINT32_C(0x200)) == 0) {
+            camera_SetCurrentCameraType(1);
+            GameStruct.StageExit = 0;
+            afterLife = player1;
+        } else {
+            GameStruct.StageExit = 1;
+        }
+    } else if ((state & UINT32_C(0x20)) != 0) {
+        GameStruct.GameState = state & ~UINT32_C(0x20);
+        if (GameStruct.NumPlayers != 1 &&
+            (player1->pFlags & UINT32_C(0x200)) == 0) {
+            camera_SetCurrentCameraType(2);
+            GameStruct.StageExit = 0;
+            afterLife = player0;
+        } else {
+            GameStruct.StageExit = 1;
+        }
+    } else {
+        if ((state & UINT32_C(0x00010000)) == 0) {
+            return;
+        }
+        /* platform_completeLevel is an exact no-op linkstub in this build. */
+        GameStruct.GameState &= ~UINT32_C(0x80);
+        GameStruct.StageExit = 1;
+        return;
+    }
+
+    GameStruct.GameState &= ~UINT32_C(0x80);
+    newcameraflag = 1;
+    if ((GameStruct.GameState & UINT32_C(0x02000000)) != 0) {
+        return;
+    }
+
+    previous_continues = (int)GameStruct.ContinuesUsed;
+    GameStruct.ContinuesUsed =
+        (int8_t)((uint8_t)GameStruct.ContinuesUsed + UINT8_C(1));
+    if (previous_continues < GameStruct.mNumContinues) {
+        GameStruct.Continuing = 1;
+        if ((abGlobalBits[3] & UINT8_C(1)) == 0) {
+            return;
+        }
+        abGlobalBits[3] &= UINT8_C(0xfe);
+        if (GameStruct.CurrentLevel <= 22 &&
+            ((UINT32_C(0x007f2800) >> GameStruct.CurrentLevel) & 1U) != 0) {
+            return;
+        }
+        if (OptionStruct.Music != 0) {
+            stopXA();
+            playXA(3, (int)OptionStruct.musicVolume * 2, 0);
+        }
+        menu_specialMess((uint8_t *)(void *)allText[376]);
+        gCheckPoint = 0;
+        afterLife = NULL;
+        return;
+    }
+
+    if (((player0->playerRoot.objectID != -1 &&
+          obj_gCheckObjectFlag(&player0->playerRoot, 0, 0x20) == 0 &&
+          (player0->pFlags & UINT32_C(0x40200)) == 0) ||
+         (player1->playerRoot.objectID != -1 &&
+          obj_gCheckObjectFlag(&player1->playerRoot, 0, 0x20) == 0 &&
+          (player1->pFlags & UINT32_C(0x40200)) == 0)) &&
+        (GameStruct.CurrentLevel <= 10 ||
+         GameStruct.CurrentLevel == 15) &&
+        (abGlobalBits[3] & UINT8_C(1)) == 0) {
+        GameStruct.ContinuesUsed = (int8_t)GameStruct.mNumContinues;
+        GameStruct.Continuing = 1;
+        GameStruct.StageExit = 0;
+        afterLife = NULL;
+        return;
+    }
+
+    if (OptionStruct.Music != 0) {
+        stopXA();
+        playXA(3, (int)OptionStruct.musicVolume * 2, 0);
+    }
+    GameStruct.LevelExit = 1;
+    afterLife = NULL;
+    sound_StopAll();
+    menu_initGameover();
+}
 
 /* 0xA8FB0, 185 bytes, global, 1 named locals
  * game_ResetGameSystems
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+void game_ResetGameSystems(void)
+{
+    stop_all_looped_sounds();
+    restore_events(leveldata);
+    physics_InitPhysics();
+    player_gRefreshPlayers();
+    enemy_ResetEnemies();
+    camera_RestoreCameras();
+    pwrup_Init();
+    braindmg_ResetDamageTracker(0);
+    braindmg_ResetDamageTracker(1);
+    afterLife = NULL;
+    /* clearzerobss tail-calls the matched no-op _clearzerobss. */
+    zerobss_levelReset = 1;
+    zerobss_ResetBoss = 1;
+    cube_InitVisibility();
+    ClearCachedTextureIndices();
+    sound_StopAll();
+    stopXA();
+    if (GameStruct.CurrentLevel < 26 && OptionStruct.Music == 1) {
+        playXA(
+            (int)aLevelXATracks[GameStruct.CurrentLevel],
+            (int)OptionStruct.musicVolume * 2,
+            1);
+    }
+    gHidePikobisModel = 1;
+}
 
 /* 0xA9070, 28 bytes, global, 1 named locals
  * game_SET_GLOBALBIT
@@ -1699,6 +1840,53 @@ void game_initPlayerStartCombos(uint32_t player)
  * PDB type: void (<no type>)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+void game_runStage(void)
+{
+    if ((GameStruct.GameState & UINT32_C(0x00100000)) != 0) {
+        player_gRefreshPlayers();
+        GameStruct.GameState &= ~UINT32_C(0x00100000);
+    }
+    if (GameStruct.CurrentLevel == 0) {
+        GameStruct.GameState &= ~UINT32_C(0xe0);
+        GameStruct.StageExit = 0;
+        GameStruct.LevelExit = 0;
+    } else if ((int32_t)GameStruct.GameState >= 0) {
+        game_ProcessStatus();
+    }
+
+    if ((GameStruct.GameState & UINT32_C(0x02000000)) != 0) {
+        mute_looped_sounds();
+        update_looped_sounds();
+        GameStruct.Continuing = 0;
+        return;
+    }
+    if (GameStruct.LevelExit != 0) {
+        GameStruct.GameState |= UINT32_C(2);
+        stop_all_looped_sounds();
+    }
+    if (GameStruct.StageExit != 0) {
+        stop_all_looped_sounds();
+        waitForInputReadAfterRefresh = 2;
+        game_ResetGameSystems();
+        GameStruct.GameState &= ~UINT32_C(0xe0);
+        GameStruct.StageExit = 0;
+    }
+    if (GameStruct.LevelExit != 0) {
+        GameStruct.StageExit = 0;
+        GameStruct.gameMode = 9;
+        stop_all_looped_sounds();
+        if (GameStruct.mNumContinues < 5) {
+            GameStruct.mNumContinues = 5;
+        } else if (GameStruct.mNumContinues > 9) {
+            GameStruct.mNumContinues = 9;
+        }
+        GameStruct.ContinuesUsed = 0;
+        afterLife = NULL;
+    }
+    unmute_looped_sounds();
+    update_looped_sounds();
+    GameStruct.Continuing = 0;
+}
 
 /* 0xAAF50, 66 bytes, global, 0 named locals
  * game_setAudioOptions

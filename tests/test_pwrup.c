@@ -322,7 +322,7 @@ static int test_dispatcher_draw_collection_and_publication(void)
     return 0;
 }
 
-static int test_pause_and_afterlife_marker_noncollection(void)
+static int test_combo_level_and_afterlife_marker_noncollection(void)
 {
     uint8_t data[2 * JPB_POWERUP_DISK_RECORD_SIZE];
     WorldData world;
@@ -334,16 +334,18 @@ static int test_pause_and_afterlife_marker_noncollection(void)
     CHECK(jpb_PwrupLoadData(data, sizeof(data)) == 1);
     jpb_PwrupSetDrawHook(observe_powerup_draw, &observation);
     initialLevelPauseDelay = 2;
+    GameStruct.ComboLevel = 1;
     pwrup_CheckPowerUps();
-    CHECK(gPoopMode == 2);
+    CHECK(gPoopMode == 1);
     CHECK(observation.count == 1);
     CHECK((uint16_t)poopArray[0].pos.pad == 2);
     CHECK((uint16_t)poopArray[1].pos.pad == 6);
     CHECK(GameStruct.aCharacterData[0].Force == 30);
 
-    initialLevelPauseDelay = 0;
+    GameStruct.ComboLevel = 0;
     mDrawingSurfaceId = 1;
     pwrup_CheckPowerUps();
+    CHECK(gPoopMode == 0);
     CHECK(GameStruct.aCharacterData[0].Force == 80);
     CHECK(((uint16_t)poopArray[0].pos.pad &
            JPB_POWERUP_COLLECTED_FLAG) != 0);
@@ -428,7 +430,7 @@ int main(int argc, char **argv)
     CHECK(test_rejections() == 0);
     CHECK(test_initialized_tables_and_leaf_functions() == 0);
     CHECK(test_dispatcher_draw_collection_and_publication() == 0);
-    CHECK(test_pause_and_afterlife_marker_noncollection() == 0);
+    CHECK(test_combo_level_and_afterlife_marker_noncollection() == 0);
     CHECK(test_dispatcher_checkpoint_and_artifact() == 0);
     jpb_PwrupReleaseData();
     puts("power-up tests passed");

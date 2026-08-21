@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wctype.h>
 
 #ifdef _WIN32
 typedef void *HMODULE;
@@ -627,6 +628,208 @@ static int portable_text_measure(
     return 1;
 }
 
+static int portable_text_control_icon(uint32_t codepoint)
+{
+    switch (codepoint) {
+    case UINT32_C(0x2021): return 3;
+    case UINT32_C(0x20ac): return 2;
+    case UINT32_C(0x0192): return 4;
+    case UINT32_C(0x2020): return 5;
+    case UINT32_C(0x0160): return 7;
+    case UINT32_C(0x017d): return 9;
+    default: return -1;
+    }
+}
+
+static int portable_text_tag_icon(wchar_t codepoint, int *alpha)
+{
+    int icon;
+
+    if (alpha == NULL) {
+        return -1;
+    }
+    *alpha = iswlower(codepoint) ? 128 : 255;
+    switch (towupper(codepoint)) {
+    case L'A': icon = 3; break;
+    case L'B': icon = 2; break;
+    case L'X': icon = 4; break;
+    case L'Y': icon = 5; break;
+    case L'F': icon = 7; break;
+    default: return -1;
+    }
+    return icon;
+}
+
+static int portable_text_control_advance(
+    JPBPortableTextFont *font,
+    int point_size,
+    float font_scale,
+    uint32_t codepoint,
+    int *advance_out)
+{
+    int min_x = 0;
+    int max_x = 0;
+    int min_y = 0;
+    int max_y = 0;
+    int advance = 0;
+
+    if (font == NULL || advance_out == NULL) {
+        return 0;
+    }
+#ifdef _WIN32
+    if (font->sdlFont != NULL &&
+        portable_text_prepare_sdl_font(font, point_size) &&
+        portable_TTF_GlyphMetrics != NULL) {
+        if (portable_TTF_GlyphMetrics(
+                font->sdlFont,
+                (uint16_t)codepoint,
+                &min_x,
+                &max_x,
+                &min_y,
+                &max_y,
+                &advance) != 0) {
+            return 0;
+        }
+        *advance_out = advance - min_x;
+        return 1;
+    }
+#endif
+    if (!(font_scale > 0.0f)) {
+        return 0;
+    }
+    stbtt_GetCodepointHMetrics(
+        &font->info, (int)codepoint, &advance, &max_x);
+    stbtt_GetCodepointBox(
+        &font->info, (int)codepoint,
+        &min_x, &min_y, &max_x, &max_y);
+    *advance_out = portable_text_rounded_metric(
+        (float)advance * font_scale) -
+        portable_text_rounded_metric((float)min_x * font_scale);
+    return 1;
+}
+
+int jpb_PortableTextPrepareControlGlyphs(
+    wchar_t *text,
+    size_t text_capacity,
+    int mode,
+    int x,
+    int y,
+    float scale,
+    int font_style,
+    int language,
+    float scale_adjustment,
+    int *origin_x,
+    JPBPortableTextControlGlyph *glyphs,
+    size_t glyph_capacity)
+{
+    JPBPortableTextFont *font;
+    size_t length;
+    size_t index = 0;
+    size_t glyph_count = 0;
+    float font_scale = 0.0f;
+    int point_size;
+    int text_width;
+    int text_height;
+    int baseline_offset;
+    int pen_x;
+
+    if (text == NULL || text_capacity == 0 || origin_x == NULL ||
+        (glyph_capacity != 0 && glyphs == NULL)) {
+        return -1;
+    }
+    length = wcslen(text);
+    if (length >= text_capacity) {
+        return -1;
+    }
+    point_size = jpb_PortableTextPointSize(scale, scale_adjustment);
+    font = portable_text_get_font(font_style, language, point_size);
+    if (font == NULL) {
+        return -1;
+    }
+#ifdef _WIN32
+    if (!portable_text_measure_sdl(
+            font, text, point_size,
+            &text_width, &text_height, &baseline_offset))
+#endif
+    {
+        if (!portable_text_measure(
+                font, text, point_size, &font_scale,
+                &text_width, &text_height, &baseline_offset)) {
+            return -1;
+        }
+    }
+    (void)text_height;
+    pen_x = x;
+    if ((mode & 0x7f) == 1) {
+        pen_x -= text_width;
+    } else if ((mode & 0x7f) == 2) {
+        pen_x -= text_width / 2;
+    }
+    *origin_x = pen_x;
+
+    while (index < length) {
+        int alpha = 255;
+        int icon = portable_text_control_icon((uint32_t)text[index]);
+        int tagged = 0;
+        int advance;
+
+        if (icon < 0 && index + 2 < length &&
+            text[index] == L'<' && text[index + 2] == L'>') {
+            icon = portable_text_tag_icon(text[index + 1], &alpha);
+            tagged = icon >= 0;
+        }
+        if (icon >= 0 && !tagged && index < 3) {
+            size_t leading_spaces = 3 - index;
+
+            if (length + leading_spaces >= text_capacity) {
+                return -1;
+            }
+            memmove(
+                text + leading_spaces,
+                text,
+                (length + 1) * sizeof(text[0]));
+            wmemset(text, L' ', leading_spaces);
+            length += leading_spaces;
+            index = 0;
+            pen_x = *origin_x;
+            continue;
+        }
+        if (icon >= 0) {
+            if (glyph_count < glyph_capacity) {
+                glyphs[glyph_count].iconIndex = icon;
+                glyphs[glyph_count].alpha = alpha;
+                glyphs[glyph_count].x = pen_x;
+                glyphs[glyph_count].y =
+                    (int)((float)y + (float)baseline_offset * 0.5f);
+                ++glyph_count;
+            }
+            if (tagged) {
+                text[index + 1] = L' ';
+                text[index + 2] = L' ';
+            }
+            memmove(
+                text + index,
+                text + index + 1,
+                (length - index) * sizeof(text[0]));
+            --length;
+            continue;
+        }
+        if (text[index] == L'\n') {
+            pen_x = *origin_x;
+            ++index;
+            continue;
+        }
+        if (!portable_text_control_advance(
+                font, point_size, font_scale,
+                (uint32_t)text[index], &advance)) {
+            return -1;
+        }
+        pen_x += advance;
+        ++index;
+    }
+    return (int)glyph_count;
+}
+
 static uint32_t portable_text_blend(
     uint32_t destination,
     uint8_t red,
@@ -705,6 +908,7 @@ static int portable_text_draw_sdl(
     int min_blit_y;
     int max_blit_x = -1;
     int max_blit_y = -1;
+    int leading_blank_width = 0;
     int row_index;
 
     if (!portable_text_prepare_sdl_font(font, point_size) ||
@@ -729,6 +933,30 @@ static int portable_text_draw_sdl(
             portable_SDL_FreeSurface(surface);
         }
         return 0;
+    }
+    {
+        const wchar_t *cursor = text;
+
+        while (*cursor == L' ') {
+            int min_x = 0;
+            int max_x = 0;
+            int min_y = 0;
+            int max_y = 0;
+            int advance = 0;
+
+            if (portable_TTF_GlyphMetrics(
+                    font->sdlFont,
+                    (uint16_t)*cursor,
+                    &min_x,
+                    &max_x,
+                    &min_y,
+                    &max_y,
+                    &advance) != 0) {
+                break;
+            }
+            leading_blank_width += advance - min_x;
+            ++cursor;
+        }
     }
     if (portable_SDL_LockSurface != NULL) {
         (void)portable_SDL_LockSurface(surface);
@@ -806,7 +1034,8 @@ static int portable_text_draw_sdl(
         for (column_index = min_blit_x;
              column_index <= max_blit_x;
              ++column_index) {
-            int output_x = x + column_index;
+            int output_x =
+                x + leading_blank_width + column_index;
             const uint8_t *source_pixel =
                 source_row +
                 (size_t)column_index *

@@ -8,6 +8,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <mmsystem.h>
+#include <shellapi.h>
 
 #include "jpb/ai.h"
 #include "jpb/anim.h"
@@ -33,9 +34,11 @@
 #include "jpb/physics.h"
 #include "jpb/player.h"
 #include "jpb/projection.h"
+#include "jpb/pwrup.h"
 #include "jpb/game_runtime.h"
 #include "jpb/resources.h"
 #include "jpb/savegame.h"
+#include "jpb/sound.h"
 #include "jpb/sprite.h"
 #include "jpb/text.h"
 #include "jpb/texture.h"
@@ -262,6 +265,7 @@ typedef struct PcInput {
     int validateHudDebugLabels31080;
     int validateHudOwnerCoverage;
     int validateTeleport;
+    int validateDeathRestart;
     int validateCameraFollow;
     int validateTitleAudio;
     int validateTitleMovie;
@@ -350,6 +354,11 @@ typedef struct PcInput {
     PcRetailInputSample retailReplayCurrent;
     int retailReplayCurrentValid;
     char retailReplayPath[MAX_PATH];
+    int resolutionChangePending;
+    int resolutionWidth;
+    int resolutionHeight;
+    unsigned resolutionWindowMode;
+    int exclusiveFullscreenActive;
 } PcInput;
 
 static void pc_apply_control_scheme_overrides(const PcInput *input);
@@ -801,6 +810,63 @@ static void pc_request_exit(void *user_data)
     pc_running = 0;
 }
 
+static void pc_menu_sound(unsigned sound, void *user_data)
+{
+    static const char *const menu_sounds[11] = {
+        "",
+        "xjedscrl",
+        "xopt_sel",
+        "xjedscrl",
+        "xjedsel",
+        "xlvbrows",
+        "xlvselct",
+        "xsecret",
+        "xsavload",
+        "xlocklvl",
+        "xpointbp"
+    };
+
+    (void)user_data;
+    (void)sound_PlayController(
+        NULL, 0, (char *)menu_sounds[sound], 8);
+}
+
+static void pc_menu_sound_cue(const char *name, void *user_data)
+{
+    (void)user_data;
+    (void)sound_PlayController(NULL, 0, (char *)name, 8);
+}
+
+static void pc_queue_resolution_change(
+    unsigned resolution_index,
+    unsigned window_mode,
+    uint32_t *width,
+    uint32_t *height,
+    void *user_data)
+{
+    PcInput *input = (PcInput *)user_data;
+
+    (void)resolution_index;
+    input->resolutionChangePending = 1;
+    input->resolutionWidth = (int)*width;
+    input->resolutionHeight = (int)*height;
+    input->resolutionWindowMode = window_mode;
+}
+
+static void pc_open_url(const char *url, void *user_data)
+{
+    HINSTANCE result;
+
+    (void)user_data;
+    result = ShellExecuteA(NULL, "open", url, NULL, NULL, SW_SHOWNORMAL);
+    if ((INT_PTR)result <= 32) {
+        jpb_PCLog(
+            "menu URL open failed code=%lld url=%s",
+            (long long)(INT_PTR)result,
+            url != NULL ? url : "<null>");
+    }
+}
+
 static int pc_activate_menu_item(
     uint32_t destination, void *user_data)
 {
@@ -814,6 +880,81 @@ static int pc_activate_menu_item(
         menu_menuExit();
         (void)menu_handleMenuTriggers(9);
         jpb_PCLog("New Game used no-save route");
+    }
+    return 0;
+}
+
+static int pc_compare_resolutions(
+    const void *left_value, const void *right_value)
+{
+    const RESOLUTION *left = (const RESOLUTION *)left_value;
+    const RESOLUTION *right = (const RESOLUTION *)right_value;
+
+    if (left->height != right->height) {
+        return left->height < right->height ? -1 : 1;
+    }
+    if (left->width != right->width) {
+        return left->width < right->width ? -1 : 1;
+    }
+    return 0;
+}
+
+static void pc_update_valid_resolutions(void)
+{
+    DEVMODEA current = {0};
+    DEVMODEA candidate = {0};
+    DWORD mode_index = 0;
+
+    current.dmSize = sizeof(current);
+    candidate.dmSize = sizeof(candidate);
+    g_resolutionsCount = 0;
+    (void)EnumDisplaySettingsA(NULL, ENUM_CURRENT_SETTINGS, &current);
+    while (EnumDisplaySettingsA(NULL, mode_index++, &candidate)) {
+        int duplicate = 0;
+        int index;
+
+        if (candidate.dmPelsWidth > current.dmPelsWidth ||
+            candidate.dmPelsHeight > current.dmPelsHeight) {
+            continue;
+        }
+        for (index = 0; index < g_resolutionsCount; ++index) {
+            if (g_resolutions[index].width ==
+                    (int32_t)candidate.dmPelsWidth &&
+                g_resolutions[index].height ==
+                    (int32_t)candidate.dmPelsHeight) {
+                duplicate = 1;
+                break;
+            }
+        }
+        if (!duplicate && g_resolutionsCount < 256) {
+            g_resolutions[g_resolutionsCount].width =
+                (int32_t)candidate.dmPelsWidth;
+            g_resolutions[g_resolutionsCount].height =
+                (int32_t)candidate.dmPelsHeight;
+            ++g_resolutionsCount;
+        }
+    }
+    qsort(
+        g_resolutions,
+        (size_t)g_resolutionsCount,
+        sizeof(g_resolutions[0]),
+        pc_compare_resolutions);
+}
+
+static int pc_select_startup_resolution(int width, int height)
+{
+    int index;
+
+    /* Exact getDefaultResolutionIndex ownership: find the active window
+     * dimensions in the sorted valid-mode table. */
+    for (index = 0; index < g_resolutionsCount; ++index) {
+        if (g_resolutions[index].width == width &&
+            g_resolutions[index].height == height) {
+            defaultOptionStruct.ResolutionChanged = (uint32_t)index;
+            defaultOptionStruct.ScreenWidth = (uint32_t)width;
+            defaultOptionStruct.ScreenHeight = (uint32_t)height;
+            return 1;
+        }
     }
     return 0;
 }
@@ -1703,6 +1844,25 @@ static void pc_save_game_data(void *user_data)
             input->saveGamePath);
     } else {
         ++input->gameSaveWriteCount;
+    }
+}
+
+static void pc_save_settings_data(
+    const optionstruct *options, void *user_data)
+{
+    PcInput *input = (PcInput *)user_data;
+    JPBSaveResult result;
+
+    if (input == NULL || !input->persistenceEnabled || options == NULL) {
+        return;
+    }
+    result = jpb_SaveOptionsWriteFileData(input->optionsPath, options);
+    if (result != JPB_SAVE_OK) {
+        fprintf(
+            stderr,
+            "options save failed (%s): %s\n",
+            pc_save_result_name(result),
+            input->optionsPath);
     }
 }
 
@@ -3425,6 +3585,16 @@ static uint32_t pc_read_pad_uncached(int32_t pad_index, void *user_data)
             }
             lastUsedInputType = 1;
         } else {
+            if (input->phaseCount != 0 && !input->headlessActive) {
+                if (pad_index == 0) {
+                    g_p1X = 0.0f;
+                    g_p1Y = 0.0f;
+                } else {
+                    g_p2X = 0.0f;
+                    g_p2Y = 0.0f;
+                }
+                return 0;
+            }
             if ((headless_bits & JPB_PAD_LEFT) != 0) headless_x += 1.0f;
             if ((headless_bits & JPB_PAD_RIGHT) != 0) headless_x -= 1.0f;
             if ((headless_bits & JPB_PAD_UP) != 0) headless_y -= 1.0f;
@@ -3768,6 +3938,161 @@ static HWND pc_create_window(
         UpdateWindow(window);
     }
     return window;
+}
+
+static int pc_set_window_resolution(
+    HWND window,
+    int width,
+    int height,
+    unsigned window_mode,
+    int *exclusive_fullscreen_active)
+{
+    HMONITOR monitor = MonitorFromWindow(
+        window, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitor_info = {sizeof(monitor_info)};
+    DWORD style;
+    RECT rectangle;
+    int x;
+    int y;
+
+    if (!GetMonitorInfoA(monitor, &monitor_info)) {
+        return 0;
+    }
+    if (window_mode == 1) {
+        DEVMODEA mode = {0};
+
+        mode.dmSize = sizeof(mode);
+        mode.dmPelsWidth = (DWORD)width;
+        mode.dmPelsHeight = (DWORD)height;
+        mode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+        if (ChangeDisplaySettingsA(&mode, CDS_FULLSCREEN) !=
+            DISP_CHANGE_SUCCESSFUL) {
+            return 0;
+        }
+        *exclusive_fullscreen_active = 1;
+        style = WS_POPUP;
+        x = monitor_info.rcMonitor.left;
+        y = monitor_info.rcMonitor.top;
+    } else if (window_mode == 0) {
+        if (*exclusive_fullscreen_active) {
+            (void)ChangeDisplaySettingsA(NULL, 0);
+            *exclusive_fullscreen_active = 0;
+        }
+        style = WS_POPUP;
+        width = monitor_info.rcMonitor.right -
+                monitor_info.rcMonitor.left;
+        height = monitor_info.rcMonitor.bottom -
+                 monitor_info.rcMonitor.top;
+        x = monitor_info.rcMonitor.left;
+        y = monitor_info.rcMonitor.top;
+    } else {
+        if (*exclusive_fullscreen_active) {
+            (void)ChangeDisplaySettingsA(NULL, 0);
+            *exclusive_fullscreen_active = 0;
+        }
+        style = WS_OVERLAPPEDWINDOW;
+        rectangle.left = 0;
+        rectangle.top = 0;
+        rectangle.right = width;
+        rectangle.bottom = height;
+        if (!AdjustWindowRect(&rectangle, style, FALSE)) {
+            return 0;
+        }
+        width = rectangle.right - rectangle.left;
+        height = rectangle.bottom - rectangle.top;
+        x = monitor_info.rcMonitor.left +
+            ((monitor_info.rcMonitor.right -
+              monitor_info.rcMonitor.left) - width) / 2;
+        y = monitor_info.rcMonitor.top +
+            ((monitor_info.rcMonitor.bottom -
+              monitor_info.rcMonitor.top) - height) / 2;
+    }
+    SetLastError(0);
+    if (SetWindowLongPtrA(window, GWL_STYLE, (LONG_PTR)style) == 0 &&
+        GetLastError() != 0) {
+        return 0;
+    }
+    return SetWindowPos(
+               window,
+               HWND_TOP,
+               x,
+               y,
+               width,
+               height,
+               SWP_FRAMECHANGED | SWP_SHOWWINDOW) != 0;
+}
+
+static int pc_apply_pending_resolution(
+    PcInput *input,
+    HWND window,
+    JPBSoftwareFramebuffer *framebuffer,
+    uint32_t **pixels_owner,
+    uint32_t **title_pixels_owner)
+{
+    uint32_t *new_pixels;
+    uint32_t *new_title_pixels = NULL;
+    size_t pixel_count;
+    const char *title_path;
+    int width = input->resolutionWidth;
+    int height = input->resolutionHeight;
+
+    input->resolutionChangePending = 0;
+    if (width <= 0 || height <= 0 ||
+        (size_t)width > SIZE_MAX / (size_t)height /
+                            sizeof(*new_pixels)) {
+        return 0;
+    }
+    pixel_count = (size_t)width * (size_t)height;
+    new_pixels = (uint32_t *)malloc(
+        pixel_count * sizeof(*new_pixels));
+    if (new_pixels == NULL) {
+        return 0;
+    }
+    if (*title_pixels_owner != NULL) {
+        new_title_pixels = (uint32_t *)malloc(
+            pixel_count * sizeof(*new_title_pixels));
+        title_path = resource_getPath(
+            "JPB_SplashV3_Sharpened.png", JPB_RESOURCE_FRONT);
+        if (new_title_pixels == NULL ||
+            !jpb_PCLoadImageWIC(
+                title_path,
+                width,
+                height,
+                new_title_pixels,
+                width)) {
+            free(new_title_pixels);
+            free(new_pixels);
+            return 0;
+        }
+    }
+    if (!pc_set_window_resolution(
+            window,
+            width,
+            height,
+            input->resolutionWindowMode,
+            &input->exclusiveFullscreenActive)) {
+        free(new_title_pixels);
+        free(new_pixels);
+        return 0;
+    }
+    free(*pixels_owner);
+    *pixels_owner = new_pixels;
+    framebuffer->pixels = new_pixels;
+    framebuffer->width = width;
+    framebuffer->height = height;
+    framebuffer->stridePixels = width;
+    if (*title_pixels_owner != NULL) {
+        free(*title_pixels_owner);
+        *title_pixels_owner = new_title_pixels;
+    }
+    input->movieFramebufferWidth = width;
+    input->movieFramebufferHeight = height;
+    jpb_PCLog(
+        "resolution applied source=%dx%d window_mode=%u",
+        width,
+        height,
+        input->resolutionWindowMode);
+    return 1;
 }
 
 static void pc_update_window_fps_title(
@@ -9521,7 +9846,8 @@ static void pc_print_usage(const char *program)
         "[--validate-hud-debug-labels3] "
         "[--validate-hud-debug-labels3-1080] "
         "[--validate-hud-owner-coverage] "
-        "[--validate-teleport] [--validate-camera-follow] "
+        "[--validate-teleport] [--validate-death-restart] "
+        "[--validate-camera-follow] "
         "[--validate-title-audio] [--validate-title-movie N] "
         "[--validate-player-saber] "
         "[--validate-player-projectile] "
@@ -11512,6 +11838,11 @@ int main(int argc, char **argv)
     int title_main_select = -1;
     int title_valid_save = 0;
     int synthetic_input_requested = 0;
+    int death_restart_injected = 0;
+    int death_restart_observed = 0;
+    int death_restart_expected_energy = 0;
+    int death_restart_expected_continues = 0;
+    powerPoop *death_restart_powerup = NULL;
     int spawn_position_explicit = 0;
     FVECTOR spawn_position = {0};
     int force_enemy_placement = -1;
@@ -11915,6 +12246,10 @@ int main(int argc, char **argv)
                        argv[index],
                        "--validate-teleport") == 0) {
             input.validateTeleport = 1;
+        } else if (strcmp(
+                       argv[index],
+                       "--validate-death-restart") == 0) {
+            input.validateDeathRestart = 1;
         } else if (strcmp(
                        argv[index],
                        "--validate-camera-follow") == 0) {
@@ -12404,6 +12739,15 @@ int main(int argc, char **argv)
             stderr);
         return 2;
     }
+    if (input.validateDeathRestart &&
+        (!input.headless || !input.scriptedInput ||
+         jpb_LevelIndexFromPath(mesh_path) != 1 || frame_limit < 2)) {
+        fputs(
+            "--validate-death-restart requires a headless FED run of at "
+            "least two frames with --control-harness\n",
+            stderr);
+        return 2;
+    }
     if (overlay_mode_override >= 0) {
         OptionStruct.overlayMode = (uint8_t)overlay_mode_override;
         defaultOptionStruct.overlayMode = (uint8_t)overlay_mode_override;
@@ -12480,6 +12824,15 @@ int main(int argc, char **argv)
     framebuffer.width = framebuffer_width;
     framebuffer.height = framebuffer_height;
     framebuffer.stridePixels = framebuffer_width;
+    pc_update_valid_resolutions();
+    if (!pc_select_startup_resolution(
+            framebuffer.width, framebuffer.height)) {
+        jpb_PCLog(
+            "active source framebuffer is not a selectable display mode "
+            "source=%dx%d",
+            framebuffer.width,
+            framebuffer.height);
+    }
     input.moviePlayback = &movie_playback;
     input.movieFramebufferWidth = framebuffer.width;
     input.movieFramebufferHeight = framebuffer.height;
@@ -12520,12 +12873,17 @@ int main(int argc, char **argv)
     jpb_BrainutlSetCheatChordProvider(
         pc_read_brainutl_cheat_chords, &input);
     menu_hooks.activateItem = pc_activate_menu_item;
+    menu_hooks.menuSound = pc_menu_sound;
     menu_hooks.keyboardState = pc_read_keyboard_state;
     menu_hooks.triggerMovie = pc_trigger_movie;
     menu_hooks.saveGameData = pc_save_game_data;
+    menu_hooks.saveSettingsData = pc_save_settings_data;
     menu_hooks.controllerCount = pc_controller_count;
     menu_hooks.controllerName = pc_controller_name;
+    menu_hooks.openUrl = pc_open_url;
     menu_hooks.requestExit = pc_request_exit;
+    menu_hooks.soundCue = pc_menu_sound_cue;
+    menu_hooks.applyResolution = pc_queue_resolution_change;
     jpb_MenuSetPlatformHooks(&menu_hooks, &input);
     if (!pc_apply_player_saber_color_mode(
             player_model, player_saber_color_mode)) {
@@ -13304,6 +13662,62 @@ int main(int argc, char **argv)
                         &runtime, GameStruct.NumPlayers)) {
                     front_end_playable_handoff = 0;
                 }
+                if (input.validateDeathRestart &&
+                    frame_count == 1 && !death_restart_injected) {
+                    if (runtime.player == NULL || runtime.physics == NULL ||
+                        runtime.world == NULL || poopArray == NULL ||
+                        runtime.powerupCount == 0) {
+                        fputs(
+                            "death-restart validation could not seed FED "
+                            "runtime state\n",
+                            stderr);
+                        result = JPB_GAME_RUNTIME_LOAD_FAILED;
+                        break;
+                    }
+                    runtime.physics->pos.vx += 512.0f;
+                    runtime.physics->vpos.vx =
+                        (int32_t)runtime.physics->pos.vx;
+                    runtime.physics->vpos.vy =
+                        (int32_t)runtime.physics->pos.vy;
+                    runtime.physics->vpos.vz =
+                        (int32_t)runtime.physics->pos.vz;
+                    runtime.physics->snapshotpos = runtime.physics->pos;
+                    runtime.physics->lastpos = runtime.physics->pos;
+                    runtime.physics->lastpolyhit = NULL;
+                    runtime.world->location.vx =
+                        runtime.physics->vpos.vx;
+                    runtime.world->location.vy =
+                        runtime.physics->vpos.vy;
+                    runtime.world->location.vz =
+                        runtime.physics->vpos.vz;
+                    if (jpb_PhysicsUpdateSceneObject(runtime.physics) !=
+                        JPB_PHYSICS_PARTIAL_OK) {
+                        fputs(
+                            "death-restart validation could not move the "
+                            "FED player\n",
+                            stderr);
+                        result = JPB_GAME_RUNTIME_LOAD_FAILED;
+                        break;
+                    }
+                    death_restart_powerup = &poopArray[0];
+                    death_restart_powerup->pos.pad =
+                        (int16_t)(
+                            (uint16_t)death_restart_powerup->pos.pad |
+                            JPB_POWERUP_COLLECTED_FLAG);
+                    death_restart_expected_energy =
+                        game_gGetMaxEnergy(runtime.player->playernum);
+                    death_restart_expected_continues =
+                        (int8_t)(
+                            (uint8_t)GameStruct.ContinuesUsed + UINT8_C(1));
+                    (void)game_gSetEnergy(runtime.player->playernum, 0);
+                    player_AfterLife(runtime.player);
+                    afterLife = runtime.player;
+                    obj_gSetObjectFlag(
+                        &runtime.player->playerRoot, 0, UINT32_C(0x20));
+                    runtime.player->pFlags |= UINT32_C(0x200);
+                    GameStruct.GameState |= UINT32_C(0x20);
+                    death_restart_injected = 1;
+                }
                 if (!pc_retail_replay_prepare_frame(
                         &input, totalframes + 1)) {
                     result = JPB_GAME_RUNTIME_LOAD_FAILED;
@@ -13316,6 +13730,75 @@ int main(int argc, char **argv)
                     pc_release_front_end_gameplay_control(
                         &runtime, GameStruct.NumPlayers)) {
                     front_end_playable_handoff = 0;
+                }
+                if (result == JPB_GAME_RUNTIME_OK &&
+                    death_restart_injected &&
+                    !death_restart_observed) {
+                    int restart_valid =
+                        runtime.physics->pos.vx == initial_position.vx &&
+                        runtime.physics->pos.vy == initial_position.vy &&
+                        runtime.physics->pos.vz == initial_position.vz &&
+                        game_gGetEnergy(runtime.player->playernum) ==
+                            death_restart_expected_energy &&
+                        GameStruct.StageExit == 0 &&
+                        GameStruct.Continuing == 0 &&
+                        GameStruct.LevelExit == 0 &&
+                        (GameStruct.GameState & UINT32_C(0x20)) == 0 &&
+                        (int)GameStruct.ContinuesUsed ==
+                            death_restart_expected_continues &&
+                        afterLife == NULL &&
+                        obj_gCheckObjectFlag(
+                            &runtime.player->playerRoot,
+                            0,
+                            UINT32_C(0x20)) == 0 &&
+                        (runtime.player->pFlags & UINT32_C(0x200)) == 0 &&
+                        ((uint16_t)death_restart_powerup->pos.pad &
+                         JPB_POWERUP_COLLECTED_FLAG) == 0;
+
+                    if (!restart_valid) {
+                        fprintf(
+                            stderr,
+                            "death-restart validation failed: "
+                            "position=%.1f/%.1f/%.1f expected=%.1f/%.1f/%.1f "
+                            "energy=%d/%d state=%08x stage=%d continuing=%d "
+                            "level=%d continues=%d/%d afterlife=%d "
+                            "object=%d flags=%08x powerup=%04x\n",
+                            runtime.physics->pos.vx,
+                            runtime.physics->pos.vy,
+                            runtime.physics->pos.vz,
+                            initial_position.vx,
+                            initial_position.vy,
+                            initial_position.vz,
+                            game_gGetEnergy(runtime.player->playernum),
+                            death_restart_expected_energy,
+                            (unsigned)GameStruct.GameState,
+                            GameStruct.StageExit,
+                            GameStruct.Continuing,
+                            GameStruct.LevelExit,
+                            (int)GameStruct.ContinuesUsed,
+                            death_restart_expected_continues,
+                            afterLife != NULL,
+                            obj_gCheckObjectFlag(
+                                &runtime.player->playerRoot,
+                                0,
+                                UINT32_C(0x20)),
+                            (unsigned)runtime.player->pFlags,
+                            (unsigned)(uint16_t)
+                                death_restart_powerup->pos.pad);
+                        result = JPB_GAME_RUNTIME_LOAD_FAILED;
+                        break;
+                    }
+                    death_restart_observed = 1;
+                    printf(
+                        "death_restart=(observed=1,position=%.1f/%.1f/%.1f,"
+                        "energy=%d,continues=%d,powerup=%04x)\n",
+                        runtime.physics->pos.vx,
+                        runtime.physics->pos.vy,
+                        runtime.physics->pos.vz,
+                        game_gGetEnergy(runtime.player->playernum),
+                        (int)GameStruct.ContinuesUsed,
+                        (unsigned)(uint16_t)
+                            death_restart_powerup->pos.pad);
                 }
             }
             if (camera_diagnostics && !title_active &&
@@ -13665,6 +14148,22 @@ int main(int argc, char **argv)
                     DispatchMessageA(&message);
                 }
                 if (!pc_running) {
+                    break;
+                }
+                if (input.resolutionChangePending &&
+                    !pc_apply_pending_resolution(
+                        &input,
+                        window,
+                        &framebuffer,
+                        &pixels,
+                        &title_pixels)) {
+                    jpb_PCLog(
+                        "resolution apply failed source=%dx%d "
+                        "window_mode=%u",
+                        input.resolutionWidth,
+                        input.resolutionHeight,
+                        input.resolutionWindowMode);
+                    result = JPB_GAME_RUNTIME_RENDER_FAILED;
                     break;
                 }
                 pc_log_live_menu_key_edges(
@@ -14973,6 +15472,10 @@ int main(int argc, char **argv)
             }
             jpb_PCD3D11PresenterDestroy(presenter);
         }
+        if (input.exclusiveFullscreenActive) {
+            (void)ChangeDisplaySettingsA(NULL, 0);
+            input.exclusiveFullscreenActive = 0;
+        }
         if (IsWindow(window)) {
             DestroyWindow(window);
         }
@@ -15248,14 +15751,14 @@ int main(int argc, char **argv)
             (unsigned)menuVars.menuModeSP,
             (unsigned)menuVars.mmSelect1[menuVars.menuModeSP & 7u],
             (int)(uint8_t)LevelSelect,
-            (int)menuVars.levelSelectBoxTop,
-            (unsigned)menuVars.levelSelectBoxWidth,
-            (unsigned)menuVars.levelSelectBoxHeight,
-            (unsigned)menuVars.levelSelectBoxCountdown,
-            (unsigned)menuVars.levelSelectBoxOpen,
-            (unsigned)menuVars.levelSelectPreviewLevel,
-            (int)menuVars.levelSelectPreviewFade,
-            (int)menuVars.levelSelectSelectorOffset,
+            (int)menuVars.selbox.y,
+            (unsigned)(uint16_t)menuVars.selbox.w,
+            (unsigned)(uint16_t)menuVars.selbox.h,
+            (unsigned)menuVars.selCount,
+            (unsigned)menuVars.artload,
+            (unsigned)menuVars.artLevel,
+            (int)menuVars.artloadPos,
+            (int)menuVars.dstSelector,
             (unsigned)menuVars.pplayers[0],
             (unsigned)menuVars.pplayers[1],
             (unsigned)menuVars.subplayers[0],
@@ -17251,6 +17754,15 @@ int main(int argc, char **argv)
         result = JPB_GAME_RUNTIME_RENDER_FAILED;
     }
     if (result == JPB_GAME_RUNTIME_OK &&
+        input.validateDeathRestart &&
+        !death_restart_observed) {
+        fputs(
+            "headless FED death-restart validation did not observe the "
+            "canonical stage reset\n",
+            stderr);
+        result = JPB_GAME_RUNTIME_LOAD_FAILED;
+    }
+    if (result == JPB_GAME_RUNTIME_OK &&
         input.validateTeleport &&
         (!input.headless ||
          tflag != 0 ||
@@ -17432,14 +17944,14 @@ int main(int argc, char **argv)
         (unsigned)menuVars.menuModeSP,
         (unsigned)menuVars.mmSelect1[menuVars.menuModeSP & 7u],
         (int)(uint8_t)LevelSelect,
-        (int)menuVars.levelSelectBoxTop,
-        (unsigned)menuVars.levelSelectBoxWidth,
-        (unsigned)menuVars.levelSelectBoxHeight,
-        (unsigned)menuVars.levelSelectBoxCountdown,
-        (unsigned)menuVars.levelSelectBoxOpen,
-        (unsigned)menuVars.levelSelectPreviewLevel,
-        (int)menuVars.levelSelectPreviewFade,
-        (int)menuVars.levelSelectSelectorOffset,
+        (int)menuVars.selbox.y,
+        (unsigned)(uint16_t)menuVars.selbox.w,
+        (unsigned)(uint16_t)menuVars.selbox.h,
+        (unsigned)menuVars.selCount,
+        (unsigned)menuVars.artload,
+        (unsigned)menuVars.artLevel,
+        (int)menuVars.artloadPos,
+        (int)menuVars.dstSelector,
         (unsigned)menuVars.pplayers[0],
         (unsigned)menuVars.pplayers[1],
         (unsigned)menuVars.subplayers[0],

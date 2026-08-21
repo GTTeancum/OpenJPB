@@ -46,6 +46,7 @@ int HitsHit(
     int32_t *coords);
 void MTV(int cubeshite);
 void clear_eventlist(void);
+void restore_events(int32_t *mapbase);
 int32_t *jon_getlibpart(
     int32_t *cube,
     VECTOR *cubeorg,

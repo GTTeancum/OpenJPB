@@ -26,6 +26,8 @@ void *serializeGameStruct(void);
 JPBSaveResult jpb_SaveGameWriteFile(const char *path);
 JPBSaveResult jpb_SaveGameReadFile(const char *path);
 JPBSaveResult jpb_SaveOptionsWriteFile(const char *path);
+JPBSaveResult jpb_SaveOptionsWriteFileData(
+    const char *path, const optionstruct *options);
 JPBSaveResult jpb_SaveOptionsReadFile(const char *path);
 
 #ifdef __cplusplus

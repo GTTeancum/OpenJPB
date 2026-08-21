@@ -176,6 +176,10 @@ static int test_real_font(const char *game_root)
         (size_t)WIDTH * HEIGHT, sizeof(*pixels));
     size_t index;
     size_t changed = 0;
+    wchar_t exit_prompt[32] = L"\x017d   Exit";
+    wchar_t select_prompt[32] = L"\x20ac   Select";
+    JPBPortableTextControlGlyph control_glyphs[2];
+    int origin_x;
 
     CHECK(pixels != NULL);
     CHECK(jpb_ResourceSetBasePath(game_root) == 1);
@@ -215,7 +219,7 @@ static int test_real_font(const char *game_root)
     CHECK(metrics.usedTrueType == 1);
     CHECK(metrics.pointSize == 87);
     CHECK(metrics.width > 200);
-    CHECK(metrics.height >= 80);
+    CHECK(metrics.height == 68);
     CHECK(metrics.blendedPixels > 1000);
     for (index = 0;
          index < (size_t)WIDTH * HEIGHT;
@@ -260,6 +264,73 @@ static int test_real_font(const char *game_root)
     }
     CHECK(changed > 0);
     CHECK(changed == metrics.blendedPixels);
+    CHECK(jpb_PortableTextPrepareControlGlyphs(
+              exit_prompt,
+              sizeof(exit_prompt) / sizeof(exit_prompt[0]),
+              0,
+              100,
+              100,
+              2.25f,
+              0,
+              0,
+              1.0f,
+              &origin_x,
+              control_glyphs,
+              2) == 1);
+    CHECK(origin_x == 100);
+    CHECK(control_glyphs[0].iconIndex == 9);
+    CHECK(control_glyphs[0].alpha == 255);
+    CHECK(control_glyphs[0].x > 100);
+    CHECK(control_glyphs[0].y > 100);
+    CHECK(wcscmp(exit_prompt, L"      Exit") == 0);
+    CHECK(jpb_PortableTextPrepareControlGlyphs(
+              select_prompt,
+              sizeof(select_prompt) / sizeof(select_prompt[0]),
+              1,
+              1820,
+              100,
+              2.25f,
+              0,
+              0,
+              1.0f,
+              &origin_x,
+              control_glyphs,
+              2) == 1);
+    CHECK(origin_x < 1820);
+    CHECK(control_glyphs[0].iconIndex == 2);
+    CHECK(wcscmp(select_prompt, L"      Select") == 0);
+    memset(pixels, 0, (size_t)WIDTH * HEIGHT * sizeof(*pixels));
+    CHECK(jpb_PortableTextDraw(
+              exit_prompt,
+              15,
+              255,
+              0,
+              100,
+              100,
+              2.25f,
+              0,
+              0,
+              1.0f,
+              0,
+              0,
+              0,
+              0,
+              0,
+              &framebuffer,
+              &metrics) == 1);
+    {
+        int first_visible_x = WIDTH;
+
+        for (index = 0;
+             index < (size_t)WIDTH * HEIGHT;
+             ++index) {
+            if (pixels[index] != 0 &&
+                first_visible_x > (int)(index % WIDTH)) {
+                first_visible_x = (int)(index % WIDTH);
+            }
+        }
+        CHECK(first_visible_x >= 150);
+    }
     free(pixels);
     jpb_PortableTextShutdown();
     return 0;

@@ -2,6 +2,7 @@
 #define JPB_MENU_H
 
 #include "jpb/fmath.h"
+#include "jpb/game.h"
 #include "jpb/whook.h"
 
 #include <stddef.h>
@@ -44,6 +45,12 @@ typedef struct MDEF_MOD {
     uint16_t text;
     uint8_t reserved26[6];
 } MDEF_MOD;
+
+/* Exact matched-PC PDB type 0x6F83. */
+typedef struct RESOLUTION {
+    int32_t width;
+    int32_t height;
+} RESOLUTION;
 
 /* Exact PDB type 0x6E17. */
 typedef struct MMVDEF {
@@ -125,17 +132,6 @@ typedef struct MENUVARS {
     int8_t autoLoad;
     int8_t movieSelect;
     uint32_t gluon;
-    int32_t levelSelectSelectorOffset;
-    uint16_t levelSelectReserved264;
-    int16_t levelSelectBoxTop;
-    uint16_t levelSelectBoxWidth;
-    uint16_t levelSelectBoxHeight;
-    uint8_t levelSelectBoxCountdown;
-    uint8_t levelSelectBoxOpen;
-    uint8_t levelSelectPreviewLevel;
-    uint8_t levelSelectReserved275;
-    int16_t levelSelectPreviewFade;
-    uint8_t levelSelectReserved278[6];
     uint8_t pSelect;
     uint8_t aibit;
     uint8_t controlFlags;
@@ -211,13 +207,10 @@ typedef struct MENUVARS {
 } MENUVARS;
 
 _Static_assert(
-    offsetof(MENUVARS, levelSelectSelectorOffset) == 0x104,
-    "MENUVARS level-select state offset must match matched-PC PDB");
-_Static_assert(
-    offsetof(MENUVARS, menuMode) == 0x126,
+    offsetof(MENUVARS, menuMode) == 0x10e,
     "MENUVARS menu stack offset must match matched-PC PDB");
 _Static_assert(
-    offsetof(MENUVARS, menuModeSP) == 0x150,
+    offsetof(MENUVARS, menuModeSP) == 0x138,
     "MENUVARS menu stack pointer offset must match matched-PC PDB");
 
 /* Exact PDB global, matched-PC RVA 0x10DEBC0. */
@@ -231,6 +224,7 @@ extern unsigned menuTexLoaded2;
 extern _Material *menuTextures[249];
 extern _Material *controlTextures[10];
 extern _Material *kbmTextures[10];
+extern float iconScaleOverride;
 extern _Material *ps4Textures[10];
 extern _Material *ps5Textures[10];
 extern _Material *switchTextures[10];
@@ -263,6 +257,9 @@ extern unsigned screenSaverCount;
 extern unsigned screenSaverFlag;
 extern unsigned saverAlpha;
 extern unsigned saverPads[2];
+extern float menuTextDepthOverride;
+/* Exact PDB global at matched-PC RVA 0x539590. */
+extern unsigned slider;
 extern unsigned char keyboardBufferIndex;
 extern unsigned char keyboardKeyPressed;
 extern unsigned char keyboardBuffer[10];
@@ -316,6 +313,7 @@ extern uint32_t audioMdef[44];
 extern uint32_t audioMdef_Game[44];
 extern uint32_t audioMusicMdef[46];
 extern uint32_t rusureQuitMenuMdef[25];
+extern uint32_t gameoverMdef[26];
 extern uint32_t startMdef[4];
 extern uint32_t exitSelectMdef[23];
 extern uint32_t exitSelectMdef2[19];
@@ -323,7 +321,13 @@ extern uint32_t exitSelectMdef2[19];
 extern uint32_t creditsMdef[2];
 /* Exact level-selector command stream at matched-PC RVA 0x4C6CF0. */
 extern uint32_t levelSelectMdef[15];
+extern uint8_t frameTopMover[24];
+extern uint8_t frameBottomMover[24];
+extern uint8_t frameLeftMover[24];
+extern uint8_t frameRightMover[24];
 extern uint32_t mmsizes[75];
+extern RESOLUTION g_resolutions[256];
+extern int32_t g_resolutionsCount;
 extern MDEF_MOD modVars[74];
 
 /* Exact initialized PDB globals owned by the two bespoke presentation paths. */
@@ -374,6 +378,8 @@ typedef struct JPBMenuPlatformHooks {
         unsigned movie, int flags, void *user_data);
     void (*cleanupLevelData)(void *user_data);
     void (*saveGameData)(void *user_data);
+    void (*saveSettingsData)(
+        const optionstruct *options, void *user_data);
     void (*setInMenu)(int in_menu, void *user_data);
     void (*scanLevel)(unsigned level, void *user_data);
     void (*soundCue)(const char *name, void *user_data);
@@ -388,6 +394,7 @@ typedef struct JPBMenuPlatformHooks {
     const char *(*controllerName)(
         unsigned player, void *user_data);
     void (*singleControllerFallback)(void *user_data);
+    void (*openUrl)(const char *url, void *user_data);
     void (*requestExit)(void *user_data);
 } JPBMenuPlatformHooks;
 
@@ -419,6 +426,7 @@ void menu_ClearScreenSaver(void);
 void menuConceptMenu(void);
 void menu_drawCredits(void);
 void menu_initCredits(void);
+void menu_initNewMenu(void);
 int menu_NOLOAD(void);
 unsigned menu_checkSoftReset(unsigned unused);
 void menu_checkTitleReload(void);
@@ -431,9 +439,24 @@ void menu_mainExitMenu(void);
 void menu_mainInitMenu(unsigned mode);
 void menu_mainLoop(void);
 void menu_winLoadTextures(void);
+void drawControlsIcon(void);
 int getControllerTextures(int player, _Material **materialHandle);
+void newDrawControllerIcon(
+    int icon,
+    float control_icon_scale,
+    int x,
+    int y,
+    int alpha,
+    int player);
 void runControlsMenu(void);
 void menu_mainMenu(uint32_t *mdef);
+void menu_slideco(
+    float width,
+    float height,
+    int x,
+    int y,
+    float current,
+    float maximum);
 void newMenu_DrawArrows(
     uint32_t pad,
     int left_x,
@@ -448,6 +471,7 @@ void menu_menuMusic(unsigned track, unsigned loop);
 unsigned menu_handleMenuTriggers(int destination);
 void menu_levelSelect(void);
 void menu_drawLevelSelectScreen(unsigned interactive);
+void menu_drawReconnect(void);
 void menu_initLevelSelectScreen(void);
 void menu_levelSelectMenu(uint32_t *mdef);
 void menu_restartLevel(void);
@@ -520,13 +544,13 @@ _Static_assert(sizeof(MMVDEF) == 48, "MMVDEF PDB size changed");
 _Static_assert(offsetof(MENUVARS, titleDispEnable) == 168, "MENUVARS title prefix changed");
 _Static_assert(offsetof(MENUVARS, subplayers) == 182, "MENUVARS character selection changed");
 _Static_assert(offsetof(MENUVARS, loadSaveMode) == 189, "MENUVARS load/save mode changed");
-_Static_assert(offsetof(MENUVARS, menuMode) == 294, "MENUVARS menu stack changed");
-_Static_assert(offsetof(MENUVARS, menuModeSP) == 336, "MENUVARS stack pointer changed");
-_Static_assert(offsetof(MENUVARS, mmvTriggers) == 714, "MENUVARS triggers changed");
-_Static_assert(offsetof(MENUVARS, mmv) == 424, "MENUVARS MMV controls changed");
-_Static_assert(offsetof(MENUVARS, frKeyBuff) == 722, "MENUVARS key buffer changed");
-_Static_assert(offsetof(MENUVARS, pointSeek) == 812, "MENUVARS point seek changed");
-_Static_assert(sizeof(MENUVARS) == 1008, "MENUVARS PDB size changed");
+_Static_assert(offsetof(MENUVARS, menuMode) == 270, "MENUVARS menu stack changed");
+_Static_assert(offsetof(MENUVARS, menuModeSP) == 312, "MENUVARS stack pointer changed");
+_Static_assert(offsetof(MENUVARS, mmvTriggers) == 690, "MENUVARS triggers changed");
+_Static_assert(offsetof(MENUVARS, mmv) == 400, "MENUVARS MMV controls changed");
+_Static_assert(offsetof(MENUVARS, frKeyBuff) == 698, "MENUVARS key buffer changed");
+_Static_assert(offsetof(MENUVARS, pointSeek) == 788, "MENUVARS point seek changed");
+_Static_assert(sizeof(MENUVARS) == 984, "MENUVARS PDB size changed");
 #endif
 
 #ifdef __cplusplus

@@ -101,6 +101,18 @@ int SDLTextWriteScaleMM(
     wchar_t *format,
     ...);
 
+int SDLTextWriteScaleMMDepth(
+    int tint,
+    int alpha,
+    int mode,
+    int x,
+    int y,
+    float scale,
+    int font_style,
+    float depth,
+    wchar_t *format,
+    ...);
+
 int psxDrawTexture(
     unsigned texture,
     float x,

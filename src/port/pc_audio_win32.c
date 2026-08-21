@@ -357,6 +357,13 @@ static int pc_audio_level_bank(
 {
     const char *name;
 
+    if (level_index == 25) {
+        if (bank == NULL || capacity == 0) {
+            return 0;
+        }
+        bank[0] = '\0';
+        return 1;
+    }
     if (level_index == 15) {
         name = "corus1";
     } else if (level_index >= 16 && level_index < 23) {
@@ -1602,7 +1609,8 @@ JPBPCAudio *jpb_PCAudioCreate(
             return NULL;
         }
     }
-    if (sound_LoadBank(audio->levelBank, 3) < 0) {
+    if (audio->levelBank[0] != '\0' &&
+        sound_LoadBank(audio->levelBank, 3) < 0) {
         jpb_PCAudioDestroy(audio);
         return NULL;
     }

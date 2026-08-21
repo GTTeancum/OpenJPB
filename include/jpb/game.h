@@ -188,6 +188,7 @@ typedef struct gamestruct {
 } gamestruct;
 
 extern gamestruct GameStruct;
+extern int8_t aLevelXATracks[26];
 extern optionstruct OptionStruct;
 extern optionstruct defaultOptionStruct;
 extern int32_t gaButtonMap[5][6];
@@ -278,6 +279,9 @@ void game_enableCombo(uint32_t jedi, uint32_t combo);
 void game_initCombos(void);
 void game_initEnergy(void);
 void game_initPlayerStartCombos(uint32_t player);
+void game_ProcessStatus(void);
+void game_ResetGameSystems(void);
+void game_runStage(void);
 void newGameGameInit(void);
 void game_setAudioOptions(void);
 void game_setControlsOptions(int player);

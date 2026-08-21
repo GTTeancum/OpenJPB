@@ -94,7 +94,7 @@ if(WIN32)
         src/port/pc_present_d3d11.c
         src/port/pc_xinput_win32.c)
     target_link_libraries(
-        jpb_pc_game PRIVATE jpb_reconstructed user32 gdi32 winmm
+        jpb_pc_game PRIVATE jpb_reconstructed user32 gdi32 winmm shell32
         ole32 windowscodecs d3d11 dxgi dxguid d3dcompiler)
     if(JPB_UFBX_SOURCE_DIR)
         target_sources(
@@ -701,7 +701,7 @@ if(BUILD_TESTING)
                         PROPERTIES
                             LABELS "real_assets;pc_game;menu;versus"
                             PASS_REGULAR_EXPRESSION
-                                "second_player=\\(ready=1,triangles=[1-9][0-9]*,pixels=[1-9][0-9]*\\).*camera=\\(dolly=0,[^\r\n]*authored=0,[^\r\n]*collision=0\\.4170/3")
+                                "second_player=\\(ready=1,triangles=[1-9][0-9]*,pixels=[1-9][0-9]*\\).*camera=\\(dolly=45,[^\r\n]*authored=3,[^\r\n]*collision=1\\.0000/0,[^\r\n]*camera_state=\\(type=0")
                 endif()
                 add_test(
                     NAME jpb_pc_authored_intro_camera
@@ -823,6 +823,44 @@ if(BUILD_TESTING)
                             PASS_REGULAR_EXPRESSION
                                 "camera=\\(dolly=2,[^\r\n]*authored=1,[^\r\n]*collision=1\\.0000/0.*classes=5/5/"
                             TIMEOUT 120)
+                add_test(
+                    NAME jpb_pc_fed_powerup_contact
+                    COMMAND
+                        jpb_pc_game
+                        "${JPB_PC_GAME_MESH}"
+                        --cad "${JPB_PC_GAME_CAD}"
+                        --bmd "${JPB_PC_GAME_BMD}"
+                        --cmb "${JPB_PC_GAME_CMB}"
+                        --enemy-cad "${JPB_PC_GAME_ENEMY_CAD}"
+                        --enemy-bmd "${JPB_PC_GAME_ENEMY_BMD}"
+                        --headless --mute --frames 30
+                        --spawn-position 8289 4096 -6585)
+                set_tests_properties(
+                    jpb_pc_fed_powerup_contact
+                    PROPERTIES
+                        LABELS "real_assets;pc_game;fed;powerups"
+                        PASS_REGULAR_EXPRESSION
+                            "powerups=55/[1-9][0-9]*/1/models:0/0.*text_draw\\[0\\]=\\(text=\"0000050\".*draw3d_text\\[0\\]=\\(text=\"HEAL\""
+                        TIMEOUT 120)
+                add_test(
+                    NAME jpb_pc_fed_death_restart
+                    COMMAND
+                        jpb_pc_game
+                        "${JPB_PC_GAME_MESH}"
+                        --cad "${JPB_PC_GAME_CAD}"
+                        --bmd "${JPB_PC_GAME_BMD}"
+                        --cmb "${JPB_PC_GAME_CMB}"
+                        --enemy-cad "${JPB_PC_GAME_ENEMY_CAD}"
+                        --enemy-bmd "${JPB_PC_GAME_ENEMY_BMD}"
+                        --headless --mute --control-harness
+                        --validate-death-restart --frames 3)
+                set_tests_properties(
+                    jpb_pc_fed_death_restart
+                    PROPERTIES
+                        LABELS "real_assets;pc_game;fed;death;restart"
+                        PASS_REGULAR_EXPRESSION
+                            "death_restart=\\(observed=1"
+                        TIMEOUT 120)
                 endif()
                 add_test(
                     NAME jpb_pc_authored_camera_director
@@ -943,7 +981,7 @@ if(BUILD_TESTING)
                     PROPERTIES
                         LABELS "real_assets;pc_game;camera"
                         PASS_REGULAR_EXPRESSION
-                            "camera=\\(dolly=56,flags=0000111a,initial=56,unique=1,transitions=0,authored=1,collision=1\\.0000/0,.*\\) camera_world=\\(22388,3616,-14754\\).*camera_state=\\(type=1,view=0x00001901,angles=140,2048->140,2048")
+                            "camera=\\(dolly=56,flags=0000111a,initial=56,unique=1,transitions=0,authored=1,collision=1\\.0000/0,.*\\) camera_world=\\(22388,3616,-14754\\).*camera_state=\\(type=1,view=0x00000901,angles=140,2048->140,2048")
                 add_test(
                     NAME jpb_pc_authored_camera_follow
                     COMMAND
@@ -1026,7 +1064,7 @@ if(BUILD_TESTING)
                     PROPERTIES
                         LABELS "real_assets;pc_game;menu;presentation"
                         PASS_REGULAR_EXPRESSION
-                            "title_menu=\\(14,music=1\\).*text=4/4/0/.*screen=19/0/[1-9][0-9]* menu_textures=209")
+                            "title_menu=\\(14,music=1\\).*text=6/6/0/.*screen=21/0/[1-9][0-9]* menu_textures=209")
                 add_test(
                     NAME jpb_pc_title_character_select_keyboard_ignores_xinput
                     COMMAND
@@ -1088,7 +1126,7 @@ if(BUILD_TESTING)
                     PROPERTIES
                         LABELS "real_assets;pc_game;menu;presentation;controls"
                         PASS_REGULAR_EXPRESSION
-                            "title_menu=\\(14,music=1\\).*text=6/6/0/.*screen=21/0/[1-9][0-9]* menu_textures=209")
+                            "title_menu=\\(14,music=1\\).*text=8/8/0/.*screen=23/0/[1-9][0-9]* menu_textures=209")
                 add_test(
                     NAME jpb_pc_title_character_select_two_player
                     COMMAND
@@ -1108,7 +1146,7 @@ if(BUILD_TESTING)
                     PROPERTIES
                         LABELS "real_assets;pc_game;menu;presentation"
                         PASS_REGULAR_EXPRESSION
-                            "title_menu=\\(14,music=1\\).*text=8/8/0/.*screen=22/0/[1-9][0-9]* menu_textures=209")
+                            "title_menu=\\(14,music=1\\).*text=10/10/0/.*screen=24/0/[1-9][0-9]* menu_textures=209")
                 add_test(
                     NAME jpb_pc_title_character_select_two_player_completed
                     COMMAND
@@ -1128,7 +1166,7 @@ if(BUILD_TESTING)
                     PROPERTIES
                         LABELS "real_assets;pc_game;menu;presentation;controls"
                         PASS_REGULAR_EXPRESSION
-                            "title_menu=\\(14,music=1\\).*text=12/12/0/.*screen=26/0/[1-9][0-9]* menu_textures=209")
+                            "title_menu=\\(14,music=1\\).*text=14/14/0/.*screen=28/0/[1-9][0-9]* menu_textures=209")
                 add_test(
                     NAME jpb_pc_title_new_game
                     COMMAND
@@ -1150,7 +1188,26 @@ if(BUILD_TESTING)
                     PROPERTIES
                         LABELS "real_assets;pc_game;menu;presentation"
                         PASS_REGULAR_EXPRESSION
-                            "title_menu=\\(144,music=1\\).*text=5/5/0/")
+                            "title_menu=\\(3,music=1\\).*text=4/4/0/")
+                add_test(
+                    NAME jpb_pc_title_space_select
+                    COMMAND
+                        jpb_pc_game
+                        "${JPB_PC_GAME_MESH}"
+                        --cad
+                        "${JPB_PC_GAME_CAD}"
+                        --bmd
+                        "${JPB_PC_GAME_BMD}"
+                        --headless --mute --title
+                        --headless-keyboard-phase space 1
+                        --headless-keyboard-phase none 1
+                        --frames 3)
+                set_tests_properties(
+                    jpb_pc_title_space_select
+                    PROPERTIES
+                        LABELS "real_assets;pc_game;menu;presentation;controls;keyboard"
+                        PASS_REGULAR_EXPRESSION
+                            "title_menu=\\(3,music=1\\).*text=4/4/0/")
                 add_test(
                     NAME jpb_pc_title_new_game_flow
                     COMMAND
@@ -1168,15 +1225,13 @@ if(BUILD_TESTING)
                         --headless-phase none 1
                         --headless-phase select 1
                         --headless-phase none 1
-                        --headless-phase select 1
-                        --headless-phase none 1
-                        --frames 9)
+                        --frames 8)
                 set_tests_properties(
                     jpb_pc_title_new_game_flow
                     PROPERTIES
                         LABELS "real_assets;pc_game;menu;presentation"
                         PASS_REGULAR_EXPRESSION
-                            "title_menu=\\(4,music=1\\).*text=4/4/0/")
+                            "title_menu=\\(14,music=1\\).*character=\\(state=24,select=0,players=1,models=0/1")
                 add_test(
                     NAME jpb_pc_title_continue_game_flow
                     COMMAND
@@ -1333,6 +1388,71 @@ if(BUILD_TESTING)
                         PASS_REGULAR_EXPRESSION
                             "title_menu=\\(149,music=1\\).*video=\\(2,0\\)")
                 add_test(
+                    NAME jpb_pc_title_video_default_1080
+                    COMMAND
+                        jpb_pc_game
+                        "${JPB_PC_GAME_MESH}"
+                        --cad "${JPB_PC_GAME_CAD}"
+                        --bmd "${JPB_PC_GAME_BMD}"
+                        --headless
+                        --title
+                        --framebuffer-size 1920 1080
+                        --headless-phase down 1
+                        --headless-phase none 16
+                        --headless-phase down 1
+                        --headless-phase none 16
+                        --headless-phase down 1
+                        --headless-phase none 16
+                        --headless-phase select 1
+                        --headless-phase none 1
+                        --headless-phase select 1
+                        --headless-phase none 1
+                        --frames 58)
+                set_tests_properties(
+                    jpb_pc_title_video_default_1080
+                    PROPERTIES
+                        LABELS "real_assets;pc_game;menu;presentation"
+                        PASS_REGULAR_EXPRESSION
+                            "menu_state=\\(active=1,mode=149.*framebuffer=1920x1080.*text_draw\\[1\\]=\\(text=\"Resolution: 1920x1080\"")
+                add_test(
+                    NAME jpb_pc_title_video_apply
+                    COMMAND
+                        jpb_pc_game
+                        "${JPB_PC_GAME_MESH}"
+                        --cad "${JPB_PC_GAME_CAD}"
+                        --bmd "${JPB_PC_GAME_BMD}"
+                        --hidden-window
+                        --control-harness
+                        --mute
+                        --title
+                        --headless-phase select 1
+                        --headless-phase none 3
+                        --headless-phase down 1
+                        --headless-phase none 16
+                        --headless-phase down 1
+                        --headless-phase none 16
+                        --headless-phase down 1
+                        --headless-phase none 16
+                        --headless-phase select 1
+                        --headless-phase none 1
+                        --headless-phase select 1
+                        --headless-phase none 1
+                        --headless-phase right 1
+                        --headless-phase none 1
+                        --headless-phase down 1
+                        --headless-phase none 16
+                        --headless-phase down 1
+                        --headless-phase none 16
+                        --headless-phase select 1
+                        --headless-phase none 5
+                        --frames 104)
+                set_tests_properties(
+                    jpb_pc_title_video_apply
+                    PROPERTIES
+                        LABELS "real_assets;pc_game;menu;presentation"
+                        PASS_REGULAR_EXPRESSION
+                            "menu_state=\\(active=1,mode=149.*framebuffer=640x480.*text_draw\\[1\\]=\\(text=\"Resolution: 640x480\"")
+                add_test(
                     NAME jpb_pc_title_movie_resolution
                     COMMAND
                         jpb_pc_game
@@ -1347,7 +1467,7 @@ if(BUILD_TESTING)
                     PROPERTIES
                         LABELS "real_assets;pc_game;menu;presentation;movie"
                         PASS_REGULAR_EXPRESSION
-                            "movie_state=\\(requests=1,resolved=1,launched=1,decoded=[1-9][0-9]*,presented=[1-9][0-9]*,audio_bytes=[1-9][0-9]*,audio_samples=[1-9][0-9]*,audio_chunks=[1-9][0-9]*,failures=0,last=7,flags=0,path=.*End1080Flipped_converted\\.ogg,error=none\\)")
+                            "movie_state=\\(requests=1,resolved=1,launched=1,decoded=[1-9][0-9]*,presented=[1-9][0-9]*,audio_bytes=[1-9][0-9]*,audio_samples=[1-9][0-9]*,audio_chunks=[1-9][0-9]*.*failures=0,last=7,flags=0,path=.*End1080Flipped_converted\\.ogg,error=none\\)")
                 add_test(
                     NAME jpb_pc_title_language
                     COMMAND
@@ -1499,7 +1619,7 @@ if(BUILD_TESTING)
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
                         --cmb "${JPB_PC_GAME_CMB}"
-                        --headless --mute --front-end-flow
+                        --headless --mute --front-end-flow --control-harness
                         --camera-diagnostics
                         --validate-camera-follow
                         --input-phase select 1
@@ -1531,7 +1651,7 @@ if(BUILD_TESTING)
                         --cmb "${JPB_PC_GAME_CMB}"
                         --enemy-cad "${JPB_PC_GAME_ENEMY_CAD}"
                         --enemy-bmd "${JPB_PC_GAME_ENEMY_BMD}"
-                        --headless --mute --front-end-flow
+                        --headless --mute --front-end-flow --control-harness
                         --camera-diagnostics
                         --input-phase select 1
                         --input-phase none 1
@@ -1551,7 +1671,7 @@ if(BUILD_TESTING)
                     PROPERTIES
                         LABELS "real_assets;pc_game;menu;controls;flow;camera;enemy_ai"
                         PASS_REGULAR_EXPRESSION
-                            "camera_director=\\(override=144,current=144,enemy=0,mode=2,node=7,opcode=0x0200.*run_origin=\\(player=22528\\.0/3328\\.0/-13056\\.0/facing:2048\\).*camera=\\(dolly=144,authored=3,collision=1\\.0000/0\\).*player_flags=00000002"
+                            "camera_director=\\(override=144,current=144,enemy=0,mode=2,node=7,opcode=0x0200.*run_origin=\\(player=22528\\.0/3328\\.0/-13056\\.0/facing:2048\\).*spawn_view=\\(.*dolly=144,authored=3,collision=1\\.000\\).*control_context=\\(.*p1_flags=00000002"
                         TIMEOUT 120)
                 add_test(
                     NAME jpb_pc_title_keyboard_gameplay_control_handoff
@@ -1805,7 +1925,7 @@ if(BUILD_TESTING)
                             --validate-player-saber
                             --enemy-cad "${JPB_PC_GAME_ENEMY_CAD}"
                             --enemy-bmd "${JPB_PC_GAME_ENEMY_BMD}"
-                            --headless --mute --front-end-flow
+                            --headless --mute --front-end-flow --control-harness
                             --headless-phase select 1
                             --headless-phase none 1
                             --headless-phase select 1
@@ -2296,7 +2416,7 @@ if(BUILD_TESTING)
                             "${JPB_PC_GAME_MESH}"
                             --cad "${JPB_PC_GAME_CAD}"
                             --bmd "${JPB_PC_GAME_BMD}"
-                            --headless --mute --front-end-flow
+                            --headless --mute --front-end-flow --control-harness
                             --headless-phase-p1 down 1
                             --headless-phase none 16
                             --headless-phase-p1 down 1
@@ -2332,6 +2452,8 @@ if(BUILD_TESTING)
                             --validate-audio-handoff
                             --validate-player-two-sound vjdie
                             --front-end-flow
+                            --input-phase-p1 select 1
+                            --input-phase none 3
                             --input-phase-p1 down 1
                             --input-phase none 16
                             --input-phase-p1 down 1
@@ -2342,7 +2464,7 @@ if(BUILD_TESTING)
                             --input-phase none 3
                             --input-phase-p1 select 1
                             --input-phase none 18
-                            --frames 76)
+                            --frames 80)
                     set_tests_properties(
                         jpb_pc_presentation_two_player_audio_handoff
                         PROPERTIES
@@ -2352,13 +2474,13 @@ if(BUILD_TESTING)
                             PASS_REGULAR_EXPRESSION
                                 "player_two_audio=\\(requested=vjdie,resolved=1,path=.*qui_gon.vjdie\\.wav\\)")
                     add_test(
-                        NAME jpb_pc_xinput_two_player_versus_handoff
+                    NAME jpb_pc_xinput_two_player_versus_handoff
                         COMMAND
                             jpb_pc_game
                             "${JPB_PC_GAME_MESH}"
                             --cad "${JPB_PC_GAME_CAD}"
                             --bmd "${JPB_PC_GAME_BMD}"
-                            --headless --mute --front-end-flow
+                            --headless --mute --front-end-flow --control-harness
                             --headless-xinput-phase-pair down none 1
                             --headless-xinput-phase-pair none none 16
                             --headless-xinput-phase-pair down none 1
@@ -2385,14 +2507,14 @@ if(BUILD_TESTING)
                                 "game_state=\\(level=25,mode=2,players=2,versus=1\\).*second_player=\\(ready=1,triangles=[1-9][0-9]*,pixels=[1-9][0-9]*\\).*control_sources=\\(p1=xinput,p2=xinput,last=xinput\\).*control_edges=\\(p1=.*pressed_bits:00000010.*p2=.*pressed_bits:00000010.*frames=110 mode=game-camera"
                             TIMEOUT 120)
                     add_test(
-                        NAME jpb_pc_xinput_two_player_force_handoff
+                    NAME jpb_pc_xinput_two_player_force_handoff
                         COMMAND
                             jpb_pc_game
                             "${JPB_PC_GAME_MESH}"
                             --cad "${JPB_PC_GAME_CAD}"
                             --bmd "${JPB_PC_GAME_BMD}"
                             --cmb "${JPB_PC_GAME_CMB}"
-                            --headless --mute --front-end-flow
+                            --headless --mute --front-end-flow --control-harness
                             --headless-maximum-progression
                             --headless-xinput-phase-pair down none 1
                             --headless-xinput-phase-pair none none 16
@@ -2485,7 +2607,7 @@ if(BUILD_TESTING)
                     PROPERTIES
                         LABELS "real_assets;pc_game;menu;presentation"
                         PASS_REGULAR_EXPRESSION
-                            "title_menu=\\(27,music=1\\).*text=2/2/0/.*screen=3/")
+                            "title_menu=\\(27,music=1\\).*text=2/2/0/.*screen=4/")
                 if(EXISTS "${JPB_PC_THEED_MESH}")
                     add_test(
                         NAME jpb_pc_theed_water

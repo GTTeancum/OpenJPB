@@ -25,6 +25,7 @@
 #include "jpb/input.h"
 #include "jpb/jedi.h"
 #include "jpb/pwrup.h"
+#include "jpb/prim.h"
 #include "jpb/resources.h"
 #include "jpb/sound.h"
 #include "jpb/sprite.h"
@@ -79,6 +80,7 @@ _Material *switchProTextures[10];
 _Material *joyconTextures[10];
 _Material *xsxTextures[10];
 _Material *kbmForceTextures[4];
+float iconScaleOverride = -1.0f;
 unsigned char padShockable;
 unsigned char modisorder2[23] = {
     0, 3, 8, 6, 7, 5, 15, 17, 18, 21, 26, 30,
@@ -94,6 +96,7 @@ unsigned screenSaverCount;
 unsigned screenSaverFlag;
 unsigned saverAlpha;
 unsigned saverPads[2];
+unsigned slider;
 unsigned char keyboardBufferIndex;
 unsigned char keyboardKeyPressed;
 unsigned char keyboardBuffer[10];
@@ -444,17 +447,6 @@ void clearMenuStuff(void)
  * PDB type: void (<no type>)
  * Source: W:\SWJediPowerBattles\work\menu.c
  */
-static const wchar_t *menu_skipPromptGlyph(const wchar_t *text)
-{
-    if (text == NULL) {
-        return L"";
-    }
-    while (*text != L'\0' && (*text > 0x7f || *text == L' ')) {
-        ++text;
-    }
-    return text;
-}
-
 void drawControlsIcon(void)
 {
     float exit_x = 100.0f;
@@ -471,42 +463,6 @@ void drawControlsIcon(void)
     setPivotPositionMM(&select_x, &select_y, 8);
     exit_text = lastUsedInputType == 0 ? 476u : 239u;
     select_text = lastUsedInputType == 0 ? 475u : 241u;
-    if (lastUsedInputType == 0) {
-        _Material *textures[10] = {0};
-        SCREENRECT destination;
-        CVECTOR white = {255, 255, 255, 255};
-        int icon_size = (int)(64.0f * scaleAdjustmentMM);
-        int gap = (int)(20.0f * scaleAdjustmentMM);
-        int text_x;
-
-        (void)getControllerTextures(0, textures);
-        if (textures[9] != NULL && icon_size > 0) {
-            destination.left = (int32_t)exit_x;
-            destination.top = (int32_t)exit_y;
-            destination.right = destination.left + icon_size;
-            destination.bottom = destination.top + icon_size;
-            _DrawTexture(textures[9], destination, NULL, white, 0.0f);
-        }
-        text_x = (int32_t)exit_x + icon_size + gap;
-        (void)SDLTextWriteScaleMM(
-            15, 255, 0, text_x, (int)exit_y,
-            2.25f, 0, L"%ls",
-            menu_skipPromptGlyph(allText[exit_text]));
-
-        if (textures[2] != NULL && icon_size > 0) {
-            destination.left = (int32_t)(
-                select_x - 210.0f * scaleAdjustmentMM);
-            destination.top = (int32_t)select_y;
-            destination.right = destination.left + icon_size;
-            destination.bottom = destination.top + icon_size;
-            _DrawTexture(textures[2], destination, NULL, white, 0.0f);
-        }
-        (void)SDLTextWriteScaleMM(
-            15, 255, 1, (int)select_x, (int)select_y,
-            2.25f, 0, L"%ls",
-            menu_skipPromptGlyph(allText[select_text]));
-        return;
-    }
     (void)SDLTextWriteScaleMM(
         15, 255, 0, (int)exit_x, (int)exit_y,
         2.25f, 0, L"%ls", allText[exit_text]);
@@ -515,20 +471,14 @@ void drawControlsIcon(void)
         2.25f, 0, L"%ls", allText[select_text]);
 }
 
-static void menu_drawLevelSelectControlsIcon(void)
+static void menu_drawLevelSelectPromptText(void)
 {
     float exit_text_x;
     float select_text_x;
     float exit_text_y = 246.0f;
     float select_text_y = 193.0f;
-    float exit_glyph_x = 389.0f;
-    float exit_glyph_y = 21.0f;
-    float select_glyph_x = 469.0f;
-    float select_glyph_y = 61.0f;
     unsigned exit_text;
     unsigned select_text;
-    _Material *textures[10] = {0};
-    int use_texture_prompts = 0;
 
     if (OptionStruct.Language == 0 || OptionStruct.Language == 6) {
         exit_text_x = 607.5f;
@@ -541,61 +491,22 @@ static void menu_drawLevelSelectControlsIcon(void)
     setPivotPositionMM(&select_text_x, &select_text_y, 7);
     exit_text = lastUsedInputType == 0 ? 476u : 239u;
     select_text = lastUsedInputType == 0 ? 475u : 241u;
-    (void)getControllerTextures(0, textures);
-    use_texture_prompts = textures[9] != NULL && textures[2] != NULL;
-    if (!use_texture_prompts &&
-        kbmTextures[9] != NULL && kbmTextures[2] != NULL) {
-        memcpy(textures, kbmTextures, sizeof(kbmTextures));
-        exit_text = 476u;
-        select_text = 475u;
-        use_texture_prompts = 1;
-    }
-    if (use_texture_prompts) {
-        SCREENRECT destination;
-        CVECTOR white = {255, 255, 255, 255};
-        int icon_size = (int)(32.0f * scaleAdjustmentMM);
-        int gap = (int)(10.0f * scaleAdjustmentMM);
+    (void)SDLTextWriteScaleMM(
+        15, 255, 0, (int)exit_text_x, (int)exit_text_y,
+        1.75f, 0, L"%ls", allText[exit_text]);
+    (void)SDLTextWriteScaleMM(
+        15, 255, 0, (int)select_text_x, (int)select_text_y,
+        1.75f, 0, L"%ls", allText[select_text]);
+}
 
-        if (textures[9] != NULL && icon_size > 0) {
-            destination.left = (int32_t)exit_text_x;
-            destination.top = (int32_t)exit_text_y;
-            destination.right = destination.left + icon_size;
-            destination.bottom = destination.top + icon_size;
-            _DrawTexture(textures[9], destination, NULL, white, 0.0f);
-        }
-        (void)SDLTextWriteScaleMM(
-            15, 255, 0,
-            (int)exit_text_x + icon_size + gap,
-            (int)exit_text_y,
-            1.75f, 0, L"%ls",
-            menu_skipPromptGlyph(allText[exit_text]));
-        if (textures[2] != NULL && icon_size > 0) {
-            destination.left = (int32_t)select_text_x;
-            destination.top = (int32_t)select_text_y;
-            destination.right = destination.left + icon_size;
-            destination.bottom = destination.top + icon_size;
-            _DrawTexture(textures[2], destination, NULL, white, 0.0f);
-        }
-        (void)SDLTextWriteScaleMM(
-            15, 255, 0,
-            (int)select_text_x + icon_size + gap,
-            (int)select_text_y,
-            1.75f, 0, L"%ls",
-            menu_skipPromptGlyph(allText[select_text]));
-    } else {
-        (void)SDLTextWriteScaleMM(
-            15, 255, 0, (int)exit_text_x, (int)exit_text_y,
-            1.75f, 0, L"%ls", allText[exit_text]);
-        (void)SDLTextWriteScaleMM(
-            15, 255, 0, (int)select_text_x, (int)select_text_y,
-            1.75f, 0, L"%ls", allText[select_text]);
-        (void)menu_drawLevelSelectPsxTexture(
-            0x113, exit_glyph_x, exit_glyph_y,
-            scaleAdjustmentMM * 188.0f, 0.0f, 0x8000u, 0x0b, 0.8f);
-        (void)menu_drawLevelSelectPsxTexture(
-            0x114, select_glyph_x, select_glyph_y,
-            scaleAdjustmentMM * 117.0f, 0.0f, 0x8000u, 0x0b, 0.8f);
-    }
+static void menu_drawLevelSelectPromptGlyphs(void)
+{
+    (void)menu_drawLevelSelectPsxTexture(
+        0x113, 389.0f, 21.0f,
+        scaleAdjustmentMM * 188.0f, 0.0f, 0x8000u, 0x0b, 0.8f);
+    (void)menu_drawLevelSelectPsxTexture(
+        0x114, 469.0f, 61.0f,
+        scaleAdjustmentMM * 117.0f, 0.0f, 0x8000u, 0x0b, 0.8f);
 }
 
 /* 0xBF770, 350 bytes, global, 4 named locals
@@ -739,15 +650,10 @@ void menuConceptMenu(void)
     float content_height;
 
     if (p1Disconnected != 0) {
-        const wchar_t *message =
-            allText[494] != NULL ? allText[494] : L"Controller disconnected";
-
-        x = 0.0f;
-        y = 0.0f;
-        setPivotPositionMM(&x, &y, 4);
-        (void)SDLTextWriteScaleMM(
-            15, 255, 2, (int)x, (int)y,
-            1.75f, 0, L"%ls", message);
+        if (GameStruct.gameMode != 6 && GameStruct.gameMode != 7) {
+            winDrawBackground(5);
+        }
+        menu_drawReconnect();
         return;
     }
 
@@ -823,29 +729,26 @@ void menuConceptMenu(void)
     (void)SDLTextWriteScaleMM(
         9, 255, 0, (int)x, (int)y,
         2.25f, 0, L"%ls",
-        allText[222] != NULL ? allText[222] : L"Exit");
+        allText[lastUsedInputType == 0 ? 476u : 239u]);
 
     menuVars.titleDispEnable = 0;
     menuVars.titleArt = 0;
     content_width = (float)OptionStruct.ScreenWidth;
     content_height = (float)OptionStruct.ScreenHeight;
-    if (content_height > 0.0f &&
-        1.7777778f <= content_width / content_height) {
+    if (1.7777778f <= content_width / content_height) {
         float fitted_width = content_height * 1.7777778f;
 
         destination.left = (int32_t)((content_width - fitted_width) * 0.5f);
         destination.top = 0;
         destination.right = (int32_t)(destination.left + fitted_width);
         destination.bottom = (int32_t)content_height;
-    } else if (content_width > 0.0f) {
+    } else {
         float fitted_height = content_width / 1.7777778f;
 
         destination.left = 0;
         destination.top = (int32_t)((content_height - fitted_height) * 0.5f);
         destination.right = (int32_t)content_width;
         destination.bottom = (int32_t)(destination.top + fitted_height);
-    } else {
-        memset(&destination, 0, sizeof(destination));
     }
     _DrawTexture(
         menuTextures[menuVars.scoreScore + 120u],
@@ -1216,6 +1119,10 @@ void menu_drawCredits(void)
     float multiplier;
     float base;
     float line_spacing;
+    float clip_left = 18.75f;
+    float clip_top = 22.5f;
+    float clip_right = 18.75f;
+    float clip_bottom = 22.5f;
     unsigned shown = 0;
     unsigned loop1;
     float exit_x;
@@ -1225,9 +1132,14 @@ void menu_drawCredits(void)
         skipCreditForFrame = 0;
         return;
     }
-    multiplier = OptionStruct.ScreenHeight != 0
-        ? (float)OptionStruct.ScreenHeight / 1080.0f
-        : 1.0f;
+    setPivotPositionMM(&clip_left, &clip_top, 0);
+    setPivotPositionMM(&clip_right, &clip_bottom, 8);
+    jpb_TextSetClipRect(
+        (int)clip_left,
+        (int)clip_top,
+        (int)clip_right,
+        (int)clip_bottom);
+    multiplier = (float)OptionStruct.ScreenHeight / 1080.0f;
     creditBarPosition +=
         (float)(int16_t)(menuVars.bar_speed >> 16) *
         120.0f * deltaTime * multiplier * 2.0f;
@@ -1279,7 +1191,8 @@ void menu_drawCredits(void)
     (void)SDLTextWriteScaleMM(
         15, 255, 0, (int)exit_x, (int)exit_y,
         2.25f, 0, L"%ls",
-        allText[222] != NULL ? allText[222] : L"Exit");
+        allText[lastUsedInputType == 0 ? 476u : 239u]);
+    jpb_TextClearClipRect();
 }
 
 /* 0xC3A60, 1678 bytes, global, 16 named locals
@@ -1306,9 +1219,6 @@ static void menu_drawLevelSelectTexture(
 {
     SCREENRECT destination;
 
-    if (texture_index >= 249 || menuTextures[texture_index] == NULL) {
-        return;
-    }
     setPivotPositionMM(&left, &top, left_top_pivot);
     setPivotPositionMM(&right, &bottom, right_bottom_pivot);
     destination.left = (int32_t)left;
@@ -1321,45 +1231,6 @@ static void menu_drawLevelSelectTexture(
         NULL,
         color,
         layer);
-}
-
-static void menu_drawLevelSelectBackgroundSlice(
-    float left,
-    float top,
-    float right,
-    float bottom,
-    CVECTOR color,
-    float layer)
-{
-    SCREENRECT destination;
-    SCREENRECT source;
-    float dst_left = left;
-    float dst_top = top;
-    float dst_right = right;
-    float dst_bottom = bottom;
-
-    if (menuTextures[164] == NULL || left >= right || top >= bottom) {
-        return;
-    }
-    setPivotPositionMM(&dst_left, &dst_top, 0);
-    setPivotPositionMM(&dst_right, &dst_bottom, 0);
-    destination.left = (int32_t)dst_left;
-    destination.top = (int32_t)dst_top;
-    destination.right = (int32_t)dst_right;
-    destination.bottom = (int32_t)dst_bottom;
-    source.left = (int32_t)left;
-    source.top = (int32_t)top;
-    source.right = (int32_t)right;
-    source.bottom = (int32_t)bottom;
-    _DrawTexture(menuTextures[164], destination, &source, color, layer);
-}
-
-static void menu_drawLevelSelectMaskBands(CVECTOR color)
-{
-    menu_drawLevelSelectBackgroundSlice(
-        0.0f, 0.0f, 1920.0f, 112.0f, color, 0.64f);
-    menu_drawLevelSelectBackgroundSlice(
-        0.0f, 804.0f, 1920.0f, 1080.0f, color, 0.64f);
 }
 
 static void menu_publishWinif2FontSpec(void)
@@ -1454,35 +1325,6 @@ void menu_drawLevelSelectScreen(unsigned interactive)
     menu_drawLevelSelectTexture(
         164, 0.0f, 0.0f, 0.0f, 0.0f, 0, 8,
         panel_color, 0.9f);
-
-    if (interactive != 0) {
-        menu_levelSelectMenu(levelSelectMdef);
-        level = (int)(int8_t)LevelSelect;
-        tens = level / 10;
-        ones = level - tens * 10;
-    }
-
-    text_index = (unsigned)(305 + level);
-    if (text_index >= JPB_ALL_TEXT_CAPACITY ||
-        allText[text_index] == NULL) {
-        text_index = 306;
-    }
-
-    if (level >= 1 && level <= 14 &&
-        (unsigned)(410 + level) < JPB_FONT_SPEC_COUNT) {
-        unsigned material_index = fontSpec[410 + level].clut;
-
-        if (material_index < 249) {
-            menu_drawLevelSelectTexture(
-                material_index,
-                116.0f, 92.0f, 960.0f, 354.5f, 0, 8,
-                preview_color, 0.5f);
-        }
-    }
-
-    menu_drawSelectBox();
-    menu_drawSelectors();
-    menu_drawLevelSelectMaskBands(panel_color);
     menu_drawLevelSelectTexture(
         165, 0.0f, 0.0f, 0.0f, 0.0f, 0, 8,
         panel_color, 0.4f);
@@ -1492,6 +1334,14 @@ void menu_drawLevelSelectScreen(unsigned interactive)
         15, 255, 2, (int)title_x, (int)title_y,
         2.5f, 0, L"%ls", allText[190]);
 
+    if (interactive != 0) {
+        menu_levelSelectMenu(levelSelectMdef);
+        level = (int)(int8_t)LevelSelect;
+        tens = level / 10;
+        ones = level - tens * 10;
+    }
+
+    text_index = (unsigned)(305 + level);
     digit_x = (language == 0 || language == 6) ? 365.0f : 345.0f;
     setPivotPositionMM(&digit_x, &digit_y, 7);
     (void)psxDrawTexture(
@@ -1508,12 +1358,21 @@ void menu_drawLevelSelectScreen(unsigned interactive)
         digit_y / gPSXDrawScaleY,
         0.0f, 0.0f, 0x8000, 0x60, 0x60, 0x60);
 
+    iconScaleOverride = 0.3f;
+    menu_drawLevelSelectPromptText();
+    iconScaleOverride = -1.0f;
     setPivotPositionMM(&name_x, &name_y, 7);
     (void)SDLTextWriteScaleMM(
         15, 255, 0, (int)name_x, (int)name_y,
         2.5f, 0, L"%ls", allText[text_index]);
 
-    menu_drawLevelSelectControlsIcon();
+    menu_drawLevelSelectTexture(
+        fontSpec[410 + level].clut,
+        116.0f, 92.0f, 960.0f, 354.5f, 0, 8,
+        preview_color, 0.5f);
+    menu_drawSelectBox();
+    menu_drawSelectors();
+    menu_drawLevelSelectPromptGlyphs();
     menu_fadeBG();
     gPSXDrawScaleX = 1.0f;
     gPSXDrawScaleY = 1.0f;
@@ -1536,6 +1395,40 @@ void menu_drawLevelSelectScreen(unsigned interactive)
  * PDB type: void (<no type>)
  * Source: W:\SWJediPowerBattles\work\menu.c
  */
+void menu_drawReconnect(void)
+{
+    float x = -475.0f;
+    float y = 335.0f;
+    SCREENRECT destination;
+    CVECTOR color = {255, 255, 255, 255};
+
+    jpb_TextClearClipRect();
+    if (p1Disconnected == 0 && p2Disconnected == 0) {
+        menu_menuExit();
+        return;
+    }
+    gTop = 300.0f;
+    if (GameStruct.gameMode != 6 && GameStruct.gameMode != 7) {
+        y = 435.0f;
+        gTop = 400.0f;
+    }
+    if (OptionStruct.Language == 6) {
+        x = -492.5f;
+    }
+    setPivotPositionMM(&x, &y, 1);
+    (void)SDLTextWriteScaleMMDepth(
+        15, 255, 0, (int)x, (int)y,
+        2.5f, 0, 0.95f, L"%ls", allText[494]);
+
+    gBottom = gTop + 372.4f;
+    gLeft = -525.0f;
+    gRight = 525.0f;
+    setPivotPositionMM(&gLeft, &gTop, 1);
+    setPivotPositionMM(&gRight, &gBottom, 1);
+    SetGlobalDST();
+    _DrawTexture(
+        menuTextures[241], gDST, NULL, color, 0.99f);
+}
 
 /* 0xC5690, 364 bytes, global, 1 named locals
  * menu_drawScoreMovers
@@ -1558,44 +1451,41 @@ void menu_drawSelectBox(void)
 {
     int valid_count = 0;
 
-    if (menuVars.levelSelectSelectorOffset != 0) {
-        if (menuVars.levelSelectBoxCountdown == 0) {
-            menuVars.levelSelectBoxCountdown = 0x18;
+    if (menuVars.dstSelector != 0) {
+        if (menuVars.selCount == 0) {
+            menuVars.selCount = 0x18;
         }
-    } else if (menuVars.levelSelectBoxCountdown == 0) {
+    } else if (menuVars.selCount == 0) {
         /* no-op: retail falls through to animate/draw */
     }
-    if (menuVars.levelSelectBoxCountdown != 0) {
-        --menuVars.levelSelectBoxCountdown;
+    if (menuVars.selCount != 0) {
+        --menuVars.selCount;
     }
-    if (menuVars.levelSelectSelectorOffset != 0 ||
-        menuVars.levelSelectBoxCountdown != 0) {
-        menuVars.levelSelectBoxTop = 0x86;
-        menuVars.levelSelectBoxWidth = 0x78;
-        menuVars.levelSelectBoxHeight = 2;
+    if (menuVars.dstSelector != 0 || menuVars.selCount != 0) {
+        menuVars.selbox.y = 0x86;
+        menuVars.selbox.w = 0x78;
+        menuVars.selbox.h = 2;
         return;
     }
 
-    if (menuVars.levelSelectBoxWidth < 0x78) {
-        menuVars.levelSelectBoxWidth =
-            (uint16_t)(menuVars.levelSelectBoxWidth + 0x0f);
-        if (menuVars.levelSelectBoxWidth > 0x78) {
-            menuVars.levelSelectBoxWidth = 0x78;
+    if (menuVars.selbox.w < 0x78) {
+        menuVars.selbox.w =
+            (int16_t)(menuVars.selbox.w + 0x0f);
+        if (menuVars.selbox.w > 0x78) {
+            menuVars.selbox.w = 0x78;
         }
-    } else if (menuVars.levelSelectBoxHeight < 0x16) {
-        --menuVars.levelSelectBoxTop;
-        menuVars.levelSelectBoxHeight =
-            (uint16_t)(menuVars.levelSelectBoxHeight + 2);
-        if (menuVars.levelSelectBoxHeight >= 0x16 &&
-            menuVars.levelSelectBoxOpen == 0) {
-            menuVars.levelSelectBoxOpen = 1;
-            menuVars.levelSelectPreviewFade = -256;
-            menuVars.levelSelectPreviewLevel = (uint8_t)LevelSelect;
+    } else if (menuVars.selbox.h < 0x16) {
+        --menuVars.selbox.y;
+        menuVars.selbox.h = (int16_t)(menuVars.selbox.h + 2);
+        if (menuVars.selbox.h >= 0x16 && menuVars.artload == 0) {
+            menuVars.artload = 1;
+            menuVars.artloadPos = -256;
+            menuVars.artLevel = (uint8_t)LevelSelect;
         }
     }
 
     (void)jedi_CheckValidLevel(
-        (unsigned)menuVars.levelSelectPreviewLevel,
+        (unsigned)menuVars.artLevel,
         &valid_count);
     {
         static const unsigned objective_textures[] = {
@@ -1629,14 +1519,14 @@ void menu_drawSelectBox(void)
 
     {
         float box_left =
-            373.0f - (float)menuVars.levelSelectBoxWidth;
+            373.0f - (float)menuVars.selbox.w;
         float box_width =
-            (99.0f + (float)menuVars.levelSelectBoxWidth) *
+            (99.0f + (float)menuVars.selbox.w) *
             scaleAdjustmentMM;
         float box_height =
-            (float)menuVars.levelSelectBoxHeight *
+            (float)menuVars.selbox.h *
             scaleAdjustmentMM;
-        float box_top = (float)menuVars.levelSelectBoxTop;
+        float box_top = (float)menuVars.selbox.y;
 
         (void)menu_drawLevelSelectPsxTexture(
             0x118, 472.0f, box_top,
@@ -1657,14 +1547,12 @@ void menu_drawSelectBox(void)
     }
 
     menu_drawSelector(
-        373.0f, (float)(menuVars.levelSelectBoxTop - 4));
+        373.0f, (float)(menuVars.selbox.y - 4));
     menu_drawSelector(
         373.0f,
-        (float)(menuVars.levelSelectBoxTop +
-                (int)menuVars.levelSelectBoxHeight - 6));
-    if (menuVars.levelSelectPreviewFade < 0) {
-        menuVars.levelSelectPreviewFade =
-            (int16_t)(menuVars.levelSelectPreviewFade + 0x10);
+        (float)(menuVars.selbox.y + (int)menuVars.selbox.h - 6));
+    if (menuVars.artloadPos < 0) {
+        menuVars.artloadPos = (int16_t)(menuVars.artloadPos + 0x10);
     }
 }
 
@@ -1705,7 +1593,7 @@ static void menu_drawSelector(float x, float y)
 void menu_drawSelectors(void)
 {
     int index;
-    int y = menuVars.levelSelectSelectorOffset;
+    int y = menuVars.dstSelector;
     int curve = y * 12 - 0x7f8;
 
     for (index = 0; index < 9; ++index) {
@@ -1724,15 +1612,15 @@ void menu_drawSelectors(void)
         curve += 0x1b0;
     }
 
-    if (menuVars.levelSelectSelectorOffset < 0) {
-        menuVars.levelSelectSelectorOffset += 4;
-        if (menuVars.levelSelectSelectorOffset > 0) {
-            menuVars.levelSelectSelectorOffset = 0;
+    if (menuVars.dstSelector < 0) {
+        menuVars.dstSelector += 4;
+        if (menuVars.dstSelector > 0) {
+            menuVars.dstSelector = 0;
         }
-    } else if (menuVars.levelSelectSelectorOffset > 0) {
-        menuVars.levelSelectSelectorOffset -= 4;
-        if (menuVars.levelSelectSelectorOffset < 0) {
-            menuVars.levelSelectSelectorOffset = 0;
+    } else if (menuVars.dstSelector > 0) {
+        menuVars.dstSelector -= 4;
+        if (menuVars.dstSelector < 0) {
+            menuVars.dstSelector = 0;
         }
     }
 }
@@ -1921,18 +1809,64 @@ void menu_initGameover(void)
  */
 void menu_initLevelSelectScreen(void)
 {
+    uint8_t *movers[4] = {
+        frameBottomMover,
+        frameRightMover,
+        frameLeftMover,
+        frameTopMover
+    };
+    unsigned mover;
+    unsigned player;
+
+    menu_pushMenu(0);
+    menu_pushMenu(0x1a);
+    menuVars.bgWidth = (uint16_t)OptionStruct.ScreenWidth;
+    menuVars.bgHeight = (uint16_t)OptionStruct.ScreenHeight;
+    menuVars.mloadShift = 0;
+    menuVars.titleDispEnable = 1;
     LevelSelect = 1;
-    menuVars.levelSelectSelectorOffset = 0;
-    menuVars.levelSelectBoxTop = 0x86;
-    menuVars.levelSelectBoxWidth = 0x78;
-    menuVars.levelSelectBoxHeight = 2;
-    menuVars.levelSelectBoxCountdown = 0;
-    menuVars.levelSelectBoxOpen = 1;
-    menuVars.levelSelectPreviewLevel = 1;
-    menuVars.levelSelectPreviewFade = -256;
-    menuVars.pSelect = 0;
+    menuVars.dstSelector = 0;
+    menuVars.selbox.y = 0x86;
+    menuVars.selbox.w = 0x78;
+    menuVars.selbox.h = 2;
+    menuVars.selCount = 0;
+    menuVars.artload = 1;
+    menuVars.artLevel = 1;
+    menuVars.artloadPos = -256;
+    prim_gSetBkColor(0, 0, 0);
+    GameStruct.gameMode = 0;
     menuVars.mmSelect1[menuVars.menuModeSP & 7u] = 0;
     menuVars.mmSelect2[menuVars.menuModeSP & 7u] = 0;
+    for (mover = 0; mover < 4; ++mover) {
+        unsigned index = menuVars.mmvCount;
+
+        if (index < 6) {
+            MMVDEF *control = &menuVars.mmv[index];
+
+            control->mmvSrc = movers[mover];
+            control->mmvPtr = 0;
+            control->mmvCounter = 0;
+            control->mmvX = 0;
+            control->mmvY = 0;
+            control->mmvMenu = NULL;
+            control->state = 1;
+        }
+        ++menuVars.mmvCount;
+    }
+    for (player = 0;
+         player < (unsigned)(uint8_t)GameStruct.NumPlayers;
+         ++player) {
+        if (menuVars.pselectMode[player] == 0) {
+            continue;
+        }
+        if (GameStruct.ModelSelect[player] == 0) {
+            GameStruct.ModelSelect[player] = 6;
+        } else if (GameStruct.ModelSelect[player] == 1) {
+            GameStruct.ModelSelect[player] = 5;
+        } else if (GameStruct.ModelSelect[player] == 4) {
+            GameStruct.ModelSelect[player] = 7;
+        }
+    }
 }
 
 /* 0xC9B20, 348 bytes, global, 4 named locals
@@ -1946,6 +1880,129 @@ void menu_initLevelSelectScreen(void)
  * PDB type: void (<no type>)
  * Source: W:\SWJediPowerBattles\work\menu.c
  */
+void menu_initNewMenu(void)
+{
+    uint16_t mode;
+
+    maskPadBits(0);
+    maskPadBits(1);
+    menuVars.pad[0] = 0;
+    menuVars.pad[1] = 0;
+    menuVars.itemSelect = 0;
+    menuVars.vramx = 0;
+    menuVars.yoffset = 0;
+    menuVars.pSelect = 0;
+    menuVars.mmColorSelect = 11;
+    menuVars.mmColorNotSelect = 12;
+    menuVars.mmvCount = 0;
+    mode = menuVars.menuMode[menuVars.menuModeSP & 7u];
+
+    switch (mode) {
+    case 0: {
+        unsigned bit;
+        unsigned player_two_model;
+
+        sound_StopAll();
+        totalframes += 16;
+        game_clearLetterBox();
+        menuVars.mcount = 0;
+        GameStruct.ModelSelect[0] = obi_wan_model;
+        GameStruct.ModelSelect[1] = qui_gon_model;
+        game_CLR_GLOBALBIT(3);
+        game_SET_GLOBALBIT(3);
+        for (bit = 4; bit <= 7; ++bit) {
+            game_CLR_GLOBALBIT(bit);
+        }
+        menuVars.subplayers[0] = menuVars.pplayers[0];
+        player_two_model =
+            (unsigned)((int)GameStruct.ModelSelect[1] % 80);
+        for (bit = 8; bit <= 12; ++bit) {
+            game_CLR_GLOBALBIT(bit);
+            if (GameStruct.NumPlayers > 1 &&
+                player_two_model == bit - 8) {
+                game_SET_GLOBALBIT(bit);
+            }
+        }
+        menuVars.subplayers[1] = menuVars.pplayers[1];
+        GameStruct.gameMode = 0;
+        menuVars.menuMode[0] = 0;
+        menuVars.menuMode[4] = 0;
+        if (menuVars.titleArt == 0) {
+            menuVars.titleArt = 1;
+        }
+        menuVars.titleDispEnable |= menuVars.titleArt;
+        if (menuVars.autoLoad == 0) {
+            menu_pushMenu(0);
+        }
+        if ((menuVars.autoLoad == 0 ||
+             GameStruct.xaNum != 1 ||
+             GameStruct.xaFlag == 0) &&
+            OptionStruct.Music != 0) {
+            stopXA();
+            playXA(1, (int)OptionStruct.musicVolume * 2, 1);
+        }
+        break;
+    }
+    case 4:
+    case 5:
+        GameStruct.CurrentLevel = 0;
+        menu_pushMenu(0x0e);
+        break;
+    case 0x0b:
+        if (menuVars.titleArt == 0) {
+            menuVars.titleArt = 1;
+        }
+        menuVars.titleDispEnable |= menuVars.titleArt;
+        if (jpb_menu_platform_hooks.saveSettingsData != NULL) {
+            optionstruct options = OptionStruct;
+
+            jpb_menu_platform_hooks.saveSettingsData(
+                &options, jpb_menu_platform_user_data);
+        }
+        if ((GameStruct.xaNum != 1 || GameStruct.xaFlag == 0) &&
+            OptionStruct.Music != 0) {
+            stopXA();
+            playXA(1, (int)OptionStruct.musicVolume * 2, 1);
+        }
+        break;
+    case 0x0c:
+        savedNumPlayer = GameStruct.NumPlayers;
+        break;
+    case 0x0d:
+        savedNumPlayer = GameStruct.NumPlayers;
+        GameStruct.NumPlayers = (char)tempPlayersVs;
+        break;
+    case 0x10:
+        if (OptionStruct.musicVolume > 74u) {
+            OptionStruct.musicVolume = 75;
+        }
+        menuVars.sfxVolume = OptionStruct.SFXVolume;
+        if (OptionStruct.SFXVolume > 74u) {
+            OptionStruct.SFXVolume = 75;
+            menuVars.sfxVolume = 75;
+        }
+        break;
+    case 0x13:
+        menu_initCredits();
+        break;
+    case 0x1a:
+        menu_scanAllLevels();
+        menu_initLevelSelectScreen();
+        break;
+    case 0x1b:
+        menuVars.scoreScore = 0;
+        break;
+    case 0x90:
+        if (GameStruct.continueAble == 0) {
+            menuVars.mmFlags = 0;
+            menu_popMenu();
+            (void)menu_handleMenuTriggers(9);
+        }
+        break;
+    default:
+        break;
+    }
+}
 
 /* 0xCA650, 49 bytes, global, 0 named locals
  * menu_initPlayerSelect
@@ -2024,9 +2081,6 @@ void menu_levelSelectMenu(uint32_t *mdef)
     uint32_t pad;
     unsigned level;
 
-    if (mdef == NULL) {
-        return;
-    }
     pad = menuVars.pad[0] | menuVars.pad[1];
     level = (unsigned)(uint8_t)LevelSelect;
     if ((pad & JPB_PAD_UP) != 0) {
@@ -2145,6 +2199,9 @@ static uint32_t *menu_mainLoopDefinition(uint16_t mode)
                        GameStruct.gameMode == 7
             ? audioMdef_Game
             : audioMdef;
+    case 0x2d:
+        GameStruct.GameState |= UINT32_C(0x02000000);
+        return gameoverMdef;
     case 0x37:
         return difficultyMdef;
     case 0x90:
@@ -2171,6 +2228,10 @@ void menu_mainLoop(void)
 
     menuVars.menuModeSP &= 7u;
     menu_readControl();
+    if (GameStruct.inMenuFlag != 0 && GameStruct.gameMode == 0) {
+        menu_startAcceptDecline(
+            JPB_PAD_START, JPB_PAD_COMBO_SOUTH);
+    }
     mode = menuVars.menuMode[menuVars.menuModeSP];
     if (mode == 4) {
         /* Exact state-four entry republishes the selected player count and
@@ -2190,13 +2251,13 @@ void menu_mainLoop(void)
             GameStruct.versusModeFlag = 1;
             GameStruct.gameMode = 2;
         }
-        return;
+        goto finish;
     }
     if (mode == 0x0c) {
         if (newMenu_Training() < 0) {
             menu_menuExit();
         }
-        return;
+        goto finish;
     }
     if (mode == 0x0e) {
         int result;
@@ -2210,11 +2271,11 @@ void menu_mainLoop(void)
         } else if (result == 1) {
             menu_pushMenu(0x1a);
         }
-        return;
+        goto finish;
     }
     if (mode == 0x1a) {
         menu_drawLevelSelectScreen(1);
-        return;
+        goto finish;
     }
     if (mode == 0x13) {
         unsigned player;
@@ -2229,37 +2290,133 @@ void menu_mainLoop(void)
         }
         gColor.cd = 0;
         menu_mainMenu(creditsMdef);
-        return;
+        goto finish;
     }
     if (mode == 0x1b) {
         menuConceptMenu();
-        return;
+        goto finish;
     }
     if (mode == 0x23) {
         if (p1Disconnected != 0 || p2Disconnected != 0) {
             menu_menuExit();
-            return;
+            goto finish;
         }
         if (GameStruct.gameMode != 6 && GameStruct.gameMode != 7) {
             winDrawBackground(5);
         }
         runControlsMenu();
         menuVars.controlPlayer = 0;
-        return;
+        goto finish;
     }
     if (mode == 0x24) {
         if (GameStruct.gameMode != 6 && GameStruct.gameMode != 7) {
             winDrawBackground(5);
         }
         runControlsMenu();
-        return;
+        goto finish;
+    }
+    if (mode == 0x8f) {
+        if (jpb_menu_platform_hooks.openUrl != NULL) {
+            jpb_menu_platform_hooks.openUrl(
+                "https://ctep.aspyr.com/pb_pc",
+                jpb_menu_platform_user_data);
+        }
+        menu_pushMenu(0);
+        goto finish;
+    }
+    if (mode == 0x10) {
+        float x_offset = 0.0f;
+        float y_offset = 0.0f;
+        float width = 0.45f;
+        float y;
+
+        switch (OptionStruct.ResolutionChanged) {
+        case 1:
+        case 3:
+            x_offset = 40.0f;
+            y_offset = 1.0f;
+            break;
+        case 2:
+            x_offset = 70.0f;
+            y_offset = 1.0f;
+            break;
+        case 4:
+            x_offset = 60.0f;
+            y_offset = 3.0f;
+            break;
+        case 5:
+            x_offset = 184.0f;
+            y_offset = 1.0f;
+            width = 0.40f;
+            break;
+        case 6:
+            x_offset = -115.0f;
+            y_offset = 1.0f;
+            width = 0.40f;
+            break;
+        default:
+            break;
+        }
+        gColor.cd = 0;
+        if (GameStruct.gameMode == 6 || GameStruct.gameMode == 7) {
+            if (p1Disconnected != 0 || p2Disconnected != 0) {
+                menu_menuExit();
+                goto finish;
+            }
+            menu_mainMenu(audioMdef_Game);
+            y = y_offset + 460.0f;
+        } else {
+            menu_mainMenu(audioMdef);
+            y = y_offset + 710.0f;
+        }
+        menu_slideco(
+            width, 0.25f,
+            (int)(x_offset + 850.0f), (int)y,
+            (float)OptionStruct.musicVolume, 75.0f);
+        menu_slideco(
+            width, 0.25f,
+            (int)(x_offset + 850.0f), (int)(y + 60.0f),
+            (float)OptionStruct.SFXVolume, 75.0f);
+        setMusicVol(
+            OptionStruct.Music != 0
+                ? (int)OptionStruct.musicVolume
+                : 0);
+        goto finish;
+    }
+    if (mode == 0x0b) {
+        gColor.cd = 0;
+        menu_mainMenu(optionsMdef);
+        jpb_TextClearClipRect();
+        if ((padCurrentBits[0].padLevel1 & UINT32_C(0x8000)) != 0 &&
+            slider != 0) {
+            --slider;
+        }
+        if ((padCurrentBits[0].padLevel1 & UINT32_C(0x2000)) != 0 &&
+            slider < UINT32_C(0xff)) {
+            ++slider;
+        }
+        goto finish;
     }
     definition = menu_mainLoopDefinition(mode);
     if (definition == NULL) {
-        return;
+        goto finish;
+    }
+    if (p1Disconnected != 0 ||
+        (p2Disconnected != 0 && mode != 0x37)) {
+        if (GameStruct.gameMode != 6 && GameStruct.gameMode != 7) {
+            winDrawBackground(5);
+        }
+        menu_drawReconnect();
+        goto finish;
     }
     gColor.cd = 0;
     menu_mainMenu(definition);
+
+finish:
+    if (mode !=
+        (menuVars.menuMode[menuVars.menuModeSP & 7u] & UINT16_C(0x01ff))) {
+        menu_initNewMenu();
+    }
 }
 
 /* 0xCD560, 976 bytes, global, 6 named locals
@@ -2364,13 +2521,6 @@ void menu_pushMenu(unsigned menu_id)
     menuVars.menuMode[stack_pointer] = (uint16_t)menu_id;
     menuVars.mmSelect1[stack_pointer] = 0;
     menuVars.mmSelect2[stack_pointer] = 0;
-    if (menu_id == 0x13) {
-        menu_initCredits();
-    } else if (menu_id == 0x1b) {
-        menuVars.scoreScore = 0;
-    } else if (menu_id == 0x1a) {
-        menu_initLevelSelectScreen();
-    }
 }
 
 /* 0xC87E0, 3013 bytes, global, 9 named locals
@@ -2795,8 +2945,10 @@ unsigned menu_handleMenuTriggers(int destination)
     case 0x96: {
         unsigned resolution_index = mmGetModVal(&modVars[73]);
         unsigned window_mode = mmGetModVal(&modVars[72]);
-        uint32_t width = OptionStruct.ScreenWidth;
-        uint32_t height = OptionStruct.ScreenHeight;
+        uint32_t width =
+            (uint32_t)g_resolutions[resolution_index].width;
+        uint32_t height =
+            (uint32_t)g_resolutions[resolution_index].height;
 
         if (jpb_menu_platform_hooks.applyResolution != NULL) {
             jpb_menu_platform_hooks.applyResolution(
@@ -3284,6 +3436,50 @@ void menu_setShockOption(unsigned player)
  * PDB type: void (float, float, int, int, fl...
  * Source: W:\SWJediPowerBattles\work\menu.c
  */
+void menu_slideco(
+    float width,
+    float height,
+    int x,
+    int y,
+    float current,
+    float maximum)
+{
+    float ratio = current / maximum;
+    float left = (float)x;
+    float top = (float)y;
+    float right = width * 967.0f + left;
+    float bottom = height * 135.0f + top;
+    SCREENRECT destination;
+    SCREENRECT source;
+    CVECTOR white = {255, 255, 255, 255};
+
+    setPivotPositionMM(&left, &top, 0);
+    setPivotPositionMM(&right, &bottom, 0);
+    source.left = 200;
+    source.top = 0;
+    source.right = (int32_t)(ratio * 605.0f);
+    source.bottom = 135;
+    destination.left = (int32_t)left;
+    destination.top = (int32_t)top;
+    destination.right = (int32_t)(
+        ratio * 967.0f * width * scaleAdjustmentMM + left);
+    destination.bottom = (int32_t)bottom;
+    _DrawTexture(
+        menuTextures[166], destination, &source, white, 0.002f);
+
+    left -= width * 19.0f * scaleAdjustmentMM;
+    right += width * 17.0f * scaleAdjustmentMM;
+    top -= height * 9.0f * scaleAdjustmentMM;
+    bottom += height * 6.0f * scaleAdjustmentMM;
+    destination.left = (int32_t)left;
+    destination.top = (int32_t)top;
+    destination.right = (int32_t)right;
+    destination.bottom = (int32_t)bottom;
+    _DrawTexture(
+        menuTextures[168], destination, NULL, white, 0.003f);
+    _DrawTexture(
+        menuTextures[167], destination, NULL, white, 0.001f);
+}
 
 /* 0xCEF30, 282 bytes, global, 9 named locals
  * menu_slideco_a
@@ -3533,9 +3729,6 @@ void mmDecVar(uint32_t *md)
     unsigned mod_index;
     unsigned value;
 
-    if (md == NULL || md[4] >= 74) {
-        return;
-    }
     mod_index = md[4];
     mod = &modVars[mod_index];
     value = mmGetModVal(mod);
@@ -3566,30 +3759,16 @@ void menu_mainMenu(uint32_t *mdef)
     uint8_t *selectp;
     unsigned sound = 0;
     unsigned stream_index = 0;
-    unsigned stream_count = 0;
     int carousel_clip = 0;
 
-    if (mdef == NULL) {
-        return;
-    }
-    while (mdef[stream_index] != UINT32_C(0x14) &&
-           stream_count < 4096) {
+    while (mdef[stream_index] != UINT32_C(0x14)) {
         uint32_t command = mdef[stream_index] & UINT32_C(0x7fff);
-        unsigned width;
 
         if (command == UINT32_C(0x44)) {
             carousel_clip = 1;
             break;
         }
-        if (command >= sizeof(mmsizes) / sizeof(mmsizes[0])) {
-            break;
-        }
-        width = mmsizes[command];
-        if (width == 0) {
-            break;
-        }
-        stream_index += width;
-        ++stream_count;
+        stream_index += mmsizes[command];
     }
     menuVars.mmFlags = 0;
     menuVars.controlFlags = 3;
@@ -3627,8 +3806,8 @@ void menu_mainMenu(uint32_t *mdef)
     if ((menuVars.controlFlags & 2u) != 0) {
         pad |= menuVars.pad[1];
     }
-    selectp = menuVars.selectp != NULL
-        ? menuVars.selectp
+    selectp = menuVars.controlFlags == 2
+        ? menuVars.mmSelect2
         : menuVars.mmSelect1;
     if ((menuVars.mmFlags & 1u) == 0 &&
         menuVars.yoffset == 0) {
@@ -3697,24 +3876,13 @@ void menu_mainMenu(uint32_t *mdef)
 void mmDraw(uint32_t *md)
 {
     unsigned index = 0;
-    unsigned instruction_count = 0;
 
-    if (md == NULL) {
-        return;
-    }
     menuVars.mmAnchorType = 4;
     menuVars.selectp = menuVars.mmSelect1;
     menuVars.textScale = 2.25f;
     menuVars.textSpacer = 60.0f;
-    while (md[index] != UINT32_C(0x14) &&
-           instruction_count < 4096) {
-        unsigned next = mmDrawsub(md, index);
-
-        if (next <= index) {
-            break;
-        }
-        index = next;
-        ++instruction_count;
+    while (md[index] != UINT32_C(0x14)) {
+        index = mmDrawsub(md, index);
     }
 }
 
@@ -3733,6 +3901,7 @@ int mmDrawItem(uint32_t *md, uint8_t *dstbuffer)
 {
     wchar_t display[256];
     const wchar_t *source;
+    unsigned text_index;
     unsigned selected;
     unsigned color;
     int is_selected;
@@ -3740,12 +3909,7 @@ int mmDrawItem(uint32_t *md, uint8_t *dstbuffer)
     int draw_font_style;
     int y;
 
-    if (md == NULL) {
-        return 0;
-    }
-    selected = menuVars.selectp != NULL
-        ? menuVars.selectp[menuVars.menuModeSP & 7u]
-        : 0;
+    selected = menuVars.selectp[menuVars.menuModeSP & 7u];
     is_selected = md[1] - menuVars.mmSubSet == selected;
     is_active_selected =
         is_selected &&
@@ -3767,13 +3931,33 @@ int mmDrawItem(uint32_t *md, uint8_t *dstbuffer)
     if (md[0] == UINT32_C(0x19) ||
         md[0] == UINT32_C(0x1a)) {
         source = (const wchar_t *)menuVars.specialString;
-    } else if (md[2] < JPB_ALL_TEXT_CAPACITY) {
-        source = allText[md[2]];
     } else {
-        source = NULL;
+        text_index = md[2];
+        if (lastUsedInputType == 0) {
+            switch (text_index) {
+            case 239:
+                text_index = 476;
+                break;
+            case 240:
+                text_index = 474;
+                break;
+            case 241:
+                text_index = 475;
+                break;
+            case 221:
+                text_index = 477;
+                break;
+            default:
+                break;
+            }
+        }
+        source = allText[text_index];
     }
-    if (source == NULL) {
-        source = L"";
+    if (md[0] == UINT32_C(0x19) &&
+        (menuVars.mmFlags & 1u) == 0 &&
+        (menuVars.mmFlags & 8u) != 0 &&
+        color == 11u) {
+        color = 12;
     }
     if (dstbuffer != NULL) {
         size_t index = 0;
@@ -3811,50 +3995,24 @@ int mmDrawItem(uint32_t *md, uint8_t *dstbuffer)
     if (menuVars.yflag == 1) {
         y += menuVars.yoffset;
     }
-    draw_font_style = menuVars.mmItalics != 0 ? 1 : 0;
-    if ((md[2] == 239u || md[2] == 241u) &&
-        menuVars.mmTextType <= 1u) {
-        _Material *textures[10] = {0};
-        _Material *glyph;
-        const wchar_t *label = source;
-        SCREENRECT destination;
-        CVECTOR white = {255, 255, 255, 255};
-        int icon_size = (int)(64.0f * scaleAdjustmentMM);
-        int gap = (int)(20.0f * scaleAdjustmentMM);
-        int text_x = (int32_t)menuVars.mmX;
-
-        while (*label != L'\0' &&
-               (*label > 0x7f || *label == L' ')) {
-            ++label;
-        }
-        (void)getControllerTextures(0, textures);
-        glyph = md[2] == 241u
-            ? textures[lastUsedInputType == 0 ? 2 : 3]
-            : textures[lastUsedInputType == 0 ? 9 : 2];
-        if (glyph != NULL && icon_size > 0) {
-            if (menuVars.mmTextType == 0) {
-                destination.left = text_x;
-                destination.right = text_x + icon_size;
-                text_x += icon_size + gap;
-            } else {
-                destination.left = text_x -
-                    (int)(210.0f * scaleAdjustmentMM);
-                destination.right = destination.left + icon_size;
-            }
-            destination.top = y;
-            destination.bottom = y + icon_size;
-            _DrawTexture(glyph, destination, NULL, white, 0.0f);
-        }
-        return SDLTextWriteScaleMM(
+    draw_font_style =
+        menuVars.mmItalics != 0 &&
+        menuVars.mmBrackets != 0 &&
+        color == menuVars.mmColorSelect
+            ? 1
+            : 0;
+    if (menuTextDepthOverride >= 0.0f) {
+        return SDLTextWriteScaleMMDepth(
             (int)color,
             255,
             (int)menuVars.mmTextType,
-            text_x,
+            (int32_t)menuVars.mmX,
             y,
             menuVars.textScale,
             draw_font_style,
+            menuTextDepthOverride,
             L"%ls",
-            label);
+            display);
     }
     return SDLTextWriteScaleMM(
         (int)color,
@@ -3882,6 +4040,7 @@ int mmDrawItem(uint32_t *md, uint8_t *dstbuffer)
 void mmDrawMod(uint32_t *md, uint8_t *dstbuffer)
 {
     wchar_t prefix[256];
+    wchar_t resolution[64];
     wchar_t display[512];
     const wchar_t *value_text = NULL;
     MDEF_MOD *mod;
@@ -3893,15 +4052,10 @@ void mmDrawMod(uint32_t *md, uint8_t *dstbuffer)
     size_t index;
     int y;
 
-    if (md == NULL || dstbuffer == NULL || md[4] >= 74) {
-        return;
-    }
     mod_index = md[4];
     mod = &modVars[mod_index];
     value = mmGetModVal(mod);
-    selected = menuVars.selectp != NULL
-        ? menuVars.selectp[menuVars.menuModeSP & 7u]
-        : 0;
+    selected = menuVars.selectp[menuVars.menuModeSP & 7u];
     active = md[1] - menuVars.mmSubSet == selected &&
         (menuVars.mmFlags & 1u) == 0 &&
         menuVars.yoffset == 0;
@@ -3926,12 +4080,7 @@ void mmDrawMod(uint32_t *md, uint8_t *dstbuffer)
         if (mod->text == 2) {
             return;
         }
-        if (text_index < JPB_ALL_TEXT_CAPACITY) {
-            value_text = allText[text_index];
-        }
-        if (value_text == NULL) {
-            value_text = L"";
-        }
+        value_text = allText[text_index];
         (void)swprintf(
             display,
             sizeof(display) / sizeof(display[0]),
@@ -3939,6 +4088,21 @@ void mmDrawMod(uint32_t *md, uint8_t *dstbuffer)
             prefix,
             value_text,
             active ? L" <" : L"");
+    } else if ((mod->type & UINT16_C(6)) != 0) {
+        mod->max = g_resolutionsCount - 1;
+        value = mmGetModVal(mod);
+        (void)swprintf(
+            resolution,
+            sizeof(resolution) / sizeof(resolution[0]),
+            L"%dx%d",
+            g_resolutions[value].width,
+            g_resolutions[value].height);
+        (void)swprintf(
+            display,
+            sizeof(display) / sizeof(display[0]),
+            active ? L"> %ls %ls <" : L"%ls %ls",
+            allText[445],
+            resolution);
     } else {
         if ((mod->type & UINT16_C(0x4000)) != 0) {
             return;
@@ -3977,13 +4141,8 @@ unsigned mmDrawsub(uint32_t *md, unsigned index)
     uint32_t command;
     unsigned selected;
 
-    if (md == NULL) {
-        return index;
-    }
     command = md[index];
-    selected = menuVars.selectp != NULL
-        ? menuVars.selectp[menuVars.menuModeSP & 7u]
-        : 0;
+    selected = menuVars.selectp[menuVars.menuModeSP & 7u];
     switch (command) {
     case 0:
         menuVars.mmColorSelect = 14;
@@ -4012,9 +4171,8 @@ unsigned mmDrawsub(uint32_t *md, unsigned index)
         break;
     }
     case 2:
-        menuVars.mmFlags = menuVars.mmvCurrentMenuControl != NULL
-            ? menuVars.mmvCurrentMenuControl->mmvMenuFlags
-            : 0;
+        menuVars.mmFlags =
+            menuVars.mmvCurrentMenuControl->mmvMenuFlags;
         break;
     case 3:
     case 4:
@@ -4043,12 +4201,10 @@ unsigned mmDrawsub(uint32_t *md, unsigned index)
         break;
     }
     case 5:
-        if (menuVars.mmvCurrentMenuControl != NULL) {
-            menuVars.mmX = (uint32_t)
-                menuVars.mmvCurrentMenuControl->mmvX;
-            menuVars.mmY = (uint32_t)
-                menuVars.mmvCurrentMenuControl->mmvY;
-        }
+        menuVars.mmX = (uint32_t)
+            menuVars.mmvCurrentMenuControl->mmvX;
+        menuVars.mmY = (uint32_t)
+            menuVars.mmvCurrentMenuControl->mmvY;
         break;
     case 6:
         menuVars.mmTextType = md[index + 1];
@@ -4271,10 +4427,6 @@ unsigned mmDrawsub(uint32_t *md, unsigned index)
     default:
         break;
     }
-    if ((command & 0x7fffu) >=
-        sizeof(mmsizes) / sizeof(mmsizes[0])) {
-        return index;
-    }
     return index + mmsizes[command & 0x7fffu];
 }
 
@@ -4285,9 +4437,6 @@ unsigned mmDrawsub(uint32_t *md, unsigned index)
  */
 unsigned mmGetModVal(MDEF_MOD *mod)
 {
-    if (mod == NULL) {
-        return 0;
-    }
     switch (mod->type & UINT16_C(0x7f)) {
     case 0:
     case 1:
@@ -4296,15 +4445,11 @@ unsigned mmGetModVal(MDEF_MOD *mod)
             : 0;
     case 2:
     case 3:
-        return mod->src != NULL
-            ? (unsigned)*(const uint16_t *)mod->src
-            : 0;
+        return (unsigned)*(const uint16_t *)mod->src;
     case 4:
     case 5:
     case 6:
-        return mod->src != NULL
-            ? *(const uint32_t *)mod->src
-            : 0;
+        return *(const uint32_t *)mod->src;
     default:
         return 0;
     }
@@ -4321,9 +4466,6 @@ void mmIncVar(uint32_t *md)
     unsigned mod_index;
     unsigned value;
 
-    if (md == NULL || md[4] >= 74) {
-        return;
-    }
     mod_index = md[4];
     mod = &modVars[mod_index];
     value = mmGetModVal(mod) + mod->incspeed;
@@ -4347,13 +4489,7 @@ unsigned mmNextCode(uint32_t *md, unsigned index)
 {
     uint32_t command;
 
-    if (md == NULL) {
-        return index;
-    }
     command = md[index] & 0x7fffu;
-    if (command >= sizeof(mmsizes) / sizeof(mmsizes[0])) {
-        return index;
-    }
     return index + mmsizes[command];
 }
 
@@ -4367,9 +4503,6 @@ int mmSetModVal(
 {
     unsigned player_mask;
 
-    if (mod == NULL) {
-        return 0;
-    }
     if (mod_index == 2 || mod_index == 3) {
         player_mask = mod_index == 3 ? 2u : 1u;
         if (((unsigned)menuVars.pSelect & player_mask) != 0) {
@@ -4385,16 +4518,12 @@ int mmSetModVal(
         break;
     case 2:
     case 3:
-        if (mod->src != NULL) {
-            *(uint16_t *)mod->src = (uint16_t)value;
-        }
+        *(uint16_t *)mod->src = (uint16_t)value;
         break;
     case 4:
     case 5:
     case 6:
-        if (mod->src != NULL) {
-            *(uint32_t *)mod->src = value;
-        }
+        *(uint32_t *)mod->src = value;
         break;
     default:
         break;
@@ -4412,9 +4541,6 @@ void mmUpdateModSet(
 {
     unsigned mod_index;
 
-    if (md == NULL || md[4] >= 74) {
-        return;
-    }
     mod_index = md[4];
     switch (mod_index) {
     case 1:
@@ -4474,6 +4600,29 @@ void mmUpdateModSet(
         }
         break;
     case 21:
+        GameStruct.xaVol =
+            (uint16_t)((unsigned)OptionStruct.musicVolume * 2u);
+        if (jpb_menu_platform_hooks.soundCue != NULL) {
+            jpb_menu_platform_hooks.soundCue(
+                "xopt_sel", jpb_menu_platform_user_data);
+        }
+        setChannelType((int)OptionStruct.Music + 1);
+        if (OptionStruct.Music == 1) {
+            if (GameStruct.gameMode != 6 ||
+                GameStruct.CurrentLevel > 0x19) {
+                stopXA();
+                playXA(1, GameStruct.xaVol, 1);
+            } else {
+                playXA(
+                    (int)aLevelXATracks[GameStruct.CurrentLevel],
+                    GameStruct.xaVol,
+                    1);
+                if ((GameStruct.GameState & UINT32_C(0x02000000)) != 0) {
+                    stopXA();
+                }
+            }
+        }
+        break;
     case 22:
         GameStruct.xaVol =
             (uint16_t)((unsigned)OptionStruct.musicVolume * 2u);
@@ -4490,6 +4639,10 @@ void mmUpdateModSet(
         }
         break;
     case 71:
+        if (jpb_menu_platform_hooks.soundCue != NULL) {
+            jpb_menu_platform_hooks.soundCue(
+                "xopt_sel", jpb_menu_platform_user_data);
+        }
         generateAllText(OptionStruct.Language);
         break;
     default:
@@ -4526,6 +4679,53 @@ void mmUpdateModSet(
  * PDB type: void (unsigned long, int, int, i...
  * Source: W:\SWJediPowerBattles\work\menu.c
  */
+void newDrawControllerIcon(
+    int icon,
+    float control_icon_scale,
+    int x,
+    int y,
+    int alpha,
+    int player)
+{
+    _Material *textures[10] = {0};
+    _Material *material;
+    SCREENRECT destination;
+    CVECTOR color;
+    float draw_scale;
+
+    if (iconScaleOverride > 0.0f) {
+        control_icon_scale = iconScaleOverride;
+    }
+    if (player2IconOverride != 0) {
+        player = 1;
+    }
+    (void)getControllerTextures(player, textures);
+    if (player2IconOverride == 0 && icon == 9 &&
+        lastUsedInputType != 0) {
+        icon = 3;
+    }
+    if ((unsigned)icon >= 10u || textures[icon] == NULL) {
+        return;
+    }
+    material = textures[icon];
+    draw_scale = control_icon_scale * scaleAdjustmentMM;
+    color.r = (uint8_t)alpha;
+    color.g = (uint8_t)alpha;
+    color.b = (uint8_t)alpha;
+    color.cd = (uint8_t)alpha;
+    destination.left = (int32_t)(
+        (float)x - (float)material->iw * 0.5f * draw_scale);
+    destination.top = (int32_t)(
+        (float)y -
+        ((float)material->ih * 0.5f - 5.0f) * draw_scale);
+    destination.right = (int32_t)(
+        (float)material->iw * draw_scale +
+        (float)destination.left);
+    destination.bottom = (int32_t)(
+        (float)material->ih * draw_scale +
+        (float)destination.top);
+    _DrawTexture(material, destination, NULL, color, 0.0f);
+}
 void newMenu_DrawArrows(
     uint32_t pad,
     int left_x,
@@ -4644,9 +4844,6 @@ static void newMenu_DrawControllerTab(
     SCREENRECT destination;
     CVECTOR color = {255, 255, 255, 255};
 
-    if (material == NULL) {
-        return;
-    }
     half_width = (float)material->iw * 0.25f;
     left = center_x - half_width;
     right = center_x + half_width;
@@ -4693,9 +4890,6 @@ static void newMenu_DrawControllerTabs(
 
 static const wchar_t *newMenu_Text(unsigned index)
 {
-    if (index >= JPB_ALL_TEXT_CAPACITY || allText[index] == NULL) {
-        return L"";
-    }
     return allText[index];
 }
 
@@ -4705,8 +4899,8 @@ static int newMenu_AdjacentModel(
     do {
         model += direction;
         if (model < 0) {
-            model = jar_jar_playable_model;
-        } else if (model > jar_jar_playable_model) {
+            model = LAST_PLAYABLE_MODEL;
+        } else if (model > LAST_PLAYABLE_MODEL) {
             model = 0;
         }
     } while (!jedi_CheckValidPlayerWTabs(select_type, model));
@@ -4737,6 +4931,7 @@ static void newMenu_DrawP1CharacterSelect(
     if (GameStruct.gameMode != 6 && GameStruct.gameMode != 7) {
         winDrawBackground(175);
     }
+    drawControlsIcon();
 
     x = -250.0f;
     y = -60.0f;
@@ -4787,12 +4982,10 @@ static void newMenu_DrawP1CharacterSelect(
     newMenu_DrawMaterialRect(
         183, -230.0f, -278.0f, 229.0f, 278.0f,
         4, UINT32_C(0xffffffff), 0.0f);
-    if (converted_model >= 0) {
-        newMenu_DrawMaterialRect(
-            201 + converted_model,
-            -196.0f, -262.0f, 195.0f, 261.0f,
-            4, UINT32_C(0xffffffff), 0.1f);
-    }
+    newMenu_DrawMaterialRect(
+        201 + converted_model,
+        -196.0f, -262.0f, 195.0f, 261.0f,
+        4, UINT32_C(0xffffffff), 0.1f);
     newMenu_DrawMaterialRect(
         184, -196.0f, -262.0f, 195.0f, 261.0f,
         4, UINT32_C(0xffffffff), 0.2f);
@@ -4806,12 +4999,10 @@ static void newMenu_DrawP1CharacterSelect(
     newMenu_DrawMaterialRect(
         183, -740.0f, -200.0f, -372.8f, 244.80002f,
         4, UINT32_C(0xc8ffffff), 0.0f);
-    if (previous_converted >= 0) {
-        newMenu_DrawMaterialRect(
-            201 + previous_converted,
-            -713.0f, -188.0f, -400.19998f, 230.4f,
-            4, UINT32_C(0x6effffff), 0.1f);
-    }
+    newMenu_DrawMaterialRect(
+        201 + previous_converted,
+        -713.0f, -188.0f, -400.19998f, 230.4f,
+        4, UINT32_C(0x6effffff), 0.1f);
     newMenu_DrawMaterialRect(
         184, -713.0f, -188.0f, -400.19998f, 230.4f,
         4, UINT32_C(0x6effffff), 0.2f);
@@ -4825,12 +5016,10 @@ static void newMenu_DrawP1CharacterSelect(
     newMenu_DrawMaterialRect(
         183, 372.8f, -200.0f, 740.0f, 244.80002f,
         4, UINT32_C(0xc8ffffff), 0.0f);
-    if (next_converted >= 0) {
-        newMenu_DrawMaterialRect(
-            201 + next_converted,
-            399.4f, -188.0f, 713.0f, 231.20001f,
-            4, UINT32_C(0x6effffff), 0.1f);
-    }
+    newMenu_DrawMaterialRect(
+        201 + next_converted,
+        399.4f, -188.0f, 713.0f, 231.20001f,
+        4, UINT32_C(0x6effffff), 0.1f);
     newMenu_DrawMaterialRect(
         184, 399.4f, -188.0f, 713.0f, 231.20001f,
         4, UINT32_C(0x6effffff), 0.2f);
@@ -4862,9 +5051,7 @@ static void newMenu_DrawP1CharacterSelect(
     (void)SDLTextWriteScaleMM(
         11, 255, 2, (int)x, (int)y,
         name_scale, 0, L"%ls",
-        converted_model >= 0
-            ? newMenu_Text(332u + (unsigned)converted_model)
-            : L"");
+        newMenu_Text(332u + (unsigned)converted_model));
     x = 0.0f;
     y = 11.0f;
     setPivotPositionMM(&x, &y, 1);
@@ -4946,6 +5133,7 @@ static void newMenu_DrawP2CharacterSelect(
     if (GameStruct.gameMode != 6 && GameStruct.gameMode != 7) {
         winDrawBackground(175);
     }
+    drawControlsIcon();
 
     x = 230.0f;
     y = -60.0f;
@@ -5020,7 +5208,7 @@ static void newMenu_DrawP2CharacterSelect(
 
     if (GameStruct.gameCompleted != 0 || is_versus != 0) {
         newMenu_DrawControllerTabs(
-            0, 170.0f, 770.0f, 3, 0);
+            0, 120.0f, 820.0f, 3, 0);
         x = 170.0f;
         y = -427.0f;
         setPivotPositionMM(&x, &y, 3);
@@ -5040,12 +5228,10 @@ static void newMenu_DrawP2CharacterSelect(
     newMenu_DrawMaterialRect(
         183, 240.5f, -278.0f, 699.5f, 278.0f,
         3, UINT32_C(0xffffffff), 0.0f);
-    if (converted_one >= 0) {
-        newMenu_DrawMaterialRect(
-            201 + converted_one,
-            274.0f, -262.0f, 665.0f, 261.0f,
-            3, UINT32_C(0xffffffff), 0.1f);
-    }
+    newMenu_DrawMaterialRect(
+        201 + converted_one,
+        274.0f, -262.0f, 665.0f, 261.0f,
+        3, UINT32_C(0xffffffff), 0.1f);
     newMenu_DrawMaterialRect(
         184, 274.0f, -262.0f, 665.0f, 261.0f,
         3, UINT32_C(0xffffffff), 0.2f);
@@ -5072,9 +5258,7 @@ static void newMenu_DrawP2CharacterSelect(
     (void)SDLTextWriteScaleMM(
         11, 255, 2, (int)x, (int)y,
         name_scale, 0, L"%ls",
-        converted_one >= 0
-            ? newMenu_Text(332u + (unsigned)converted_one)
-            : L"");
+        newMenu_Text(332u + (unsigned)converted_one));
     newMenu_DrawMaterialRect(
         189, 269.5f, 250.0f, 670.5f, 141.0f,
         6, UINT32_C(0xffffffff), 0.0f);
@@ -5128,8 +5312,8 @@ static void newMenu_DrawP2CharacterSelect(
     if (GameStruct.gameCompleted != 0 || is_versus != 0) {
         newMenu_DrawControllerTabs(
             (int)(uint8_t)GameStruct.NumPlayers - 1,
-            170.0f,
-            770.0f,
+            120.0f,
+            820.0f,
             5,
             1);
         x = 770.0f;
@@ -5151,12 +5335,10 @@ static void newMenu_DrawP2CharacterSelect(
     newMenu_DrawMaterialRect(
         183, 699.5f, -278.0f, 240.5f, 278.0f,
         5, UINT32_C(0xffffffff), 0.0f);
-    if (converted_two >= 0) {
-        newMenu_DrawMaterialRect(
-            201 + converted_two,
-            665.0f, -262.0f, 274.0f, 261.0f,
-            5, UINT32_C(0xffffffff), 0.1f);
-    }
+    newMenu_DrawMaterialRect(
+        201 + converted_two,
+        665.0f, -262.0f, 274.0f, 261.0f,
+        5, UINT32_C(0xffffffff), 0.1f);
     newMenu_DrawMaterialRect(
         184, 665.0f, -262.0f, 274.0f, 261.0f,
         5, UINT32_C(0xffffffff), 0.2f);
@@ -5183,9 +5365,7 @@ static void newMenu_DrawP2CharacterSelect(
     (void)SDLTextWriteScaleMM(
         11, 255, 2, (int)x, (int)y,
         name_scale, 0, L"%ls",
-        converted_two >= 0
-            ? newMenu_Text(332u + (unsigned)converted_two)
-            : L"");
+        newMenu_Text(332u + (unsigned)converted_two));
     newMenu_DrawMaterialRect(
         189, 670.5f, 250.0f, 269.5f, 141.0f,
         8, UINT32_C(0xffffffff), 0.0f);
@@ -5315,12 +5495,10 @@ static void newMenu_DrawTraining(int model, uint32_t pad)
     newMenu_DrawMaterialRect(
         183, 240.5f, -278.0f, 699.5f, 278.0f,
         3, UINT32_C(0xffffffff), 0.0f);
-    if (converted_model >= 0) {
-        newMenu_DrawMaterialRect(
-            201 + converted_model,
-            274.0f, -262.0f, 665.0f, 261.0f,
-            3, UINT32_C(0xffffffff), 0.1f);
-    }
+    newMenu_DrawMaterialRect(
+        201 + converted_model,
+        274.0f, -262.0f, 665.0f, 261.0f,
+        3, UINT32_C(0xffffffff), 0.1f);
     newMenu_DrawMaterialRect(
         184, 274.0f, -262.0f, 665.0f, 261.0f,
         3, UINT32_C(0xffffffff), 0.2f);
@@ -5337,9 +5515,7 @@ static void newMenu_DrawTraining(int model, uint32_t pad)
     (void)SDLTextWriteScaleMM(
         11, 255, 2, (int)left_x, (int)left_y,
         1.75f, 0, L"%ls",
-        converted_model >= 0
-            ? newMenu_Text(332u + (unsigned)converted_model)
-            : L"");
+        newMenu_Text(332u + (unsigned)converted_model));
 
     newMenu_DrawMaterialRect(
         189, 269.5f, 250.0f, 670.5f, 141.0f,
@@ -5444,7 +5620,10 @@ int newMenu_P1CharacterSelect(void)
     uint32_t pad_one = menuVars.pad[0];
 
     if (p1Disconnected != 0) {
-        /* The exact reconnect presentation is a separate pending owner. */
+        if (GameStruct.gameMode != 6 && GameStruct.gameMode != 7) {
+            winDrawBackground(5);
+        }
+        menu_drawReconnect();
         return 0;
     }
     if (newMenu_state == 0) {
@@ -5572,7 +5751,10 @@ int newMenu_P2CharacterSelect(int isVS)
     uint32_t pad_two = 0;
 
     if (p1Disconnected != 0 || p2Disconnected != 0) {
-        /* The exact reconnect presentation is a separate pending owner. */
+        if (GameStruct.gameMode != 6 && GameStruct.gameMode != 7) {
+            winDrawBackground(5);
+        }
+        menu_drawReconnect();
         return 0;
     }
     if (newMenu_state == 0) {
@@ -5829,6 +6011,10 @@ int newMenu_Training(void)
     uint32_t pad = menuVars.pad[0];
 
     if (p1Disconnected != 0) {
+        if (GameStruct.gameMode != 6 && GameStruct.gameMode != 7) {
+            winDrawBackground(5);
+        }
+        menu_drawReconnect();
         return 0;
     }
     if (newMenu_state == 0) {
@@ -5860,7 +6046,7 @@ int newMenu_Training(void)
         if ((pad & JPB_PAD_LEFT) != 0) {
             do {
                 ++GameStruct.ModelSelect[0];
-                if (GameStruct.ModelSelect[0] > battle_d_model) {
+                if (GameStruct.ModelSelect[0] > plasma_model) {
                     GameStruct.ModelSelect[0] = 0;
                 }
             } while (!jedi_CheckValidPlayer(GameStruct.ModelSelect[0]));
@@ -5872,7 +6058,7 @@ int newMenu_Training(void)
             do {
                 --GameStruct.ModelSelect[0];
                 if (GameStruct.ModelSelect[0] < 0) {
-                    GameStruct.ModelSelect[0] = battle_d_model;
+                    GameStruct.ModelSelect[0] = plasma_model;
                 }
             } while (!jedi_CheckValidPlayer(GameStruct.ModelSelect[0]));
             if (jpb_menu_platform_hooks.soundCue != NULL) {
@@ -5968,9 +6154,6 @@ static void menu_drawControllerMaterial(
     SCREENRECT dst;
     CVECTOR color = {225, 225, 225, 255};
 
-    if (material == NULL) {
-        return;
-    }
     left = center_x - (float)material->iw * 0.15f;
     right = center_x + (float)material->iw * 0.15f;
     bottom = top_y + (float)material->ih * 0.3f;
@@ -5986,9 +6169,7 @@ static void menu_drawControllerMaterial(
 static float menu_controllerIconLeft(
     _Material *material, float center_x)
 {
-    return material != NULL
-        ? center_x - (float)material->iw * 0.15f
-        : center_x;
+    return center_x - (float)material->iw * 0.15f;
 }
 
 static void menu_drawControlsText(
@@ -5998,10 +6179,6 @@ static void menu_drawControlsText(
     int mode,
     float scale)
 {
-    if (text_index >= JPB_ALL_TEXT_CAPACITY ||
-        allText[text_index] == NULL) {
-        return;
-    }
     setPivotPositionMM(&x, &y, 4);
     (void)SDLTextWriteScaleMM(
         11, 255, mode, (int)x, (int)y,
@@ -6055,7 +6232,7 @@ static void menu_drawControllerOverview(
 
                 menu_drawControllerMaterial(modifier, force_x, y);
                 plus_x = force_x +
-                    (force != NULL ? (float)force->iw * 0.15f : 0.0f) +
+                    (float)force->iw * 0.15f +
                     scaleAdjustmentMM * 12.0f;
                 plus_y = y + scaleAdjustmentMM * 8.0f;
                 setPivotPositionMM(&plus_x, &plus_y, 4);

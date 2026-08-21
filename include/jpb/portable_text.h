@@ -19,6 +19,15 @@ typedef struct JPBPortableTextMetrics {
     int usedTrueType;
 } JPBPortableTextMetrics;
 
+enum { JPB_PORTABLE_TEXT_CONTROL_GLYPH_CAPACITY = 16 };
+
+typedef struct JPBPortableTextControlGlyph {
+    int iconIndex;
+    int alpha;
+    int x;
+    int y;
+} JPBPortableTextControlGlyph;
+
 /*
  * Exact matched-PC font selection performed by getFontFile. Language 6 uses
  * the three Simplified-Chinese faces; the remaining languages use the shared
@@ -33,6 +42,25 @@ int jpb_PortableTextPointSize(
 
 /* Exact 17-entry text tint table, returned as CVECTOR byte order. */
 uint32_t jpb_PortableTextTint(int tint);
+
+/*
+ * Recovered DrawUITextUTF16 control-marker pass. The aligned origin is
+ * measured before the marker pass mutates the string, matching the retail
+ * renderer's SizeText -> DrawUITextUTF16 call order.
+ */
+int jpb_PortableTextPrepareControlGlyphs(
+    wchar_t *text,
+    size_t text_capacity,
+    int mode,
+    int x,
+    int y,
+    float scale,
+    int font_style,
+    int language,
+    float scale_adjustment,
+    int *origin_x,
+    JPBPortableTextControlGlyph *glyphs,
+    size_t glyph_capacity);
 
 /*
  * Dependency-light realization of the matched SDL_ttf/FontAtlas boundary.

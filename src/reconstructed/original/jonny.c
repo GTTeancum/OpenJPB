@@ -909,6 +909,33 @@ void jon_texscroll(void *mapbase, int frame_step)
  * PDB type: void (int*)
  * Source: W:\SWJediPowerBattles\work\jonny.c
  */
+void restore_events(int32_t *mapbase)
+{
+    int32_t *initial_next = eventlist_next;
+    int32_t *cursor = initial_next;
+
+    for (;;) {
+        int32_t *entry = cursor - 2;
+        uint32_t byte_offset;
+
+        if (entry == eventlist_start) {
+            entry = eventlist_end - 2;
+        }
+        byte_offset = (uint32_t)entry[0] << 2;
+        if (byte_offset == 0) {
+            break;
+        }
+        *(uint16_t *)((uint8_t *)mapbase + byte_offset) =
+            (uint16_t)entry[1];
+        cursor = entry;
+        if (cursor == initial_next) {
+            break;
+        }
+    }
+    eventlist_start[0] = 0;
+    eventlist_start[1] = 0;
+    eventlist_next = eventlist_start + 2;
+}
 
 /* 0xB6370, 3 bytes, global, 1 named locals
  * set_camera

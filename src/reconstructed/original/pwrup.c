@@ -726,7 +726,7 @@ void pwrup_CheckPowerUps(void)
     }
     rotation.vy = (int16_t)powerrott;
     powerrott = (powerrott + 0x20u) & 0xfffu;
-    gPoopMode = (int32_t)initialLevelPauseDelay;
+    gPoopMode = (int32_t)GameStruct.ComboLevel;
     source = &poopList[mDrawingSurfaceId];
     destination = &poopList[mDrawingSurfaceId ^ 1];
 

@@ -361,6 +361,13 @@ static int test_block_buster_nearby_cube_scan(void)
         7);
     CHECK(eventlist_start[2] == ENTRY_INDEX);
     CHECK(eventlist_start[3] == EVENT_OFFSET);
+    restore_events(map);
+    CHECK(
+        *(uint16_t *)(void *)&map[ENTRY_INDEX] ==
+        EVENT_OFFSET);
+    CHECK(eventlist_start[0] == 0);
+    CHECK(eventlist_start[1] == 0);
+    CHECK(eventlist_next == eventlist_start + 2);
 
     gaPlayerData[0] = old_player;
     mapyend = old_mapyend;

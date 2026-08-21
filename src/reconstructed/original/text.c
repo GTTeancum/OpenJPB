@@ -294,6 +294,57 @@ int SDLTextWriteScaleMM(
     return result < 0 ? 0 : result;
 }
 
+int SDLTextWriteScaleMMDepth(
+    int tint,
+    int alpha,
+    int mode,
+    int x,
+    int y,
+    float scale,
+    int font_style,
+    float depth,
+    wchar_t *format,
+    ...)
+{
+    wchar_t formatted_string[256];
+    va_list arguments;
+    int result;
+
+    (void)depth;
+    if (format == NULL) {
+        return 0;
+    }
+    if (scale <= 0.0f) {
+        scale = 1.0f;
+    }
+    va_start(arguments, format);
+    result = vswprintf(
+        formatted_string,
+        sizeof(formatted_string) / sizeof(formatted_string[0]),
+        format,
+        arguments);
+    va_end(arguments);
+    if (result < 0) {
+        formatted_string[
+            sizeof(formatted_string) /
+                sizeof(formatted_string[0]) - 1] = L'\0';
+    }
+    if (jpb_text_draw_hook != NULL) {
+        return jpb_text_draw_hook(
+            jpb_text_draw_user_data,
+            tint,
+            alpha,
+            mode,
+            x,
+            y,
+            scale,
+            scaleAdjustmentMM * jpb_menu_text_dpi_scale,
+            font_style,
+            formatted_string);
+    }
+    return result < 0 ? 0 : result;
+}
+
 /* 0xFE0F0, 401 bytes, global, 13 named locals
  * SDLTextWriteScale3D
  * PDB type: int (unsigned long, int, float, ...
