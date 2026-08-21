@@ -38,14 +38,15 @@ enum {
     JPB_GAME_RUNTIME_ENEMY_CAPACITY =
         JPB_PLAYER_CAPACITY - 2,
     JPB_GAME_RUNTIME_SCREEN_DRAW_CAPACITY = 64,
-    JPB_GAME_RUNTIME_SCREEN_POLY_CAPACITY = 64,
+    JPB_GAME_RUNTIME_GLOW_DRAW_CAPACITY = 128,
+    JPB_GAME_RUNTIME_SCREEN_POLY_CAPACITY =
+        JPB_GAME_RUNTIME_GLOW_DRAW_CAPACITY * 6 + 64,
     JPB_GAME_RUNTIME_TEXT_DRAW_CAPACITY = 64,
     JPB_GAME_RUNTIME_TEXT_CAPACITY = 64,
     JPB_GAME_RUNTIME_DRAW3D_TEXT_CAPACITY = 64,
     JPB_GAME_RUNTIME_DRAW3D_TEXT_BYTES = 256,
     JPB_GAME_RUNTIME_SPRITE_DISPLAY_CAPACITY = 64,
-    JPB_GAME_RUNTIME_PSX_TEXTURE_DRAW_CAPACITY = 64,
-    JPB_GAME_RUNTIME_GLOW_DRAW_CAPACITY = 128
+    JPB_GAME_RUNTIME_PSX_TEXTURE_DRAW_CAPACITY = 64
 };
 
 typedef struct JPBGameRuntimeTextureCache
@@ -119,9 +120,6 @@ typedef int (*JPBGameRuntimeGameplayCompositeHook)(
     void *user_data,
     enum JPBGameRuntimeGameplayCompositeStage stage,
     const JPBSoftwareFramebuffer *framebuffer,
-    const JPBGameRuntimeGlowDraw *glow_draws,
-    size_t glow_draw_count,
-    MATRIX *view_matrix,
     JPBSoftwareRenderStats *stats);
 
 typedef struct JPBGameRuntimeTextDraw {
@@ -221,8 +219,6 @@ typedef struct JPBGameRuntime {
     void *powerupModelState;
     float *renderDepthBuffer;
     size_t renderDepthCapacity;
-    float *glowDepthBuffer;
-    size_t glowDepthCapacity;
     JPBJpxView meshView;
     JPBCadView cadView;
     JPBBmdView bmdView;
@@ -261,9 +257,7 @@ typedef struct JPBGameRuntime {
     double profileModelsSeconds;
     double profileEffectsSeconds;
     double profileScreenPolySeconds;
-    double profileDepthSnapshotSeconds;
     double profileHudSeconds;
-    double profileGlowSeconds;
     double profileHudReplaySeconds;
     double profileCompositeUploadSeconds;
     double profileCompositeFinishSeconds;
@@ -274,9 +268,7 @@ typedef struct JPBGameRuntime {
     double profileLastModelsSeconds;
     double profileLastEffectsSeconds;
     double profileLastScreenPolySeconds;
-    double profileLastDepthSnapshotSeconds;
     double profileLastHudSeconds;
-    double profileLastGlowSeconds;
     double profileLastHudReplaySeconds;
     double profileLastCompositeUploadSeconds;
     double profileLastCompositeFinishSeconds;
@@ -305,9 +297,7 @@ typedef struct JPBGameRuntime {
     double profileMaxModelsSeconds;
     double profileMaxEffectsSeconds;
     double profileMaxScreenPolySeconds;
-    double profileMaxDepthSnapshotSeconds;
     double profileMaxHudSeconds;
-    double profileMaxGlowSeconds;
     double profileMaxHudReplaySeconds;
     double profileMaxCompositeUploadSeconds;
     double profileMaxCompositeFinishSeconds;
@@ -518,8 +508,6 @@ typedef struct JPBGameRuntime {
         JPB_GAME_RUNTIME_GLOW_DRAW_CAPACITY];
     size_t glowDrawCount;
     size_t glowDrawDroppedCount;
-    size_t glowDrawCompositePixelCount;
-    size_t glowDrawDepthRejectedPixelCount;
     size_t cylinderDrawCount;
     JPBGameRuntimeScreenPolyDraw screenPolyDraws[
         JPB_GAME_RUNTIME_SCREEN_POLY_CAPACITY];

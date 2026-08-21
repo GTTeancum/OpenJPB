@@ -8,7 +8,8 @@
 - [ ] Live-test pickups, death/retry, continues, and game over.
 - [ ] Diagnose the unattended upside-down/death-like failure.
 - [ ] Audit scripted player control across all levels.
-- [ ] Complete manual FMV and saber review.
+- [ ] Live-review the source-reconstructed saber blade.
+- [ ] Complete manual FMV review.
 - [ ] Triage the remaining soak warnings.
 - [ ] Finish FMV hardening and decoder packaging.
 - [ ] Expand boss coverage and repeat visible boss smoke.
@@ -50,7 +51,7 @@ The corrected no-harness arena hold remains on authored dolly `45` and camera ty
 ### 1.4 Pending Manual Review
 
 - [ ] Verify startup and level-1 FMVs in a visible, unmuted window, including volume, A/V sync, skip, and return state.
-- [ ] Review the current saber color/width proof sheets in `docs/SABER_TUNING_AUDIT.md`.
+- [ ] Review the source-reconstructed saber blade staged on 2026-08-21.
 - [ ] Repeat boss smoke visibly with local display and audio available.
 
 ### 1.5 Follow-up
@@ -68,7 +69,7 @@ The corrected no-harness arena hold remains on authored dolly `45` and camera ty
 - [x] Unwanted controller movement is gone in live testing; simulated controls require explicit `--control-harness`.
 - [x] Powerup contact and the shipped death/reset lifecycle are implemented and regression-covered.
 - [x] Current targeted staged smoke reports `2 pass / 0 warning / 0 fail`.
-- [x] Saber size is normal in-window in the latest live report.
+- **Pending review:** the static saber blade now uses the source-reconstructed six-quad `a_glow.tga` path; noncanonical host line/disc glow fallbacks are removed.
 - **Monitor:** FPS stalls are not reproducing in the latest live report; retain the current smoke results as the baseline.
 - **Paused pending review:** do not expand or rerun FMV smoke until the existing proof has been reviewed.
 
@@ -118,10 +119,8 @@ The corrected no-harness arena hold remains on authored dolly `45` and camera ty
 - Done: canonical default-white texture resolution is wired for the runtime cache. Exact default white material requests (`white.png`) and the model-stream `s/white.tga` request resolve through installed `res\default\white.tga`; the FED `d` route at `1920x1080` now reports no `texture_load_failed` rows in `out/texture-white-fed-d-900.stderr.txt`.
 - Done: powerup pickup BMD presentation now uses the existing D3D screen-poly triangle sink instead of CPU rasterizing the post-scene pickup pass. The 1800-frame FED harness improved from repeated mid-run `247..352ms` render stalls to a single startup stall; steady run reported `fps=59.14`, `render_avg=5.008ms`, and `powerups_ms=18.272` max at frame 0.
 - Done: D3D model vertex-buffer growth now allocates to retained capacity instead of exact high-water vertex count, removing the earlier model-buffer recreate spike.
-- Done: D3D saber/glow projection uses the same gameplay viewport as the world/model path, preventing the glow overlay from drifting or scaling against the wrong frame basis in widescreen.
-- Done: D3D model/effect/glow submissions use a scissor rect matching the gameplay viewport; the default viewport is now the full `1920x1080` source rather than a centered 4:3 region.
-- Done: reverted the D3D glow width experiment that treated `fx_screenGlow` as a direct HD screen-space width; hardware glow now matches the software renderer's canonical projected-radius calculation inside the authored gameplay viewport.
-- Done: D3D glow radius is capped by the authored `fx_screenGlow` command width so close-camera sabers cannot balloon beyond the canonical radius budget. Proof build was `SHA-256 53E35BC31857EC5D05862E6C1DB42D970B5123FD1664ECF1B016DF3C94B1C2DC`; retained proof is `out/fps-audio-preseed-fed-900-1080.png`.
+- Done: D3D model and immediate-effect submissions use the same full `1920x1080` gameplay viewport and scissor rect as the world path.
+- Superseded: the former projected-radius/capped-radius D3D glow experiment and matching software disc renderer were removed after direct `fx_screenGlow` reconstruction proved that the executable itself builds the six camera-space blade quads.
 - Done: default runtime logging stays quiet; opt-in `--profile-runtime` stall details now log at `25ms` so short hitches are diagnosable without affecting ordinary in-window play.
 - Done: runtime enemy/animation deep profiling is now opt-in behind `--profile-runtime`, so normal in-window play no longer pays the per-frame `clock()` cost or prints deep stall details by default.
 - Done: live Win32 pad reads are cached once per frame per pad, so the original repeated `input_ReadControlPad` calls no longer resample XInput multiple times inside a frame. Current staged no-harness FED smoke improved from `render_max=57.398ms`, `missed=6/899`, `input_ms=14.000` to `render_max=21.213ms`, `missed=0/899`, `input_ms=0.000`.
@@ -148,13 +147,18 @@ The corrected no-harness arena hold remains on authored dolly `45` and camera ty
 
 ### 5.1 Current Status
 
-- Done: first saber size, glow thickness, and color tuning pass is implemented against remaster references.
-- Pending review: compare the HD proof sheets `out/saber-current-hd/contact-sheet-crop.png` and `out/saber-alt-hd/contact-sheet-crop.png` against the retained reference artifacts. Request a second color/width pass only if the first pass reads too hot, too dim, or too thick in-window.
-- Current tuned constants and proof are recorded in `docs/SABER_TUNING_AUDIT.md`; retained artifacts are in `out/saber-current`, `out/saber-current-hd`, `out/saber-alt-hd`, and `out/saber-reference`.
+- Pending user review: direct shipped-EXE reconstruction of `fx_screenGlow` now emits the exact 12-vertex/six-quad `a_glow.tga` geometry, UV topology, packed color, no-scale submission, and depth bias.
+- Done: restored caller constants for normal, Blade Extender, and Blade Amplifier paths. Normal blades use extent `112`, outer width `14..19`, and white-core width `2`; Extender uses extent `196`, outer width `24..31`, and core width `6`; Amplifier uses width `16`.
+- Done: removed the separate D3D procedural line shader and software glow-disc renderer. Both backends now consume only the canonical immediate polygons.
+- Done: added exact all-six-quad regression coverage and staged 1920x1080 FED software/D3D smoke.
+- Pending: replace the rejected distant FED screenshot with a close, unobstructed native-1080 visual proof before requesting blade sign-off.
+- Scope note: attack blur/trails and powered-cylinder flourishes remain separate effect paths; this item concerns the blade, as clarified on 2026-08-21.
+- The user-provided remaster screenshot from 2026-08-21 and retained online footage are visual context only. They must not supply implementation values or substitute for RE evidence.
+- Exact findings, historical context, and proof are recorded in `docs/SABER_TUNING_AUDIT.md`.
 
-### 5.2 Historical Reference Record
+### 5.2 Historical Visual Context Only
 
-- Use footage specifically from the 2025 Aspyr remaster as the visual target; original-release footage does not represent the remaster's changed saber color behavior.
+- These links document the earlier visual tuning pass only. They are not authoritative implementation evidence and must not drive further blade changes.
 - Official remaster color-toggle reference: PlayStation Blog says the remaster can switch classic colors to new colors aligned with broader Star Wars media, with Mace `blue -> purple`, Adi Gallia `red -> blue`, Plo Koon `yellow -> blue`, and Ki-Adi-Mundi `purple -> blue`: `https://blog.playstation.com/2024/12/05/star-wars-episode-i-jedi-power-battles-reveals-new-lightsaber-color-toggle-feature/`.
 - `Star Wars Episode I: Jedi Power Battles [REMASTERED]` playlist: `https://www.youtube.com/playlist?list=PLWoB_QSNfUdDKoTc5JvSWiC3opVjJl1Ia`
 - `Episode I: Jedi Power Battles Remastered (PC)` playlist: `https://www.youtube.com/playlist?list=PLnJPQhyLkUVxozxg1bhEcTBJrZ1Ajtpws`

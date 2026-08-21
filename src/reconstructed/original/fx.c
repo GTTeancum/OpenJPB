@@ -1,6 +1,6 @@
 /*
  * PARTIAL RECONSTRUCTION. PlotZap, fx_GlowingMan, fx_PlasmaZap, and the
- * dependency-light fx_screenGlow realization are reviewed; the remaining
+ * shipped-executable fx_screenGlow realization are reviewed; the remaining
  * emitted procedures retain explicit inventory markers below.
  * PDB module: 0038
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\fx.obj
@@ -470,20 +470,123 @@ void fx_screenGlow(
     int width,
     uint32_t color)
 {
-    /*
-     * The original procedure projects a twelve-vertex glow volume and emits
-     * six immediate-mode quads. Keep its exact public call surface while the
-     * dependency-free PC renderer owns realization of those draw commands.
-     */
-    if (jpb_screen_glow_hook != NULL &&
-        start != NULL &&
-        end != NULL) {
+    static const uint32_t quad_topology[6] = {
+        UINT32_C(0x54103210),
+        UINT32_C(0x98541032),
+        UINT32_C(0x65213311),
+        UINT32_C(0xa9651133),
+        UINT32_C(0x76322301),
+        UINT32_C(0xba760123)
+    };
+    static const float texture_coordinates[4][2] = {
+        {0.01f, 0.01f},
+        {0.99f, 0.01f},
+        {0.01f, 0.99f},
+        {0.99f, 0.99f}
+    };
+    const double depth_bias = 0.0000016;
+    FVECTOR transformed_start;
+    FVECTOR transformed_end;
+    FVECTOR vertices[12];
+    float x_difference;
+    float y_difference;
+    float inverse_length = 1.0f;
+    float x_offset;
+    float y_offset;
+    double length_squared;
+    int quad;
+
+    if (jpb_screen_glow_hook != NULL) {
         jpb_screen_glow_hook(
             jpb_screen_glow_user_data,
             start,
             end,
             width,
             color);
+    }
+
+    PerspectiveTransform(&CameraMatrix, start, &transformed_start);
+    PerspectiveTransform(&CameraMatrix, end, &transformed_end);
+    x_difference = transformed_end.vx - transformed_start.vx;
+    y_difference = transformed_end.vy - transformed_start.vy;
+    length_squared =
+        (double)y_difference * (double)y_difference +
+        (double)x_difference * (double)x_difference;
+    if (length_squared != 0.0) {
+        inverse_length = 1.0f / (float)sqrt(length_squared);
+    }
+    x_offset = y_difference * inverse_length * (float)width;
+    y_offset = x_difference * inverse_length * (float)width;
+    transformed_start.vz =
+        (float)((double)transformed_start.vz - depth_bias);
+    transformed_end.vz =
+        (float)((double)transformed_end.vz - depth_bias);
+
+    vertices[0] = (FVECTOR){
+        transformed_start.vx - x_offset - y_offset,
+        transformed_start.vy + y_offset - x_offset,
+        transformed_start.vz};
+    vertices[1] = (FVECTOR){
+        transformed_start.vx - x_offset,
+        transformed_start.vy + y_offset,
+        transformed_start.vz};
+    vertices[2] = (FVECTOR){
+        transformed_end.vx - x_offset,
+        transformed_end.vy + y_offset,
+        transformed_end.vz};
+    vertices[3] = (FVECTOR){
+        transformed_end.vx + y_offset - x_offset,
+        transformed_end.vy + x_offset + y_offset,
+        transformed_end.vz};
+    vertices[4] = (FVECTOR){
+        transformed_start.vx - y_offset,
+        transformed_start.vy - x_offset,
+        transformed_start.vz};
+    vertices[5] = transformed_start;
+    vertices[6] = transformed_end;
+    vertices[7] = (FVECTOR){
+        transformed_end.vx + y_offset,
+        transformed_end.vy + x_offset,
+        transformed_end.vz};
+    vertices[8] = (FVECTOR){
+        transformed_start.vx + x_offset - y_offset,
+        transformed_start.vy - x_offset - y_offset,
+        transformed_start.vz};
+    vertices[9] = (FVECTOR){
+        transformed_start.vx + x_offset,
+        transformed_start.vy - y_offset,
+        transformed_start.vz};
+    vertices[10] = (FVECTOR){
+        transformed_end.vx + x_offset,
+        transformed_end.vy - y_offset,
+        transformed_end.vz};
+    vertices[11] = (FVECTOR){
+        transformed_end.vx + x_offset + y_offset,
+        transformed_end.vy + x_offset - y_offset,
+        transformed_end.vz};
+
+    for (quad = 0; quad < 6; ++quad) {
+        uint32_t packed = quad_topology[quad];
+        int vertex;
+
+        _StartPoly(4, additive_glowtexture);
+        for (vertex = 0; vertex < 4; ++vertex) {
+            unsigned texture_index =
+                (packed >> (vertex * 4)) & UINT32_C(0x0f);
+            unsigned position_index =
+                (packed >> (16 + vertex * 4)) & UINT32_C(0x0f);
+            const FVECTOR *position = &vertices[position_index];
+
+            _SetVert(
+                vertex,
+                position->vx,
+                position->vy,
+                position->vz,
+                color,
+                texture_coordinates[texture_index][0],
+                texture_coordinates[texture_index][1]);
+        }
+        _NoScaleEndPoly();
     }
 }
 

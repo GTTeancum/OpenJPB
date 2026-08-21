@@ -33,13 +33,6 @@ typedef struct JPBPCD3D11WorldConstants {
     float transparentPass[4];
 } JPBPCD3D11WorldConstants;
 
-typedef struct JPBPCD3D11GlowConstants {
-    float endpoints[4];
-    float depthRadius[4];
-    float color[4];
-    float viewport[4];
-} JPBPCD3D11GlowConstants;
-
 typedef struct JPBPCD3D11WorldTexture {
     const uint32_t *sourcePixels;
     size_t width;
@@ -108,9 +101,6 @@ struct JPBPCD3D11Presenter {
     ID3D11PixelShader *modelPixelShader;
     ID3D11PixelShader *screenOpaquePixelShader;
     ID3D11PixelShader *screenTransparentPixelShader;
-    ID3D11PixelShader *glowPixelShader;
-    ID3D11VertexShader *glowVertexShader;
-    ID3D11Buffer *glowConstants;
     ID3D11PixelShader *gameplayCompositePixelShader;
     ID3D11InputLayout *modelInputLayout;
     ID3D11Buffer *modelConstants;
@@ -252,39 +242,6 @@ static const char pc_model_shader[] =
     "PSOutput PSImmediateTransparent(VSOutput input) { PSOutput output; float4 sample = materialTexture.Sample(materialSampler, input.uv);\n"
     " output.color = sample * input.color; output.depth = input.depth; return output; }\n"
     ;
-
-static const char pc_glow_shader[] =
-    "cbuffer GlowConstants : register(b0) {\n"
-    "  float4 endpoints; float4 depthRadius; float4 glowColor; float4 viewport;\n"
-    "};\n"
-    "Texture2D<float> sceneDepth : register(t0);\n"
-    "struct GlowOutput { float4 position : SV_Position; float2 pixel : TEXCOORD0; };\n"
-    "GlowOutput VSGlow(uint id : SV_VertexID) {\n"
-    "  GlowOutput output; float2 low = min(endpoints.xy, endpoints.zw) - depthRadius.z;\n"
-    "  float2 high = max(endpoints.xy, endpoints.zw) + depthRadius.z; float2 selector;\n"
-    "  if (id == 0) selector = float2(0,0); else if (id == 1 || id == 3) selector = float2(0,1);\n"
-    "  else if (id == 2 || id == 5) selector = float2(1,0); else selector = float2(1,1);\n"
-    "  float2 pixel = lerp(low, high, selector);\n"
-    "  output.position = float4(pixel.x * viewport.z - 1.0, 1.0 - pixel.y * viewport.w, 0.0, 1.0); output.pixel = pixel; return output;\n"
-    "}\n"
-    "float4 PSGlow(GlowOutput input) : SV_Target {\n"
-    "  float2 p = input.pixel; float2 segment = endpoints.zw - endpoints.xy;\n"
-    "  float length2 = max(dot(segment, segment), 0.0001); float lengthPixels = sqrt(length2);\n"
-    "  float t = saturate(dot(p - endpoints.xy, segment) / length2);\n"
-    "  float radius2 = depthRadius.z * depthRadius.z;\n"
-    "  float glowDepth = lerp(depthRadius.x, depthRadius.y, t) - 0.0000016 / 10240.0;\n"
-    "  int2 pixel = int2(p); if (pixel.x < 0 || pixel.y < 0 || pixel.x >= (int)viewport.x || pixel.y >= (int)viewport.y) discard;\n"
-    "  float sceneDepthValue = sceneDepth.Load(int3(pixel, 0));\n"
-    "  if (sceneDepthValue > 0.0 && glowDepth >= sceneDepthValue) discard;\n"
-    "  int steps = max((int)(lengthPixels + 0.5), 1);\n"
-    "  int middle = (int)(t * steps + 0.5); int reach = (int)ceil(depthRadius.z) + 2;\n"
-    "  int first = max(0, middle - reach); int last = min(steps, middle + reach); float coverageSum = 0.0;\n"
-    "  [loop] for (int i = first; i <= last; ++i) { float f = (float)i / (float)steps;\n"
-    "    float2 delta = p - lerp(endpoints.xy, endpoints.zw, f); float distance2 = dot(delta, delta);\n"
-    "    if (distance2 <= radius2) coverageSum += max(24.0 / 255.0, 1.0 - distance2 / radius2);\n"
-    "  }\n"
-    "  return float4(saturate(glowColor.rgb * glowColor.a * coverageSum), 1.0);\n"
-    "}\n";
 
 static void pc_present_release_target(JPBPCD3D11Presenter *presenter)
 {
@@ -721,8 +678,6 @@ static HRESULT pc_present_compile_model_shaders(
     ID3DBlob *ps = NULL;
     ID3DBlob *screen_opaque_ps = NULL;
     ID3DBlob *screen_transparent_ps = NULL;
-    ID3DBlob *glow_vs = NULL;
-    ID3DBlob *glow_ps = NULL;
     ID3DBlob *errors = NULL;
     HRESULT result;
 
@@ -730,18 +685,6 @@ static HRESULT pc_present_compile_model_shaders(
         pc_model_shader, sizeof(pc_model_shader) - 1,
         "OpenJPBModel.hlsl", NULL, NULL, "VSModel", "vs_4_0",
         D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &vs, &errors);
-    if (errors != NULL) { ID3D10Blob_Release(errors); errors = NULL; }
-    if (FAILED(result)) goto cleanup;
-    result = D3DCompile(
-        pc_glow_shader, sizeof(pc_glow_shader) - 1,
-        "OpenJPBGlow.hlsl", NULL, NULL, "VSGlow", "vs_4_0",
-        D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &glow_vs, &errors);
-    if (errors != NULL) { ID3D10Blob_Release(errors); errors = NULL; }
-    if (FAILED(result)) goto cleanup;
-    result = D3DCompile(
-        pc_glow_shader, sizeof(pc_glow_shader) - 1,
-        "OpenJPBGlow.hlsl", NULL, NULL, "PSGlow", "ps_4_0",
-        D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &glow_ps, &errors);
     if (errors != NULL) { ID3D10Blob_Release(errors); errors = NULL; }
     if (FAILED(result)) goto cleanup;
     result = D3DCompile(
@@ -778,18 +721,6 @@ static HRESULT pc_present_compile_model_shaders(
         ID3D10Blob_GetBufferSize(screen_transparent_ps), NULL,
         &presenter->screenTransparentPixelShader);
     if (FAILED(result)) goto cleanup;
-    result = ID3D11Device_CreatePixelShader(
-        presenter->device,
-        ID3D10Blob_GetBufferPointer(glow_ps),
-        ID3D10Blob_GetBufferSize(glow_ps), NULL,
-        &presenter->glowPixelShader);
-    if (FAILED(result)) goto cleanup;
-    result = ID3D11Device_CreateVertexShader(
-        presenter->device,
-        ID3D10Blob_GetBufferPointer(glow_vs),
-        ID3D10Blob_GetBufferSize(glow_vs), NULL,
-        &presenter->glowVertexShader);
-    if (FAILED(result)) goto cleanup;
     result = ID3D11Device_CreateVertexShader(
         presenter->device, ID3D10Blob_GetBufferPointer(vs),
         ID3D10Blob_GetBufferSize(vs), NULL,
@@ -807,8 +738,6 @@ static HRESULT pc_present_compile_model_shaders(
         ID3D10Blob_GetBufferSize(vs),
         &presenter->modelInputLayout);
 cleanup:
-    if (glow_ps != NULL) ID3D10Blob_Release(glow_ps);
-    if (glow_vs != NULL) ID3D10Blob_Release(glow_vs);
     if (screen_transparent_ps != NULL) {
         ID3D10Blob_Release(screen_transparent_ps);
     }
@@ -833,11 +762,6 @@ static HRESULT pc_present_create_model_states(
     result = ID3D11Device_CreateBuffer(
         presenter->device, &buffer_desc, NULL,
         &presenter->modelConstants);
-    if (FAILED(result)) return result;
-    buffer_desc.ByteWidth = sizeof(JPBPCD3D11GlowConstants);
-    result = ID3D11Device_CreateBuffer(
-        presenter->device, &buffer_desc, NULL,
-        &presenter->glowConstants);
     if (FAILED(result)) return result;
     memset(&sampler_desc, 0, sizeof(sampler_desc));
     sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -1858,187 +1782,15 @@ static HRESULT pc_present_compose_gameplay_base(
     return S_OK;
 }
 
-static int pc_present_glow_constants(
-    const JPBGameRuntimeGlowDraw *draw,
-    MATRIX *view,
-    const JPBSoftwareFramebuffer *framebuffer,
-    JPBPCD3D11GlowConstants *constants)
-{
-    FVECTOR world_start;
-    FVECTOR world_end;
-    FVECTOR radius_point;
-    FVECTOR screen_start;
-    FVECTOR screen_end;
-    FVECTOR screen_radius;
-    float radius_x;
-    float radius_y;
-    float radius_pixels = 1.0f;
-
-    world_start.vx = (float)draw->start.vx;
-    world_start.vy = (float)draw->start.vy;
-    world_start.vz = (float)draw->start.vz;
-    world_end.vx = (float)draw->end.vx;
-    world_end.vy = (float)draw->end.vy;
-    world_end.vz = (float)draw->end.vz;
-    if (jpb_ProjectPcGameplayToViewport(
-            view, &world_start,
-            (float)framebuffer->width,
-            (float)framebuffer->height,
-            &screen_start) != 0 ||
-        jpb_ProjectPcGameplayToViewport(
-            view, &world_end,
-            (float)framebuffer->width,
-            (float)framebuffer->height,
-            &screen_end) != 0 ||
-        !(screen_start.vz > 0.0f) ||
-        !(screen_end.vz > 0.0f)) {
-        return 0;
-    }
-    radius_point.vx = world_start.vx +
-        view->m[0][0] * ((float)draw->radius * 0.5f);
-    radius_point.vy = world_start.vy +
-        view->m[0][1] * ((float)draw->radius * 0.5f);
-    radius_point.vz = world_start.vz +
-        view->m[0][2] * ((float)draw->radius * 0.5f);
-    if (draw->radius > 0 &&
-        jpb_ProjectPcGameplayToViewport(
-            view, &radius_point,
-            (float)framebuffer->width,
-            (float)framebuffer->height,
-            &screen_radius) == 0) {
-        radius_x = screen_radius.vx - screen_start.vx;
-        radius_y = screen_radius.vy - screen_start.vy;
-        radius_pixels = sqrtf(
-            radius_x * radius_x + radius_y * radius_y);
-    }
-    if (radius_pixels < 1.0f) radius_pixels = 1.0f;
-    /*
-     * fx_screenGlow's width is the command's visible radius budget. Projecting
-     * a world-space half-width keeps distant glows from becoming too thin, but
-     * close camera tracks must not magnify the blade beyond the authored
-     * radius and turn normal sabers into fat bars.
-     */
-    {
-        float radius_limit =
-            draw->radius > 0 ? (float)draw->radius : 1.0f;
-
-        if (radius_pixels > radius_limit) {
-            radius_pixels = radius_limit;
-        }
-    }
-    memset(constants, 0, sizeof(*constants));
-    constants->endpoints[0] = screen_start.vx;
-    constants->endpoints[1] = screen_start.vy;
-    constants->endpoints[2] = screen_end.vx;
-    constants->endpoints[3] = screen_end.vy;
-    constants->depthRadius[0] = screen_start.vz;
-    constants->depthRadius[1] = screen_end.vz;
-    constants->depthRadius[2] = floorf(radius_pixels + 0.5f);
-    constants->color[0] =
-        (float)((draw->color >> 16) & UINT32_C(0xff)) / 255.0f;
-    constants->color[1] =
-        (float)((draw->color >> 8) & UINT32_C(0xff)) / 255.0f;
-    constants->color[2] =
-        (float)(draw->color & UINT32_C(0xff)) / 255.0f;
-    constants->color[3] =
-        (float)((draw->color >> 24) & UINT32_C(0xff)) / 255.0f;
-    constants->viewport[0] = (float)framebuffer->width;
-    constants->viewport[1] = (float)framebuffer->height;
-    constants->viewport[2] = 2.0f / (float)framebuffer->width;
-    constants->viewport[3] = 2.0f / (float)framebuffer->height;
-    return 1;
-}
-
-static HRESULT pc_present_submit_glows(
-    JPBPCD3D11Presenter *presenter,
-    const JPBGameRuntimeGlowDraw *draws,
-    size_t draw_count,
-    MATRIX *view,
-    const JPBSoftwareFramebuffer *framebuffer,
-    JPBSoftwareRenderStats *stats)
-{
-    D3D11_MAPPED_SUBRESOURCE mapped;
-    D3D11_VIEWPORT viewport;
-    D3D11_RECT scissor_rect;
-    ID3D11ShaderResourceView *null_view = NULL;
-    size_t draw_index;
-    memset(&viewport, 0, sizeof(viewport));
-    viewport.Width = (float)framebuffer->width;
-    viewport.Height = (float)framebuffer->height;
-    viewport.MaxDepth = 1.0f;
-    pc_present_gameplay_scissor_rect(framebuffer, &scissor_rect);
-    ID3D11DeviceContext_OMSetRenderTargets(
-        presenter->context, 1,
-        &presenter->gameplayCompositeTarget,
-        NULL);
-    ID3D11DeviceContext_OMSetBlendState(
-        presenter->context, presenter->worldAdditiveBlend,
-        NULL, UINT_MAX);
-    ID3D11DeviceContext_RSSetState(
-        presenter->context,
-        presenter->worldScissorRasterizer);
-    ID3D11DeviceContext_RSSetViewports(
-        presenter->context, 1, &viewport);
-    ID3D11DeviceContext_RSSetScissorRects(
-        presenter->context, 1, &scissor_rect);
-    ID3D11DeviceContext_IASetInputLayout(
-        presenter->context, NULL);
-    ID3D11DeviceContext_IASetPrimitiveTopology(
-        presenter->context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    ID3D11DeviceContext_VSSetShader(
-        presenter->context, presenter->glowVertexShader, NULL, 0);
-    ID3D11DeviceContext_VSSetConstantBuffers(
-        presenter->context, 0, 1, &presenter->glowConstants);
-    ID3D11DeviceContext_PSSetShader(
-        presenter->context, presenter->glowPixelShader, NULL, 0);
-    ID3D11DeviceContext_PSSetConstantBuffers(
-        presenter->context, 0, 1, &presenter->glowConstants);
-    ID3D11DeviceContext_PSSetShaderResources(
-        presenter->context, 0, 1,
-        &presenter->worldLinearDepthView);
-    for (draw_index = 0; draw_index < draw_count; ++draw_index) {
-        JPBPCD3D11GlowConstants constants;
-        HRESULT result;
-
-        if (!pc_present_glow_constants(
-                &draws[draw_index], view, framebuffer, &constants)) {
-            continue;
-        }
-        result = ID3D11DeviceContext_Map(
-            presenter->context,
-            (ID3D11Resource *)presenter->glowConstants,
-            0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-        if (FAILED(result)) return result;
-        memcpy(mapped.pData, &constants, sizeof(constants));
-        ID3D11DeviceContext_Unmap(
-            presenter->context,
-            (ID3D11Resource *)presenter->glowConstants, 0);
-        ID3D11DeviceContext_Draw(presenter->context, 6, 0);
-    }
-    ID3D11DeviceContext_PSSetShaderResources(
-        presenter->context, 0, 1, &null_view);
-    ID3D11DeviceContext_OMSetRenderTargets(
-        presenter->context, 0, NULL, NULL);
-    ID3D11DeviceContext_RSSetState(
-        presenter->context, presenter->worldRasterizer);
-    if (stats != NULL) {
-        stats->lines += draw_count;
-        stats->modelLines += draw_count;
-    }
-    return S_OK;
-}
-
 int jpb_PCD3D11PresenterGameplayComposite(
     JPBPCD3D11Presenter *presenter,
     int stage,
     const JPBSoftwareFramebuffer *framebuffer,
-    const JPBGameRuntimeGlowDraw *glow_draws,
-    size_t glow_draw_count,
-    MATRIX *view_matrix,
     JPBSoftwareRenderStats *stats)
 {
     HRESULT result;
 
+    (void)stats;
     if (presenter == NULL || framebuffer == NULL) return 0;
     if (stage == JPB_GAMEPLAY_COMPOSITE_HUD_BLACK ||
         stage == JPB_GAMEPLAY_COMPOSITE_HUD_WHITE) {
@@ -2053,11 +1805,6 @@ int jpb_PCD3D11PresenterGameplayComposite(
             framebuffer);
     } else if (stage == JPB_GAMEPLAY_COMPOSITE_FINISH) {
         result = pc_present_compose_gameplay_base(presenter);
-        if (SUCCEEDED(result)) {
-            result = pc_present_submit_glows(
-                presenter, glow_draws, glow_draw_count,
-                view_matrix, framebuffer, stats);
-        }
         presenter->gameplayCompositeReady = SUCCEEDED(result);
     } else {
         result = E_INVALIDARG;
@@ -2399,12 +2146,9 @@ void jpb_PCD3D11PresenterDestroy(JPBPCD3D11Presenter *presenter)
     if (presenter->modelPointSampler != NULL) ID3D11SamplerState_Release(presenter->modelPointSampler);
     if (presenter->modelLinearSampler != NULL) ID3D11SamplerState_Release(presenter->modelLinearSampler);
     if (presenter->modelConstants != NULL) ID3D11Buffer_Release(presenter->modelConstants);
-    if (presenter->glowConstants != NULL) ID3D11Buffer_Release(presenter->glowConstants);
     if (presenter->modelInputLayout != NULL) ID3D11InputLayout_Release(presenter->modelInputLayout);
     if (presenter->screenTransparentPixelShader != NULL) ID3D11PixelShader_Release(presenter->screenTransparentPixelShader);
     if (presenter->screenOpaquePixelShader != NULL) ID3D11PixelShader_Release(presenter->screenOpaquePixelShader);
-    if (presenter->glowPixelShader != NULL) ID3D11PixelShader_Release(presenter->glowPixelShader);
-    if (presenter->glowVertexShader != NULL) ID3D11VertexShader_Release(presenter->glowVertexShader);
     if (presenter->modelPixelShader != NULL) ID3D11PixelShader_Release(presenter->modelPixelShader);
     if (presenter->modelVertexShader != NULL) ID3D11VertexShader_Release(presenter->modelVertexShader);
     if (presenter->worldWhiteView != NULL) ID3D11ShaderResourceView_Release(presenter->worldWhiteView);

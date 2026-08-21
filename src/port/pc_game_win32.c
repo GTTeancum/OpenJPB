@@ -4199,15 +4199,11 @@ static int pc_gameplay_composite_d3d11(
     void *user_data,
     enum JPBGameRuntimeGameplayCompositeStage stage,
     const JPBSoftwareFramebuffer *framebuffer,
-    const JPBGameRuntimeGlowDraw *glow_draws,
-    size_t glow_draw_count,
-    MATRIX *view_matrix,
     JPBSoftwareRenderStats *stats)
 {
     return jpb_PCD3D11PresenterGameplayComposite(
         (JPBPCD3D11Presenter *)user_data,
-        (int)stage, framebuffer, glow_draws,
-        glow_draw_count, view_matrix, stats);
+        (int)stage, framebuffer, stats);
 }
 
 static int pc_set_hardware_render_hooks(
@@ -14328,8 +14324,8 @@ int main(int argc, char **argv)
                             "powerups=%.3fms,sprites=%.3fms,"
                             "enemies=%.3fms,backdrop=%.3fms,"
                             "physics=%.3fms,owner=%.3fms) "
-                            "screen_poly=%.3fms depth=%.3fms hud=%.3fms "
-                            "glow=%.3fms hud_replay=%.3fms "
+                            "screen_poly=%.3fms hud=%.3fms "
+                            "hud_replay=%.3fms "
                             "composite=%.3f/%.3fms "
                             "enemy_create=(total=%.3fms,pool=%.3fms,"
                             "ai=%.3fms,model=%.3fms,anim=%.3fms,"
@@ -14377,9 +14373,7 @@ int main(int argc, char **argv)
                             runtime.profileLastSceneLevelOwnerSeconds *
                                 1000.0,
                             runtime.profileLastScreenPolySeconds * 1000.0,
-                            runtime.profileLastDepthSnapshotSeconds * 1000.0,
                             runtime.profileLastHudSeconds * 1000.0,
-                            runtime.profileLastGlowSeconds * 1000.0,
                             runtime.profileLastHudReplaySeconds * 1000.0,
                             runtime.profileLastCompositeUploadSeconds *
                                 1000.0,
@@ -15282,18 +15276,13 @@ int main(int argc, char **argv)
                         runtime.profileFrameCount);
                 printf(
                     "runtime_effect_timing=(frames=%u,screen_poly_avg_ms=%.3f,"
-                    "depth_snapshot_avg_ms=%.3f,hud_avg_ms=%.3f,"
-                    "glow_avg_ms=%.3f,hud_replay_avg_ms=%.3f,"
+                    "hud_avg_ms=%.3f,hud_replay_avg_ms=%.3f,"
                     "composite_upload_avg_ms=%.3f,"
                     "composite_finish_avg_ms=%.3f)\n",
                     runtime.profileFrameCount,
                     runtime.profileScreenPolySeconds * 1000.0 /
                         runtime.profileFrameCount,
-                    runtime.profileDepthSnapshotSeconds * 1000.0 /
-                        runtime.profileFrameCount,
                     runtime.profileHudSeconds * 1000.0 /
-                        runtime.profileFrameCount,
-                    runtime.profileGlowSeconds * 1000.0 /
                         runtime.profileFrameCount,
                     runtime.profileHudReplaySeconds * 1000.0 /
                         runtime.profileFrameCount,
@@ -15305,8 +15294,8 @@ int main(int argc, char **argv)
                     "runtime_phase_max=(frame_ms=%.3f,camera_ms=%.3f,"
                     "scene_ms=%.3f,world_ms=%.3f,models_ms=%.3f,"
                     "effects_ms=%.3f,screen_poly_ms=%.3f,"
-                    "depth_ms=%.3f,hud_ms=%.3f,glow_ms=%.3f,"
-                    "hud_replay_ms=%.3f,composite_upload_ms=%.3f,"
+                    "hud_ms=%.3f,hud_replay_ms=%.3f,"
+                    "composite_upload_ms=%.3f,"
                     "composite_finish_ms=%.3f)\n",
                     runtime.profileMaxFrameSeconds * 1000.0,
                     runtime.profileMaxCameraSeconds * 1000.0,
@@ -15315,9 +15304,7 @@ int main(int argc, char **argv)
                     runtime.profileMaxModelsSeconds * 1000.0,
                     runtime.profileMaxEffectsSeconds * 1000.0,
                     runtime.profileMaxScreenPolySeconds * 1000.0,
-                    runtime.profileMaxDepthSnapshotSeconds * 1000.0,
                     runtime.profileMaxHudSeconds * 1000.0,
-                    runtime.profileMaxGlowSeconds * 1000.0,
                     runtime.profileMaxHudReplaySeconds * 1000.0,
                     runtime.profileMaxCompositeUploadSeconds * 1000.0,
                     runtime.profileMaxCompositeFinishSeconds * 1000.0);
@@ -15996,10 +15983,7 @@ int main(int argc, char **argv)
           * those map-specific assertions from rejecting an otherwise filled
           * and camera-visible gameplay frame. */
          ((uint8_t)GameStruct.CurrentLevel == 0 &&
-          ((stats.lines != 0 &&
-            (runtime.glowDrawCompositePixelCount == 0 ||
-             stats.lines > runtime.glowDrawCount)) ||
-           stats.levelTransparentTriangles == 0 ||
+          (stats.levelTransparentTriangles == 0 ||
            /* The multi-class overlap faces no visible transparent pixels;
             * the ordinary FED smoke retains that material assertion. */
            (!input.validateMultiEnemy &&
@@ -16010,21 +15994,27 @@ int main(int argc, char **argv)
             bmd_path != NULL &&
             (runtime.glowDrawCount < 2 ||
              runtime.glowDrawDroppedCount != 0 ||
-             runtime.glowDrawCompositePixelCount == 0)))))) {
+             runtime.screenPolyDrawCount <
+                 runtime.glowDrawCount * 6 ||
+             runtime.screenPolyDroppedCount != 0 ||
+             runtime.screenPolyCompositePixelCount == 0)))))) {
         fprintf(
             stderr,
             "headless validation did not produce a textured, filled world "
             "through the selected camera "
             "(level=%u pixels=%zu transparent=%zu world=%zu "
-            "textures=%zu glow=%zu/%zu lines=%zu camera=%u)\n",
+            "textures=%zu glow=%zu/%zu screen_poly=%zu/%zu/%zu "
+            "camera=%u)\n",
             (unsigned)(uint8_t)GameStruct.CurrentLevel,
             stats.pixels,
             stats.levelTransparentPixels,
             runtime.worldRenderedPixels,
             runtime.worldLoadedTextures,
             runtime.glowDrawCount,
-            runtime.glowDrawCompositePixelCount,
-            stats.lines,
+            runtime.glowDrawDroppedCount,
+            runtime.screenPolyDrawCount,
+            runtime.screenPolyDroppedCount,
+            runtime.screenPolyCompositePixelCount,
             (unsigned)runtime.authoredCameraFrameCount);
         result = JPB_GAME_RUNTIME_RENDER_FAILED;
     }
@@ -18322,7 +18312,7 @@ int main(int argc, char **argv)
         "psx_texture=%zu/%zu "
         "player_hud=%zu/%zu/%zu "
         "screen_alpha=%zu/%zu/%zu/%zu "
-        "saber_glow=%zu/%zu/%zu/%zu cylinders=%zu "
+        "saber_glow=%zu/%zu cylinders=%zu "
         "screen_poly=%zu/%zu/%zu "
         "water_poly=%zu/%zu "
         "powerups=%zu/%zu/%zu/models:%zu/%zu "
@@ -18406,8 +18396,6 @@ int main(int argc, char **argv)
         runtime.rescueHudTextureAlphaModulatedPixelCount,
         runtime.glowDrawCount,
         runtime.glowDrawDroppedCount,
-        runtime.glowDrawCompositePixelCount,
-        runtime.glowDrawDepthRejectedPixelCount,
         runtime.cylinderDrawCount,
         runtime.screenPolyDrawCount,
         runtime.screenPolyDroppedCount,

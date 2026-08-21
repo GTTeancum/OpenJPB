@@ -69,7 +69,6 @@ typedef struct JPBSoftwareRenderStats {
     size_t modelTriangles;
     size_t modelLines;
     size_t modelPixels;
-    size_t glowDepthRejectedPixels;
 } JPBSoftwareRenderStats;
 
 typedef struct JPBSoftwareTexture {
@@ -321,22 +320,6 @@ int jpb_SoftwareRenderBmdMaterializedWithDepthToSink(
     JPBSoftwareDepthBuffer *depth_buffer,
     JPBSoftwareTriangleSink triangle_sink,
     void *triangle_user_data,
-    JPBSoftwareRenderStats *stats);
-
-/*
- * Portable realization seam for the original fx_screenGlow pass. PDB
- * fx_screenGlow submits _NoScaleEndPoly quads with camera-space z, so the
- * software backend accepts the shared depth surface and culls glow samples
- * hidden behind already-drawn scene geometry.
- */
-int jpb_SoftwareDrawGlowLine(
-    const _svector *start,
-    const _svector *end,
-    int world_width,
-    uint32_t color,
-    MATRIX *view_matrix,
-    JPBSoftwareFramebuffer *framebuffer,
-    const JPBSoftwareDepthBuffer *depth_buffer,
     JPBSoftwareRenderStats *stats);
 
 /*

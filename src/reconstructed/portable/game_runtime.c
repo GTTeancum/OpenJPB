@@ -1481,46 +1481,6 @@ static void game_runtime_flush_ordered_title_draws(
     }
 }
 
-static void game_runtime_flush_glow_draws(
-    JPBGameRuntime *runtime,
-    MATRIX *view,
-    JPBSoftwareFramebuffer *framebuffer,
-    const JPBSoftwareDepthBuffer *depth_buffer,
-    JPBSoftwareRenderStats *stats)
-{
-    size_t draw_index;
-    size_t pixels_before = stats != NULL ? stats->pixels : 0;
-    size_t rejected_before = stats != NULL
-        ? stats->glowDepthRejectedPixels
-        : 0;
-
-    if (runtime == NULL || view == NULL || framebuffer == NULL) {
-        return;
-    }
-    for (draw_index = 0;
-         draw_index < runtime->glowDrawCount;
-         ++draw_index) {
-        const JPBGameRuntimeGlowDraw *draw =
-            &runtime->glowDraws[draw_index];
-
-        (void)jpb_SoftwareDrawGlowLine(
-            &draw->start,
-            &draw->end,
-            draw->radius,
-            draw->color,
-            view,
-            framebuffer,
-            depth_buffer,
-            stats);
-    }
-    if (stats != NULL) {
-        runtime->glowDrawCompositePixelCount =
-            stats->pixels - pixels_before;
-        runtime->glowDrawDepthRejectedPixelCount =
-            stats->glowDepthRejectedPixels - rejected_before;
-    }
-}
-
 struct JPBGameRuntimeTextureCache {
     char directory[JPB_GAME_RUNTIME_PATH_CAPACITY];
     int levelIndex;
@@ -3403,50 +3363,6 @@ static int game_runtime_prepare_depth_buffer(
         (size_t)framebuffer->height;
     depth_buffer->strideValues =
         (size_t)framebuffer->stridePixels;
-    return 1;
-}
-
-static int game_runtime_snapshot_glow_depth_buffer(
-    JPBGameRuntime *runtime,
-    const JPBSoftwareDepthBuffer *source,
-    JPBSoftwareDepthBuffer *snapshot)
-{
-    size_t required;
-    float *resized;
-
-    if (runtime == NULL ||
-        source == NULL ||
-        snapshot == NULL ||
-        source->values == NULL ||
-        source->width == 0 ||
-        source->height == 0 ||
-        source->strideValues < source->width ||
-        source->height > SIZE_MAX / source->strideValues) {
-        return 0;
-    }
-    required = source->height * source->strideValues;
-    if (required > runtime->glowDepthCapacity) {
-        if (required > SIZE_MAX / sizeof(float)) {
-            return 0;
-        }
-        resized =
-            (float *)realloc(
-                runtime->glowDepthBuffer,
-                required * sizeof(float));
-        if (resized == NULL) {
-            return 0;
-        }
-        runtime->glowDepthBuffer = resized;
-        runtime->glowDepthCapacity = required;
-    }
-    memcpy(
-        runtime->glowDepthBuffer,
-        source->values,
-        required * sizeof(float));
-    snapshot->values = runtime->glowDepthBuffer;
-    snapshot->width = source->width;
-    snapshot->height = source->height;
-    snapshot->strideValues = source->strideValues;
     return 1;
 }
 
@@ -5866,11 +5782,9 @@ typedef struct JPBGameRuntimeFrameContext {
     JPBSoftwareFramebuffer *framebuffer;
     JPBSoftwareRenderStats *stats;
     JPBSoftwareDepthBuffer depthBuffer;
-    JPBSoftwareDepthBuffer glowDepthBuffer;
     int32_t previousAnimationIndices[JPB_ANIMATION_CAPACITY];
     double sceneStageStarted;
     int sharedDepthReady;
-    int glowDepthReady;
     int result;
 } JPBGameRuntimeFrameContext;
 
@@ -7280,7 +7194,6 @@ void jpb_GameRuntimeShutdown(JPBGameRuntime *runtime)
     game_runtime_free_texture_cache(
         runtime->defaultTextureCache);
     free(runtime->renderDepthBuffer);
-    free(runtime->glowDepthBuffer);
     free(runtime->world);
     memset(runtime, 0, sizeof(*runtime));
 }
@@ -7318,9 +7231,7 @@ int jpb_GameRuntimeFrame(
     runtime->profileLastModelsSeconds = 0.0;
     runtime->profileLastEffectsSeconds = 0.0;
     runtime->profileLastScreenPolySeconds = 0.0;
-    runtime->profileLastDepthSnapshotSeconds = 0.0;
     runtime->profileLastHudSeconds = 0.0;
-    runtime->profileLastGlowSeconds = 0.0;
     runtime->profileLastHudReplaySeconds = 0.0;
     runtime->profileLastCompositeUploadSeconds = 0.0;
     runtime->profileLastCompositeFinishSeconds = 0.0;
@@ -7369,8 +7280,6 @@ int jpb_GameRuntimeFrame(
     runtime->psxTextureDrawDroppedCount = 0;
     runtime->glowDrawCount = 0;
     runtime->glowDrawDroppedCount = 0;
-    runtime->glowDrawCompositePixelCount = 0;
-    runtime->glowDrawDepthRejectedPixelCount = 0;
     runtime->cylinderDrawCount = 0;
     runtime->screenPolyDrawCount = 0;
     runtime->screenPolyDroppedCount = 0;
@@ -7473,12 +7382,10 @@ int jpb_GameRuntimeFrame(
         game_runtime_wall_seconds() - stage_started);
     gCamera = runtime->camera;
     memset(&context.depthBuffer, 0, sizeof(context.depthBuffer));
-    memset(&context.glowDepthBuffer, 0, sizeof(context.glowDepthBuffer));
     context.runtime = runtime;
     context.framebuffer = framebuffer;
     context.stats = stats;
     context.sharedDepthReady = 0;
-    context.glowDepthReady = 0;
     context.result = JPB_GAME_RUNTIME_OK;
     game_runtime_active_frame = &context;
     enemy_frame_processed =
@@ -7609,28 +7516,6 @@ int jpb_GameRuntimeFrame(
     if (context.result != JPB_GAME_RUNTIME_OK) {
         return context.result;
     }
-    if (context.sharedDepthReady &&
-        runtime->gameplayCompositeHook == NULL) {
-        double snapshot_started = game_runtime_wall_seconds();
-        /*
-         * PDB fx_screenGlow emits depth-tested immediate quads. Capture the
-         * occluder surface after world, actors, enemies, and deferred
-         * immediate polys have all contributed to the shared depth buffer.
-         */
-        context.glowDepthReady =
-            game_runtime_snapshot_glow_depth_buffer(
-                runtime,
-                &context.depthBuffer,
-                &context.glowDepthBuffer);
-        if (!context.glowDepthReady) {
-            return JPB_GAME_RUNTIME_RENDER_FAILED;
-        }
-        game_runtime_record_duration(
-            &runtime->profileDepthSnapshotSeconds,
-            &runtime->profileLastDepthSnapshotSeconds,
-            &runtime->profileMaxDepthSnapshotSeconds,
-            game_runtime_wall_seconds() - snapshot_started);
-    }
     enemy_CheckTeleport();
     if (runtime->gameplayCompositeHook != NULL) {
         uint64_t hud_hash =
@@ -7709,8 +7594,7 @@ int jpb_GameRuntimeFrame(
             if (!runtime->gameplayCompositeHook(
                     runtime->gameplayCompositeUserData,
                     JPB_GAMEPLAY_COMPOSITE_HUD_BLACK,
-                    framebuffer, runtime->glowDraws,
-                    runtime->glowDrawCount, view, stats)) {
+                    framebuffer, stats)) {
                 runtime->gameplayHudCacheValid = 0;
                 return JPB_GAME_RUNTIME_RENDER_FAILED;
             }
@@ -7732,8 +7616,7 @@ int jpb_GameRuntimeFrame(
             if (!runtime->gameplayCompositeHook(
                     runtime->gameplayCompositeUserData,
                     JPB_GAMEPLAY_COMPOSITE_HUD_WHITE,
-                    framebuffer, runtime->glowDraws,
-                    runtime->glowDrawCount, view, stats)) {
+                    framebuffer, stats)) {
                 runtime->gameplayHudCacheValid = 0;
                 return JPB_GAME_RUNTIME_RENDER_FAILED;
             }
@@ -7783,8 +7666,7 @@ int jpb_GameRuntimeFrame(
         if (!runtime->gameplayCompositeHook(
                 runtime->gameplayCompositeUserData,
                 JPB_GAMEPLAY_COMPOSITE_FINISH,
-                framebuffer, runtime->glowDraws,
-                runtime->glowDrawCount, view, stats)) {
+                framebuffer, stats)) {
             return JPB_GAME_RUNTIME_RENDER_FAILED;
         }
         game_runtime_record_duration(
@@ -7792,8 +7674,6 @@ int jpb_GameRuntimeFrame(
             &runtime->profileLastCompositeFinishSeconds,
             &runtime->profileMaxCompositeFinishSeconds,
             game_runtime_wall_seconds() - stage_started);
-        runtime->glowDrawCompositePixelCount =
-            runtime->glowDrawCount != 0 ? 1 : 0;
     } else {
         {
             double hud_started = game_runtime_wall_seconds();
@@ -7805,19 +7685,6 @@ int jpb_GameRuntimeFrame(
                 &runtime->profileMaxHudSeconds,
                 game_runtime_wall_seconds() - hud_started);
         }
-        double glow_started = game_runtime_wall_seconds();
-
-        game_runtime_flush_glow_draws(
-            runtime,
-            view,
-            framebuffer,
-            context.glowDepthReady ? &context.glowDepthBuffer : NULL,
-            stats);
-        game_runtime_record_duration(
-            &runtime->profileGlowSeconds,
-            &runtime->profileLastGlowSeconds,
-            &runtime->profileMaxGlowSeconds,
-            game_runtime_wall_seconds() - glow_started);
     }
     game_runtime_record_duration(
         &runtime->profileEffectsSeconds,

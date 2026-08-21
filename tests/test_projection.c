@@ -32,6 +32,7 @@ typedef struct ScreenPolyTrace {
     int vertexCount;
     int noScale;
     JPBScreenPolyVertex vertices[4];
+    JPBScreenPolyVertex captured[8][4];
 } ScreenPolyTrace;
 
 typedef struct ScreenPolyTriangleTrace {
@@ -69,6 +70,7 @@ static void capture_screen_poly(
     int no_scale)
 {
     ScreenPolyTrace *trace = (ScreenPolyTrace *)user_data;
+    int call = trace->calls;
 
     ++trace->calls;
     trace->material = material;
@@ -79,6 +81,12 @@ static void capture_screen_poly(
             trace->vertices,
             vertices,
             (size_t)vertex_count * sizeof(trace->vertices[0]));
+        if (call < 8) {
+            memcpy(
+                trace->captured[call],
+                vertices,
+                (size_t)vertex_count * sizeof(trace->captured[0][0]));
+        }
     }
 }
 
@@ -89,10 +97,6 @@ int main(void)
     FVECTOR up = {0.0f, 1.0f, 0.0f};
     FVECTOR screen;
     MATRIX view;
-    uint32_t glow_pixels[64 * 64] = {0};
-    JPBSoftwareFramebuffer glow_framebuffer = {
-        glow_pixels, 64, 64, 64};
-    JPBSoftwareRenderStats glow_stats = {0};
     uint32_t poly_pixels[64 * 64] = {0};
     float poly_depth_values[64 * 64];
     JPBSoftwareFramebuffer poly_framebuffer = {
@@ -223,6 +227,57 @@ int main(void)
     CHECK(poly_trace.vertices[3].y == 301.0f);
     CHECK(poly_trace.vertices[3].z == 0.0001f);
     CHECK(poly_trace.vertices[3].argb == UINT32_C(0xff4080ff));
+
+    {
+        static const unsigned expected_positions[6][4] = {
+            {0, 1, 4, 5}, {4, 5, 8, 9}, {1, 2, 5, 6},
+            {5, 6, 9, 10}, {2, 3, 6, 7}, {6, 7, 10, 11}
+        };
+        static const unsigned expected_uvs[6][4] = {
+            {0, 1, 2, 3}, {2, 3, 0, 1}, {1, 1, 3, 3},
+            {3, 3, 1, 1}, {1, 0, 3, 2}, {3, 2, 1, 0}
+        };
+        static const float expected_vertices[12][2] = {
+            {-10.0f, 10.0f}, {0.0f, 10.0f},
+            {100.0f, 10.0f}, {110.0f, 10.0f},
+            {-10.0f, 0.0f}, {0.0f, 0.0f},
+            {100.0f, 0.0f}, {110.0f, 0.0f},
+            {-10.0f, -10.0f}, {0.0f, -10.0f},
+            {100.0f, -10.0f}, {110.0f, -10.0f}
+        };
+        static const float expected_uv_values[4][2] = {
+            {0.01f, 0.01f}, {0.99f, 0.01f},
+            {0.01f, 0.99f}, {0.99f, 0.99f}
+        };
+        int glow_quad;
+
+        glow_start = (_svector){0, 0, 1, 0};
+        glow_end = (_svector){100, 0, 1, 0};
+        memset(&poly_trace, 0, sizeof(poly_trace));
+        fx_screenGlow(
+            &glow_start, &glow_end, 10, UINT32_C(0x7f40c0ff));
+        CHECK(poly_trace.calls == 6);
+        CHECK(poly_trace.vertexCount == 4);
+        CHECK(poly_trace.noScale == 1);
+        for (glow_quad = 0; glow_quad < 6; ++glow_quad) {
+            int glow_vertex;
+
+            for (glow_vertex = 0; glow_vertex < 4; ++glow_vertex) {
+                unsigned position =
+                    expected_positions[glow_quad][glow_vertex];
+                unsigned uv = expected_uvs[glow_quad][glow_vertex];
+                const JPBScreenPolyVertex *actual =
+                    &poly_trace.captured[glow_quad][glow_vertex];
+
+                CHECK(actual->x == expected_vertices[position][0]);
+                CHECK(actual->y == expected_vertices[position][1]);
+                CHECK(fabsf(actual->z - 0.9999984f) < 0.0000001f);
+                CHECK(actual->argb == UINT32_C(0x7f40c0ff));
+                CHECK(actual->tu == expected_uv_values[uv][0]);
+                CHECK(actual->tv == expected_uv_values[uv][1]);
+            }
+        }
+    }
     OptionStruct.ScreenWidth = 1920;
     OptionStruct.ScreenHeight = 1080;
     jpb_WHookSetScreenPolyHook(NULL, NULL);
@@ -371,78 +426,6 @@ int main(void)
     up.vz = 0.0f;
     CHECK(jpb_BuildLookAtView(
               &eye, &target, &up, &view) == JPB_PROJECTION_OK);
-    CHECK(jpb_SoftwareDrawGlowLine(
-              &glow_start,
-              &glow_end,
-              4,
-              UINT32_C(0x7f40c0ff),
-              &view,
-              &glow_framebuffer,
-              NULL,
-              &glow_stats) == JPB_SOFTWARE_RENDER_OK);
-    CHECK(glow_stats.lines == 1);
-    CHECK(glow_stats.modelLines == 1);
-    CHECK(glow_stats.pixels > 0);
-    CHECK(glow_pixels[32 * 64 + 32] != 0);
-    memset(glow_pixels, 0, sizeof(glow_pixels));
-    memset(&glow_stats, 0, sizeof(glow_stats));
-    CHECK(jpb_SoftwareClearDepthBuffer(&poly_depth));
-    poly_depth_values[32 * 64 + 32] = 500.0f / 10240.0f;
-    CHECK(jpb_SoftwareDrawGlowLine(
-              &glow_start,
-              &glow_end,
-              4,
-              UINT32_C(0x7f40c0ff),
-              &view,
-              &glow_framebuffer,
-              &poly_depth,
-              &glow_stats) == JPB_SOFTWARE_RENDER_OK);
-    CHECK(glow_stats.lines == 1);
-    CHECK(glow_stats.pixels > 0);
-    CHECK(glow_pixels[32 * 64 + 32] == 0);
-    CHECK(glow_stats.glowDepthRejectedPixels > 0);
-    memset(glow_pixels, 0, sizeof(glow_pixels));
-    memset(&glow_stats, 0, sizeof(glow_stats));
-    for (int depth_index = 0; depth_index < 64 * 64; ++depth_index) {
-        poly_depth_values[depth_index] = 500.0f / 10240.0f;
-    }
-    CHECK(jpb_SoftwareDrawGlowLine(
-              &glow_start,
-              &glow_end,
-              4,
-              UINT32_C(0x7f40c0ff),
-              &view,
-              &glow_framebuffer,
-              &poly_depth,
-              &glow_stats) == JPB_SOFTWARE_RENDER_OK);
-    CHECK(glow_stats.lines == 1);
-    CHECK(glow_stats.pixels == 0);
-    CHECK(glow_stats.glowDepthRejectedPixels > 0);
-    memset(glow_pixels, 0, sizeof(glow_pixels));
-    memset(&glow_stats, 0, sizeof(glow_stats));
-    glow_start.vx = 0;
-    glow_end = glow_start;
-    CHECK(jpb_SoftwareDrawGlowLine(
-              &glow_start,
-              &glow_end,
-              0,
-              UINT32_C(0xffff0000),
-              &view,
-              &glow_framebuffer,
-              NULL,
-              &glow_stats) == JPB_SOFTWARE_RENDER_OK);
-    CHECK(glow_pixels[32 * 64 + 32] == UINT32_C(0x00ff0000));
-    CHECK(jpb_SoftwareDrawGlowLine(
-              NULL,
-              &glow_end,
-              4,
-              UINT32_C(0xffffffff),
-              &view,
-              &glow_framebuffer,
-              NULL,
-              &glow_stats) ==
-          JPB_SOFTWARE_RENDER_INVALID_ARGUMENT);
-
     material.flags = JPB_MATERIAL_MODE_TWO_SIDED;
     CHECK(jpb_SoftwareClearDepthBuffer(&poly_depth));
     CHECK(jpb_SoftwareDrawScreenPoly(

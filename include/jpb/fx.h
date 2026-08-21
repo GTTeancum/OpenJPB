@@ -10,11 +10,7 @@
 extern "C" {
 #endif
 
-/*
- * Inferred dependency-light realization seam for the original immediate-mode
- * screen-glow renderer. The gameplay-facing fx_screenGlow API retains its
- * exact PDB name and argument contract.
- */
+/* Optional observer for the reconstructed immediate-mode glow submission. */
 typedef void (*JPBFxScreenGlowHook)(
     void *user_data,
     const _svector *start,

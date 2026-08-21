@@ -496,10 +496,10 @@ drains, held-input continuation and cutscene-cancellation gates, masked
 target scans, authored reactions, effect cadence, flags, scales, sprite
 lifetimes, and item consumption. Exact `physics_FindWithinRange` restores
 the mesmerize callback's 20-actor iterator. Every persistent callback
-selection now points directly to its PDB-named body. The original
-immediate-mode geometry behind `fx_screenGlow` and `fx_GlowingMan` remains
-bounded behind dependency-free `jpb_` renderer hooks; their exact
-gameplay-facing call surfaces are retained. `force_ReflectCallBack` also
+selection now points directly to its PDB-named body. The shipped
+immediate-mode geometry behind `fx_screenGlow` is reconstructed exactly from
+the executable and emits its six `a_glow.tga` quads; the optional `jpb_` hook
+only observes those calls. `fx_GlowingMan` remains bounded. `force_ReflectCallBack` also
 publishes all sixteen authored `drawCylinderG` bands through a portable
 renderer boundary while preserving the exact radius, height, color, and
 rotation evolution. The original SDL-specific
@@ -768,10 +768,10 @@ scene/model/player eligibility and model-ID gates. PDB-named
 `jedi_HandleSabre` selects the authored node pairs and executable-backed
 colors, constructs fixed-point normal and long blades, handles the double
 blade, performs damaging-motion world sweeps and feedback, and publishes the
-tip-node timing state. `fx_screenGlow` remains the game-facing call surface;
-the portable PC renderer records, projects, and additively composites those
-segments after model rendering. Textured blur and powered cylinders currently
-use a documented glow fallback, so this closes the live ordinary saber path
+tip-node timing state. `fx_screenGlow` now reproduces the executable's
+camera-space 12-vertex construction and six textured no-scale quads. Software
+and D3D consume those same immediate polygons; the former host-authored line
+renderers are removed. Textured blur and powered cylinders remain separate, so this closes the live ordinary saber path
 without overstating immediate-mode presentation parity.
 
 The adjacent PDB-named `player_gProcessPlayers` now owns the live post-render

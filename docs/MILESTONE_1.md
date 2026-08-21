@@ -592,10 +592,10 @@ level-eight physics/collision reset tail. Exact `player_HandleSabre` now owns
 the original 20-slot post-scene eligibility pass. Its PDB-named
 `jedi_HandleSabre` dependency restores model-specific node pairs, blade
 colors, normal/long endpoints, double-blade handling, attack world sweeps,
-feedback, and node timing. The dependency-free PC renderer projects and
-additively composites the original `fx_screenGlow` calls; the real FED smoke
-proves two zero-drop blade passes and 3,304 composited pixels in the current
-three-frame Debug sample. The textured
+feedback, and node timing. The shipped `fx_screenGlow` implementation now
+projects the blade and emits its exact six `a_glow.tga` quads per pass; both PC
+backends consume that canonical immediate geometry. The real FED smoke proves
+two zero-drop blade passes and 12 glow polygons. The textured
 blur and powered cylinder realization remains bounded and is not claimed as
 immediate-mode parity. The scheduler's interleaved HUD/debug owners remain a
 separate presentation target.

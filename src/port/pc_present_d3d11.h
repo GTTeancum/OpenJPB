@@ -14,7 +14,6 @@ typedef struct JPBSoftwareDepthBuffer JPBSoftwareDepthBuffer;
 typedef struct JPBSoftwareRenderStats JPBSoftwareRenderStats;
 typedef struct JPBSoftwareMaterialVertex JPBSoftwareMaterialVertex;
 typedef struct JPBGameRuntimeScreenDraw JPBGameRuntimeScreenDraw;
-typedef struct JPBGameRuntimeGlowDraw JPBGameRuntimeGlowDraw;
 typedef struct MATRIX MATRIX;
 typedef int (*JPBPCPresentTextureResolver)(
     void *user_data,
@@ -111,9 +110,6 @@ int jpb_PCD3D11PresenterGameplayComposite(
     JPBPCD3D11Presenter *presenter,
     int stage,
     const JPBSoftwareFramebuffer *framebuffer,
-    const JPBGameRuntimeGlowDraw *glow_draws,
-    size_t glow_draw_count,
-    MATRIX *view_matrix,
     JPBSoftwareRenderStats *stats);
 int jpb_PCD3D11PresenterReadbackGameplay(
     JPBPCD3D11Presenter *presenter,
