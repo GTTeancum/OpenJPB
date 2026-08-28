@@ -15,17 +15,38 @@ debug, and mod.
 
 ## Screenshots
 
-Current replacement-engine main menu:
-
-![OpenJPB main menu](docs/assets/openjpb-main-menu.png)
-
-Current replacement-engine level select:
-
-![OpenJPB level select](docs/assets/openjpb-level-select.png)
-
-Current replacement-engine continue-pips gameplay HUD:
-
-![OpenJPB gameplay HUD](docs/assets/openjpb-hud.png)
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/assets/openjpb-main-menu.png" alt="OpenJPB main menu"><br>
+      <strong>Main Menu</strong>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/assets/openjpb-level-select.png" alt="OpenJPB level select"><br>
+      <strong>Level Select</strong>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/assets/openjpb-hud.png" alt="Battle droids outside the gas-filled room on the Trade Federation Battleship"><br>
+      <strong>Trade Federation Battleship</strong>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/assets/openjpb-palace.png" alt="Battle droids inside the Theed Palace"><br>
+      <strong>Theed Palace</strong>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/assets/openjpb-naboo-ruins.png" alt="Naboo Ruins forest gameplay"><br>
+      <strong>Naboo Ruins</strong>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/assets/openjpb-reactor-core.png" alt="Darth Maul in the Theed reactor core"><br>
+      <strong>Theed Reactor Core</strong>
+    </td>
+  </tr>
+</table>
 
 ## Status
 
