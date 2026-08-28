@@ -1,5 +1,5 @@
 /*
- * PARTIALLY REVIEWED RECONSTRUCTION.
+ * REVIEWED RECONSTRUCTION.
  * PDB module: 0009
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\braindmg.obj
  * Primary source: W:\SWJediPowerBattles\Work\braindmg.c
@@ -179,8 +179,7 @@ int braindmg_AirHitReaction(
         &player->playerRoot, 0);
     physics->airTime = 0;
     physics->realAirTime = 0;
-    player->pMotionCallBack =
-        jpb_TrajectoryCallbackSlot;
+    player->pMotionCallBack = funcArray[6];
     player->fStun = 0;
     player->hitNumber = 0;
     player->hitDelay =
@@ -763,8 +762,7 @@ int braindmg_DamageControl(void *player_data)
                                 &player->playerRoot, 0);
                             air_physics->airTime = 0;
                             air_physics->realAirTime = 0;
-                            player->pMotionCallBack =
-                                jpb_TrajectoryCallbackSlot;
+                            player->pMotionCallBack = funcArray[6];
                             player->fStun = 0;
                             player->hitNumber = 0;
                             player->hitDelay =

@@ -12,12 +12,12 @@ extern "C" {
 
 enum { JPB_PHYSICS_CAPACITY = 20 };
 
-typedef enum JPBPhysicsPartialResult {
-    JPB_PHYSICS_PARTIAL_OK = 0,
-    JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT = -1,
-    JPB_PHYSICS_PARTIAL_UNSUPPORTED_STATE = -2,
-    JPB_PHYSICS_PARTIAL_ALREADY_PROCESSED = -3
-} JPBPhysicsPartialResult;
+typedef enum JPBPhysicsResult {
+    JPB_PHYSICS_RESULT_OK = 0,
+    JPB_PHYSICS_RESULT_INVALID_ARGUMENT = -1,
+    JPB_PHYSICS_RESULT_UNSUPPORTED_STATE = -2,
+    JPB_PHYSICS_RESULT_ALREADY_PROCESSED = -3
+} JPBPhysicsResult;
 
 typedef enum MOVE_MODE {
     MOVE_NORMAL = 0,
@@ -33,17 +33,6 @@ typedef struct geomData geomData;
 typedef struct modelObject modelObject;
 typedef struct physicsObject physicsObject;
 typedef struct playerObject playerObject;
-
-/*
- * Inferred portable ownership seam for geomData streams. The matched loader
- * relocates these five archive offsets through addPtr before physics consumes
- * them. Portable immutable BMD views retain the offsets, so their owner may
- * resolve them here; unhandled streams still use the exact getPtr registry.
- */
-typedef void *(*JPBPhysicsGeometryStreamResolver)(
-    const geomData *geometry,
-    int pointer_type,
-    void *user_data);
 
 typedef struct _jheightstuff {
     int32_t *cube;
@@ -173,11 +162,6 @@ extern int32_t numsolids;
 extern FVECTOR4 collisionfrustrum[6];
 extern FVECTOR4 clippingfrustrum[6];
 extern uint8_t initialLevelPauseDelay;
-/*
- * Inferred name for the anonymous byte at matched-PC RVA 0x10DB3A4.
- * A nonzero value selects the shorter STREETS terminal-collision timeout.
- */
-extern uint8_t jpb_StreetsEndingShortCollisionTimeout;
 extern float fGlobalFrameRate;
 extern FVECTOR globalgravity;
 extern _collidevars cvars;
@@ -315,18 +299,24 @@ int jpb_PhysicsUpdateSceneObject(physicsObject *physics);
  * player slots zero and one.
  */
 int jpb_PhysicsSyncDriverState(int player_index);
+void DebugPlayer(physicsObject *physics);
+int console_HideMeshCommand(
+    int argument_count,
+    char **string_arguments,
+    int *integer_arguments,
+    float *float_arguments);
+int console_ShowMeshCommand(
+    int argument_count,
+    char **string_arguments,
+    int *integer_arguments,
+    float *float_arguments);
+void dumpmatrix(MATRIX *matrix);
 /*
  * Descriptive integration facade for exact file-local PDB procedures
  * BuildSolids and BuildNodeVertexList. Solid records retain their original
  * single-allocation ownership: normals aliases the tail of coords.
  */
 void jpb_PhysicsBuildSolids(void);
-void jpb_PhysicsSetGeometryStreamResolver(
-    JPBPhysicsGeometryStreamResolver resolver,
-    void *user_data);
-void *jpb_PhysicsResolveGeometryStream(
-    const geomData *geometry,
-    int pointer_type);
 /*
  * Descriptive integration/test seam for the exact physics.c module-local
  * `streetsending` countdown, now owned by the recovered level-eight trigger.

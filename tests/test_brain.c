@@ -30,6 +30,32 @@
         }                                                                    \
     } while (0)
 
+static uint32_t test_pose_words[3];
+
+static void init_test_animations(void)
+{
+    int index;
+
+    (anim_InitAnimations)(0);
+    for (index = 0; index < JPB_ANIMATION_CAPACITY; ++index) {
+        maAnimationData[index].depack_context.huffdataorigin =
+            test_pose_words;
+        maAnimationData[index].depack_context3.huffdataorigin =
+            test_pose_words;
+    }
+}
+
+static void init_test_templates(
+    _animTemplate *templates, size_t count)
+{
+    size_t index;
+
+    memset(templates, 0, count * sizeof(*templates));
+    for (index = 0; index < count; ++index) {
+        templates[index].Lframe = 10;
+    }
+}
+
 static void connect_player(
     playerObject *player, sceneObject *scene, physicsObject *physics)
 {
@@ -153,9 +179,10 @@ static int test_bounded_ground_direction(void)
     Motion motions[27];
 
     connect_player(&player, &scene, &physics);
-    anim_InitAnimations(0);
+    init_test_animations();
     animation = &maAnimationData[0];
-    memset(templates, 0, sizeof(templates));
+    init_test_templates(
+        templates, sizeof(templates) / sizeof(templates[0]));
     memset(motions, 0, sizeof(motions));
     player.playerRoot.objectID = 0;
     player.paMotions = motions;
@@ -181,7 +208,7 @@ static int test_bounded_ground_direction(void)
               1.0f, 0.0f, 0) == 5120);
     CHECK(jpb_BrainGroundDirectionState(
               &player, 1.0f, 0.0f, 0) ==
-          JPB_BRAIN_PARTIAL_OK);
+          JPB_BRAIN_RESULT_OK);
     CHECK(physics.angle.vy == 512);
     CHECK(physics.constmov.vz == 27.0f);
     CHECK(motions[1].vel == 0x15);
@@ -189,7 +216,7 @@ static int test_bounded_ground_direction(void)
     CHECK(animation->pMotion == &motions[1]);
     CHECK(jpb_BrainGroundDirectionState(
               &player, 1.0f, 0.0f, 0) ==
-          JPB_BRAIN_PARTIAL_NO_CHANGE);
+          JPB_BRAIN_RESULT_NO_CHANGE);
 
     player.playerID = 2;
     animation->Lock = 0;
@@ -197,17 +224,18 @@ static int test_bounded_ground_direction(void)
     motions[1].vel = 27;
     CHECK(jpb_BrainGroundDirectionState(
               &player, 1.0f, 0.0f, 0) ==
-          JPB_BRAIN_PARTIAL_OK);
+          JPB_BRAIN_RESULT_OK);
     CHECK(motions[1].vel == 27);
 
     animation->Lock = 0;
     player.currentMotion = 0;
     player.pFlags = 0x10;
+    animation->animFrameIndex = 0;
     physics.angle.vy = 512;
     physics.vmov.vx = 1;
     CHECK(jpb_BrainGroundDirectionState(
               &player, 0.0f, 1.0f, 0) ==
-          JPB_BRAIN_PARTIAL_OK);
+          JPB_BRAIN_RESULT_OK);
     CHECK(physics.angle.vy == 256);
     CHECK((physics.flags & 0x00001000u) != 0);
 
@@ -216,7 +244,7 @@ static int test_bounded_ground_direction(void)
     player.pFlags = 0x00400000u;
     CHECK(jpb_BrainGroundDirectionState(
               &player, 0.0f, 1.0f, 0) ==
-          JPB_BRAIN_PARTIAL_OK);
+          JPB_BRAIN_RESULT_OK);
     CHECK(player.currentMotion == 26);
     CHECK(physics.angle.vy == 4096);
     CHECK(motions[26].Speed == 0x24);
@@ -230,7 +258,7 @@ static int test_bounded_ground_direction(void)
     physics.angle.vy = 4096;
     CHECK(jpb_BrainGroundDirectionState(
               &player, 0.0f, -1.0f, 0) ==
-          JPB_BRAIN_PARTIAL_OK);
+          JPB_BRAIN_RESULT_OK);
     CHECK(player.currentMotion == 8);
     CHECK(physics.angle.vy == 2084);
     return 0;
@@ -248,9 +276,10 @@ static int test_bounded_ground_idle(void)
     int index;
 
     connect_player(&player, &scene, &physics);
-    anim_InitAnimations(0);
+    init_test_animations();
     animation = &maAnimationData[0];
-    memset(templates, 0, sizeof(templates));
+    init_test_templates(
+        templates, sizeof(templates) / sizeof(templates[0]));
     memset(motions, 0, sizeof(motions));
     player.playerRoot.objectID = 0;
     player.paMotions = motions;
@@ -278,7 +307,7 @@ static int test_bounded_ground_idle(void)
     motions[0].motionFlags = 1;
     player.pFlags = 0x01300010u;
     CHECK(jpb_BrainGroundIdleState(
-              &player, 26) == JPB_BRAIN_PARTIAL_OK);
+              &player, 26) == JPB_BRAIN_RESULT_OK);
     CHECK(player.currentMotion == 0);
     CHECK(player.previousMotion == 1);
     CHECK(player.runCounter == 0);
@@ -294,7 +323,7 @@ static int test_bounded_ground_idle(void)
     player.pMotion = NULL;
     player.pFlags = 0;
     CHECK(jpb_BrainGroundIdleState(
-              &player, 25) == JPB_BRAIN_PARTIAL_OK);
+              &player, 25) == JPB_BRAIN_RESULT_OK);
     CHECK(player.currentMotion == 19);
     CHECK(animation->pMotion == &motions[19]);
 
@@ -302,7 +331,7 @@ static int test_bounded_ground_idle(void)
     player.currentMotion = 1;
     player.pFlags = 0x00400000u;
     CHECK(jpb_BrainGroundIdleState(
-              &player, 100) == JPB_BRAIN_PARTIAL_OK);
+              &player, 100) == JPB_BRAIN_RESULT_OK);
     CHECK(player.currentMotion == 20);
     CHECK(animation->pMotion == &motions[20]);
 
@@ -313,7 +342,7 @@ static int test_bounded_ground_idle(void)
     player.pFlags = 0x00400000u;
     motions[25].FunctPtr = 0;
     CHECK(jpb_BrainGroundIdleState(
-              &player, 100) == JPB_BRAIN_PARTIAL_OK);
+              &player, 100) == JPB_BRAIN_RESULT_OK);
     CHECK(player.currentMotion == 25);
     CHECK(player.runCounter == 16);
     CHECK(player.hitDelay == 0);
@@ -339,9 +368,10 @@ static int test_bounded_lock_on_direction(void)
     connect_player(&player, &scene, &physics);
     connect_player(
         &target, &target_scene, &target_physics);
-    anim_InitAnimations(0);
+    init_test_animations();
     animation = &maAnimationData[0];
-    memset(templates, 0, sizeof(templates));
+    init_test_templates(
+        templates, sizeof(templates) / sizeof(templates[0]));
     memset(motions, 0, sizeof(motions));
     player.target = &target;
     player.paMotions = motions;
@@ -362,7 +392,7 @@ static int test_bounded_lock_on_direction(void)
     physics.angle.vy = 1000;
     player.runCounter = 9;
     CHECK(jpb_BrainLockOnDirectionState(
-              &player, 1000) == JPB_BRAIN_PARTIAL_OK);
+              &player, 1000) == JPB_BRAIN_RESULT_OK);
     CHECK(player.currentMotion == 26);
     CHECK(player.runCounter == 1);
     CHECK(physics.angle.vy == 1023);
@@ -376,7 +406,7 @@ static int test_bounded_lock_on_direction(void)
     player.currentMotion = 0;
     physics.angle.vy = 0;
     CHECK(jpb_BrainLockOnDirectionState(
-              &player, 1000) == JPB_BRAIN_PARTIAL_OK);
+              &player, 1000) == JPB_BRAIN_RESULT_OK);
     CHECK(player.currentMotion == 29);
     CHECK((motions[29].motionFlags & UINT32_C(8)) != 0);
 
@@ -384,7 +414,7 @@ static int test_bounded_lock_on_direction(void)
     player.currentMotion = 0;
     physics.angle.vy = 2000;
     CHECK(jpb_BrainLockOnDirectionState(
-              &player, 1000) == JPB_BRAIN_PARTIAL_OK);
+              &player, 1000) == JPB_BRAIN_RESULT_OK);
     CHECK(player.currentMotion == 30);
     CHECK((motions[30].motionFlags & UINT32_C(8)) != 0);
 
@@ -392,7 +422,7 @@ static int test_bounded_lock_on_direction(void)
     player.currentMotion = 0;
     physics.angle.vy = 2600;
     CHECK(jpb_BrainLockOnDirectionState(
-              &player, 1000) == JPB_BRAIN_PARTIAL_OK);
+              &player, 1000) == JPB_BRAIN_RESULT_OK);
     CHECK(player.currentMotion == 12);
     return 0;
 }
@@ -408,9 +438,10 @@ static int test_bounded_special_direction(void)
     int index;
 
     connect_player(&player, &scene, &physics);
-    anim_InitAnimations(0);
+    init_test_animations();
     animation = &maAnimationData[0];
-    memset(templates, 0, sizeof(templates));
+    init_test_templates(
+        templates, sizeof(templates) / sizeof(templates[0]));
     memset(motions, 0, sizeof(motions));
     player.playerRoot.objectID = 0;
     player.paMotions = motions;
@@ -429,7 +460,7 @@ static int test_bounded_special_direction(void)
     player.currentMotion = 0x3c;
     animation->Lock = 30;
     CHECK(jpb_BrainGroundSpecialDirectionState(
-              &player, 26) == JPB_BRAIN_PARTIAL_OK);
+              &player, 26) == JPB_BRAIN_RESULT_OK);
     CHECK(player.currentMotion == 0);
     CHECK(player.previousMotion == 0x3c);
     CHECK(animation->pMotion == &motions[0]);
@@ -439,7 +470,7 @@ static int test_bounded_special_direction(void)
     player.runCounter = 16;
     player.pFlags = 0x00400000u;
     CHECK(jpb_BrainGroundSpecialDirectionState(
-              &player, 26) == JPB_BRAIN_PARTIAL_OK);
+              &player, 26) == JPB_BRAIN_RESULT_OK);
     CHECK(player.currentMotion == 25);
     CHECK(motions[25].FunctPtr == 4);
     CHECK((player.pFlags & 0x00400000u) == 0);
@@ -447,7 +478,7 @@ static int test_bounded_special_direction(void)
     player.currentMotion = 1;
     CHECK(jpb_BrainGroundSpecialDirectionState(
               &player, 26) ==
-          JPB_BRAIN_PARTIAL_UNSUPPORTED_STATE);
+          JPB_BRAIN_RESULT_UNSUPPORTED_STATE);
     return 0;
 }
 
@@ -464,9 +495,10 @@ static int test_attack_transition(void)
     int index;
 
     connect_player(&player, &scene, &physics);
-    anim_InitAnimations(0);
+    init_test_animations();
     animation = &maAnimationData[0];
-    memset(templates, 0, sizeof(templates));
+    init_test_templates(
+        templates, sizeof(templates) / sizeof(templates[0]));
     memset(motions, 0, sizeof(motions));
     player.playerRoot.objectID = 0;
     player.paMotions = motions;
@@ -488,7 +520,7 @@ static int test_attack_transition(void)
     motions[15].motionFlags = UINT32_C(0x84000008);
     motions[15].disp = UINT8_C(7);
     CHECK(jpb_BrainGroundAttackState(&player) ==
-          JPB_BRAIN_PARTIAL_OK);
+          JPB_BRAIN_RESULT_OK);
     CHECK(player.currentMotion == 15);
     CHECK((player.pFlags & UINT32_C(0x20)) != 0);
     CHECK((player.pFlags & UINT32_C(0x10)) == 0);
@@ -505,7 +537,7 @@ static int test_attack_transition(void)
     player.pFlags = UINT32_C(0x00400000);
     motions[25].FunctPtr = 0;
     CHECK(jpb_BrainGroundAttackState(&player) ==
-          JPB_BRAIN_PARTIAL_OK);
+          JPB_BRAIN_RESULT_OK);
     CHECK(player.currentMotion == 25);
     CHECK(player.hitDelay == 0);
     CHECK(motions[25].FunctPtr == 4);
@@ -520,7 +552,7 @@ static int test_attack_transition(void)
     physics.constmov.vz = 5.0f;
     LevelSelect = 13;
     CHECK(jpb_BrainGroundAttackState(&player) ==
-          JPB_BRAIN_PARTIAL_OK);
+          JPB_BRAIN_RESULT_OK);
     CHECK(player.currentMotion == 0);
     CHECK(player.hitDelay == 0);
     CHECK(physics.constmov.vx == 0.0f);
@@ -545,12 +577,16 @@ typedef struct PlayTrace {
 } PlayTrace;
 
 static uint16_t trace_play_sound(
+    void *chunk,
+    int loops,
     VECTOR *position,
     int bank,
     char *sound,
     uint32_t flag,
     void *user_data)
 {
+    (void)chunk;
+    (void)loops;
     PlayTrace *trace = (PlayTrace *)user_data;
 
     trace->position = position;
@@ -600,7 +636,7 @@ static int test_effect_and_ring_control(void)
     player.pMotion = &current_motion;
     player.playernum = 1;
     model.eventMask = UINT32_C(5);
-    memcpy(motion.snd[1], "effects", 8);
+    memcpy(motion.snd[1], "jedihit", 7);
     motion.sndDelay[1] = 7;
     maPhysicsData[1].vpos.vx = 10;
     maPhysicsData[1].vpos.vy = 20;
@@ -609,13 +645,15 @@ static int test_effect_and_ring_control(void)
     CHECK(brainutl_FindLSB_LV(0) == 0);
     CHECK(brainutl_FindLSB_LV(1) == 1);
     CHECK(brainutl_FindLSB_LV(UINT32_C(0x80000000)) == 32);
+    CHECK(sound_LoadBank("resident", 2) == 0);
+    CHECK(sound_LoadBank("resident", 3) == 0);
     jpb_SoundSetPlaySfxHook(
         trace_play_sound, &play_trace);
     brain_CheckForEffects(&player);
     CHECK(play_trace.count == 2);
     CHECK(play_trace.position == &maPhysicsData[1].vpos);
     CHECK(play_trace.bank == 2);
-    CHECK(strcmp(play_trace.sound, "effects") == 0);
+    CHECK(strcmp(play_trace.sound, "jedihit") == 0);
     CHECK(play_trace.flag == 0);
     CHECK(model.eventMask == UINT32_C(5));
 
@@ -627,7 +665,7 @@ static int test_effect_and_ring_control(void)
     brain_CheckForEffects(&player);
     CHECK(play_trace.count == 2);
     maPhysicsData[4].vpos.vx = 40;
-    brainutl_PlayMotionSound(4, "direct", 99);
+    brainutl_PlayMotionSound(4, "rico1", 99);
     CHECK(play_trace.count == 3);
     CHECK(play_trace.position == &maPhysicsData[4].vpos);
     CHECK(play_trace.bank == 3);
@@ -636,6 +674,8 @@ static int test_effect_and_ring_control(void)
     brainutl_PlayMotionSound(0, "0disabled", 0);
     CHECK(play_trace.count == 3);
     jpb_SoundSetPlaySfxHook(NULL, NULL);
+    sound_FreeBank(2);
+    sound_FreeBank(3);
 
     meminit();
     sprite_gInitSprites();
@@ -703,9 +743,10 @@ static int test_ground_control(void)
     int index;
 
     connect_player(&player, &scene, &physics);
-    anim_InitAnimations(0);
+    init_test_animations();
     animation = &maAnimationData[0];
-    memset(templates, 0, sizeof(templates));
+    init_test_templates(
+        templates, sizeof(templates) / sizeof(templates[0]));
     memset(&current_node, 0, sizeof(current_node));
     memset(motions, 0, sizeof(motions));
     memset(&enemy, 0, sizeof(enemy));
@@ -722,6 +763,8 @@ static int test_ground_control(void)
     animation->depack_context.seqdata = templates;
     animation->pCurrentAnimSeq = &current_node;
     current_node.pAnimTemplate = &templates[3];
+    current_node.pMotion = &motions[3];
+    animation->pMotion = &motions[3];
     templates[3].Fframe = 4;
     templates[3].Lframe = 13;
     for (index = 0; index < 15; ++index) {
@@ -899,6 +942,7 @@ static int test_lock_on_lifecycle(void)
     ring_data->time = 200;
     paEffects[44] = &ring_on;
     paEffects[63] = &ring_off;
+    CHECK(sound_LoadBank("resident", 0) == 0);
     jpb_SoundSetPlaySfxHook(
         trace_play_sound, &play_trace);
 
@@ -943,6 +987,7 @@ static int test_lock_on_lifecycle(void)
     CHECK(player.locked == NULL);
     CHECK(player.pFlags == 0);
     jpb_SoundSetPlaySfxHook(NULL, NULL);
+    sound_FreeBank(0);
     paEffects[44] = NULL;
     paEffects[63] = NULL;
     return 0;
@@ -961,16 +1006,16 @@ static int test_animation_end_callbacks(void)
     Mnode event_node;
     Sprite shadow;
     SCB shadow_scb;
-    JPBPlayerCallback old_callback =
-        jpb_TrajectoryCallbackSlot;
+    JPBPlayerCallback old_callback = funcArray[6];
     unsigned seed;
     int index;
 
     connect_player(&player, &scene, &physics);
-    anim_InitAnimations(0);
+    init_test_animations();
     animation = &maAnimationData[0];
     memset(&current_node, 0, sizeof(current_node));
-    memset(templates, 0, sizeof(templates));
+    init_test_templates(
+        templates, sizeof(templates) / sizeof(templates[0]));
     memset(motions, 0, sizeof(motions));
     memset(&model, 0, sizeof(model));
     memset(&event_node, 0, sizeof(event_node));
@@ -984,6 +1029,8 @@ static int test_animation_end_callbacks(void)
     animation->depack_context.seqdata = templates;
     animation->pCurrentAnimSeq = &current_node;
     current_node.pAnimTemplate = &templates[0];
+    current_node.pMotion = &motions[0];
+    animation->pMotion = &motions[0];
     templates[0].Lframe = 10;
     player.playerRoot.objectID = 0;
     player.playernum = 3;
@@ -1030,8 +1077,7 @@ static int test_animation_end_callbacks(void)
 
     player.airVelocity = 200;
     player.airAngle = 0x200;
-    jpb_TrajectoryCallbackSlot =
-        trace_trajectory_callback;
+    funcArray[6] = trace_trajectory_callback;
     animation->animFrameIndex = 9 << 12;
     CHECK(brain_TakeOff(
               NULL, &player, NULL) == 0);
@@ -1067,7 +1113,7 @@ static int test_animation_end_callbacks(void)
     CHECK(player.hitDelay == UINT32_C(0x1c00));
     CHECK(player.groundDelay == UINT32_C(0x3000));
     CHECK(player.delayedMotion == 0);
-    jpb_TrajectoryCallbackSlot = old_callback;
+    funcArray[6] = old_callback;
     return 0;
 }
 
@@ -1087,13 +1133,14 @@ static int test_bounded_jump_launch(void)
 
     jpb_SceneInitPool(0);
     physics_gInitObjects(0);
-    anim_InitAnimations(0);
+    init_test_animations();
     scene = &maSceneData[0];
     physics = &maPhysicsData[0];
     animation = &maAnimationData[0];
     memset(&player, 0, sizeof(player));
     memset(&model, 0, sizeof(model));
-    memset(templates, 0, sizeof(templates));
+    init_test_templates(
+        templates, sizeof(templates) / sizeof(templates[0]));
     memset(motions, 0, sizeof(motions));
 
     scene->sceneRoot.objectID = 0;
@@ -1138,7 +1185,7 @@ static int test_bounded_jump_launch(void)
               &player,
               1,
               trace_trajectory_callback) ==
-          JPB_BRAIN_PARTIAL_NO_CHANGE);
+          JPB_BRAIN_RESULT_NO_CHANGE);
     CHECK(player.currentMotion == 0);
     CHECK(player.pMotionCallBack == NULL);
     CHECK(physics->reversoi == 99);
@@ -1148,7 +1195,7 @@ static int test_bounded_jump_launch(void)
               &player,
               1,
               trace_trajectory_callback) ==
-          JPB_BRAIN_PARTIAL_OK);
+          JPB_BRAIN_RESULT_OK);
     CHECK(player.currentMotion == 4);
     CHECK(animation->pMotion == &motions[4]);
     CHECK(player.airVelocity == -100);
@@ -1174,7 +1221,7 @@ static int test_bounded_jump_launch(void)
     CHECK(jpb_BrainAlternateJumpLaunchState(
               &player,
               trace_trajectory_callback) ==
-          JPB_BRAIN_PARTIAL_OK);
+          JPB_BRAIN_RESULT_OK);
     CHECK(player.currentMotion == 4);
     CHECK(animation->pMotion == &motions[4]);
     CHECK(physics->angle.vy == 0x0f80);

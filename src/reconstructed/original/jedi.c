@@ -1,13 +1,14 @@
 /*
- * PARTIAL REVIEWED RECONSTRUCTION of
+ * COMPLETE REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\Work\jedi.c.
  *
  * Provenance for jedi_GetColour:
  *   direct     - name, signature, CVECTOR return type, and linked colour
  *                globals from the exact PDB.
- *   decompiled - bounds and fallback checked against the raw Ghidra export.
+ *   decompiled - bounds and out-of-range result checked against the raw
+ *                Ghidra export.
  *   assembly   - unsigned player-ID comparison, indexed four-byte load, and
- *                white fallback checked at RVA 0xB2270..0xB2286.
+ *                out-of-range white result checked at RVA 0xB2270..0xB2286.
  *
  * Exact jedi_InitPlayer and jedi_Main preserve their PDB names. Their combo
  * and collision-table selections, model/player stores, callback publication,
@@ -17,13 +18,14 @@
  * muzzle/aim-node switch, target acquisition, powered-shot override, and
  * paired-shot path. Exact tusken_stab restores its frame-gated hot node.
  *
- * jedi_HandleSabre retains its exact PDB name and typed parameters. Its node
- * selection, fixed-point blade endpoints, colors, glow/core calls, world
- * sweep, feedback, power-state decisions, and node timers are checked against
- * the raw decompilation and machine-code call sites at 0xB23F0..0xB312D.
- * jedi_DrawBlur and the powered cylinders keep those original call roles but
- * currently use a documented dependency-free glow realization rather than
- * claiming immediate-mode textured parity.
+ * jedi_HandleSabre retains its exact PDB name and typed parameters. Its
+ * fixed-point blade endpoints, colors, glow/core calls, world sweep, feedback,
+ * power-state decisions, and node timers are checked against the raw
+ * decompilation and machine-code call sites at 0xB23F0..0xB312D. Maul's
+ * legacy hardcoded node pairs are corrected from the two shipped BMD chains;
+ * see docs/SABER_TUNING_AUDIT.md.
+ * jedi_DrawBlur and the powered cylinders retain their authored immediate-
+ * mode polygon paths and exact material ownership.
  *
  * PDB module: 0045
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\jedi.obj
@@ -40,20 +42,27 @@
 #include "jpb/bullet.h"
 #include "jpb/collision.h"
 #include "jpb/combo.h"
+#include "jpb/console.h"
+#include "jpb/fmath.h"
 #include "jpb/fx.h"
 #include "jpb/force.h"
 #include "jpb/game.h"
 #include "jpb/input.h"
 #include "jpb/intersec.h"
+#include "jpb/menu.h"
 #include "jpb/model.h"
 #include "jpb/physics.h"
 #include "jpb/player.h"
 #include "jpb/scene.h"
 #include "jpb/sound.h"
 #include "jpb/sprite.h"
+#include "jpb/text.h"
 #include "jpb/vectors.h"
+#include "jpb/whook.h"
+#include "jpb/world.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 /*
  * Exact initialized saber tables at matched-PC RVAs 0x4BAED0..0x4BAFD0.
@@ -111,6 +120,21 @@ CVECTOR gJediColourCurrent[JPB_JEDI_COLOUR_STORAGE_COUNT] = {
 int *gJediColorSprite = gJediColorSpriteCurrent;
 CVECTOR *gJediColour = gJediColourCurrent;
 uint64_t gJediColourArrayLength = JPB_JEDI_COLOUR_COUNT;
+
+/* Exact initialized progression tables at matched-PC RVAs 0x4BAE30..0x4BAECF. */
+uint8_t pointLvls[16][4] = {
+    {8, 16, 24, 24}, {8, 16, 24, 24}, {8, 16, 24, 25},
+    {12, 24, 36, 37}, {10, 20, 30, 34}, {10, 20, 30, 34},
+    {12, 24, 36, 79}, {10, 20, 30, 38}, {12, 24, 36, 100},
+    {4, 8, 12, 24}, {5, 10, 15, 16}, {0, 0, 0, 0},
+    {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}
+};
+uint16_t award[12][4] = {
+    {0, 0, 0, 0}, {4, 3, 0x40, 0}, {4, 3, 0x4000, 0},
+    {3, 4, 0x20, 0}, {3, 4, 0x10, 0}, {4, 3, 0x2000, 0},
+    {4, 3, 0x100, 0}, {3, 4, 0x80, 0}, {0x40, 4, 3, 0},
+    {0x40, 3, 4, 0}, {4, 3, 0x400, 0}, {0, 0, 0, 0}
+};
 
 /* Exact initialized two-short records at matched-PC RVA 0x4BAFE0. */
 int16_t versusPlayers[22][2] = {
@@ -309,23 +333,7 @@ static void jedi_apply_player_settings(playerObject *player)
     player->pSettings.dblJumpAngle = 0x35a;
     player->pSettings.bkJumpAngle = 0x555;
     player->pSettings.gravity = UINT16_C(0xe314);
-    player->pSettings.dblgravity = 0;
     player->pSettings.minClosingDist = 0x14;
-}
-
-int jpb_jedi_ApplyPlayerSettings(
-    playerObject *player)
-{
-    if (player == NULL) {
-        return 0;
-    }
-
-    /*
-     * Exact little-endian stores at RVAs 0xB3401..0xB342D:
-     *   0073007a, 02f90073, 035a0341, e3140555, then 0014.
-     */
-    jedi_apply_player_settings(player);
-    return 1;
 }
 
 /* 0xB10B0, 57 bytes, global, 2 named locals
@@ -333,6 +341,13 @@ int jpb_jedi_ApplyPlayerSettings(
  * PDB type: int (CVECTOR, CVECTOR)
  * Source: W:\SWJediPowerBattles\Work\include\libgeom.h
  */
+int CVECTOR_Equals(CVECTOR lhs, CVECTOR rhs)
+{
+    return lhs.r == rhs.r &&
+           lhs.g == rhs.g &&
+           lhs.b == rhs.b &&
+           lhs.cd == rhs.cd;
+}
 
 /* 0xB10F0, 99 bytes, global, 4 named locals
  * jedi_CalcBonusLevels
@@ -345,6 +360,20 @@ int jpb_jedi_ApplyPlayerSettings(
  * PDB type: void (int, int*, int*)
  * Source: W:\SWJediPowerBattles\Work\jedi.c
  */
+void jedi_CalcBonusLevels(int jedi_id, int *attack_bonus, int *defend_bonus)
+{
+    int flags = jediUpgrades[jedi_id].forcePowers;
+
+    if (jedi_id >= 5) {
+        *attack_bonus = 0;
+        *defend_bonus = 0;
+        return;
+    }
+    *attack_bonus =
+        ((flags >> 5) & 1) + ((flags >> 8) & 1) + ((flags >> 10) & 1);
+    *defend_bonus =
+        ((flags >> 4) & 1) + ((flags >> 7) & 1) + ((flags >> 9) & 1);
+}
 void jedi_CalcSkillLevels(
     int jedi_id, int *skill_percent, int *highest_level)
 {
@@ -352,31 +381,26 @@ void jedi_CalcSkillLevels(
     int upgrade_total = 0;
     int level;
 
-    if (skill_percent == NULL || highest_level == NULL) {
-        return;
-    }
-    if (jedi_id < 0 ||
-        jedi_id >= JPB_GAME_JEDI_MODEL_CAPACITY) {
-        *skill_percent = 0;
-        *highest_level = 0;
-        return;
+    if (jedi_id >= 5) {
+        *highest_level = 10;
+        *skill_percent = 100;
     }
     for (level = 1; level <= 10; ++level) {
-        int upgrade;
-
         if (GameStruct.jediLevelPlayed[jedi_id][level] != 0) {
             high = level;
         }
-        upgrade = 0;
-        if (jedi_id < 9) {
-            upgrade = jediUpgrades[jedi_id].awardData[level];
+    }
+    *highest_level = high;
+    if (jedi_id < 10) {
+        for (level = 1; level <= 10; ++level) {
+            int upgrade = jediUpgrades[jedi_id].awardData[level];
+
             if (upgrade > 3) {
                 upgrade = 3;
             }
+            upgrade_total += upgrade;
         }
-        upgrade_total += upgrade;
     }
-    *highest_level = high;
     *skill_percent = (upgrade_total * 100) / 30;
 }
 
@@ -410,10 +434,10 @@ int jedi_CheckValidLevel(int level, int *upgrade_level)
     }
     if (level < 11) {
         upgrade = jediUpgrades[
-            (uint16_t)GameStruct.ModelSelect[0]].awardData[level];
+            GameStruct.ModelSelect[0]].awardData[level];
         if (GameStruct.NumPlayers == 2) {
             int player_two_upgrade = jediUpgrades[
-                (uint16_t)GameStruct.ModelSelect[1]].awardData[level];
+                GameStruct.ModelSelect[1]].awardData[level];
 
             if (upgrade <= player_two_upgrade) {
                 upgrade = player_two_upgrade;
@@ -486,7 +510,7 @@ int jedi_CheckValidPlayerNGP(int jediID)
     if (id == (uint32_t)loader_model) {
         ExtraCharacter *extra = GetCharacterByID(loader_model);
 
-        return extra != NULL && extra->Unlocked == 1;
+        return extra->Unlocked == 1;
     }
     return 0;
 }
@@ -516,7 +540,7 @@ int jedi_CheckValidPlayerWTabs(int selectType, int jediID)
         case loader_model: {
             ExtraCharacter *extra = GetCharacterByID(loader_model);
 
-            return extra != NULL && extra->Unlocked == 1;
+            return extra->Unlocked == 1;
         }
         default:
             return 0;
@@ -590,6 +614,9 @@ int jedi_ConvertToTextIndex(int jedi_id)
  * PDB type: void (VECTOR*, _svector*, _svect...
  * Source: W:\SWJediPowerBattles\Work\jedi.c
  */
+static int16_t jedi_sabre_scaled_component(
+    int component, int scale);
+
 void jedi_DrawBlur(
     VECTOR *p1,
     _svector *v1,
@@ -597,29 +624,57 @@ void jedi_DrawBlur(
     _svector *v2,
     uint32_t color)
 {
-    _svector previous_start;
-    _svector previous_end;
+    _svector points[4];
+    FVECTOR transformed[4];
+    _svector direction;
+    int tip_speed;
+    int base_extent;
+    int vertex;
 
-    if (p1 == NULL || v1 == NULL ||
-        p2 == NULL || v2 == NULL) {
-        return;
+    tip_speed = normalize(v2->vx, v2->vy, v2->vz, &direction);
+    if (tip_speed > 0x60) {
+        tip_speed = 0x60;
     }
+    points[2] = *p2;
+    points[3].vx = (int16_t)(
+        p2->vx - jedi_sabre_scaled_component(direction.vx, tip_speed));
+    points[3].vy = (int16_t)(
+        p2->vy - jedi_sabre_scaled_component(direction.vy, tip_speed));
+    points[3].vz = (int16_t)(
+        p2->vz - jedi_sabre_scaled_component(direction.vz, tip_speed));
+    points[3].pad = 0;
 
-    /*
-     * The matched routine emits the four-point saber motion quad. The
-     * portable immediate renderer consumes the same two time samples as a
-     * broad glow segment until its textured quad backend is recovered.
-     */
-    previous_start.vx = (int16_t)(p1->vx - v1->vx);
-    previous_start.vy = (int16_t)(p1->vy - v1->vy);
-    previous_start.vz = (int16_t)(p1->vz - v1->vz);
-    previous_start.pad = 0;
-    previous_end.vx = (int16_t)(p2->vx - v2->vx);
-    previous_end.vy = (int16_t)(p2->vy - v2->vy);
-    previous_end.vz = (int16_t)(p2->vz - v2->vz);
-    previous_end.pad = 0;
-    fx_screenGlow(
-        &previous_start, &previous_end, 8, color);
+    points[0].vx = (int16_t)p1->vx;
+    points[0].vy = (int16_t)p1->vy;
+    points[0].vz = (int16_t)p1->vz;
+    points[0].pad = 0;
+    (void)normalize(v1->vx, v1->vy, v1->vz, &direction);
+    base_extent = tip_speed >> 2;
+    points[1].vx = (int16_t)(
+        points[0].vx -
+        jedi_sabre_scaled_component(direction.vx, base_extent));
+    points[1].vy = (int16_t)(
+        points[0].vy -
+        jedi_sabre_scaled_component(direction.vy, base_extent));
+    points[1].vz = (int16_t)(
+        points[0].vz -
+        jedi_sabre_scaled_component(direction.vz, base_extent));
+    points[1].pad = 0;
+
+    (void)fRotTransPers(&CameraMatrix, points, transformed, 4);
+    _StartPoly(4, whitematAdd);
+    color |= UINT32_C(0x40000000);
+    for (vertex = 0; vertex < 4; ++vertex) {
+        _SetVert(
+            vertex,
+            transformed[vertex].vx,
+            transformed[vertex].vy,
+            transformed[vertex].vz,
+            color,
+            0.0f,
+            0.0f);
+    }
+    _NoScaleEndPoly();
 }
 
 /* 0xB1B00, 736 bytes, global, 15 named locals
@@ -633,6 +688,163 @@ void jedi_DrawBlur(
  * PDB type: int (int, int)
  * Source: W:\SWJediPowerBattles\Work\jedi.c
  */
+int jedi_GetAwardFlags(int player_number, int points)
+{
+    playerObject *player = &gaPlayerData[player_number];
+    int player_id = player->playerID;
+    int player_count = GameStruct.NumPlayers;
+    int current_level = GameStruct.CurrentLevel;
+    int flags = 0;
+    int award_level = 0;
+    int score_index;
+    int previous_award;
+    int tier;
+
+    if ((unsigned)(current_level - 16) < 7U) {
+        uint32_t level_bit = UINT32_C(1) << current_level;
+
+        GameStruct.jediLevelPlayed[player_id][current_level] = 1;
+        secretBits |= level_bit;
+        if ((secretBits & UINT32_C(0x007f0200)) ==
+            UINT32_C(0x007f0000)) {
+            secretBits |= UINT32_C(0x00000200);
+        }
+        return 0;
+    }
+    if (player_id >= 5 && player_id != 8) {
+        GameStruct.jediLevelPlayed[player_id][current_level] = 1;
+        game_checkCompleteAchievements();
+        return 0;
+    }
+    if (current_level == 14) {
+        if ((secretBits & UINT32_C(0x8)) != 0) {
+            if ((secretBits & UINT32_C(0x100)) == 0) {
+                secretBits |= UINT32_C(0x100);
+            }
+            return 0;
+        }
+    } else if (current_level == 6) {
+        return 0;
+    }
+    if (current_level == 15) {
+        current_level = 6;
+    } else if ((unsigned)(current_level - 1) > 9U) {
+        return 0;
+    }
+
+    score_index = player_id * JPB_GAME_LEVEL_CAPACITY + current_level;
+    GameStruct.jediLevelPlayed[player_id][current_level] = 1;
+    game_checkCompleteAchievements();
+    if (GameStruct.jediLevelPlayed[0][1] == 1 &&
+        GameStruct.jediLevelPlayed[1][1] == 1 &&
+        GameStruct.jediLevelPlayed[2][1] == 1 &&
+        GameStruct.jediLevelPlayed[3][1] == 1 &&
+        GameStruct.jediLevelPlayed[4][1] == 1 &&
+        (secretBits & UINT32_C(0x400)) == 0) {
+        secretBits |= UINT32_C(0x400);
+    }
+
+    for (tier = 0; tier < 4; ++tier) {
+        if (points >= ((int)pointLvls[current_level][tier] * 1000) /
+                          player_count) {
+            award_level = tier + 1;
+        }
+    }
+    if ((uint32_t)points >
+        ((uint32_t *)GameStruct.jediScorePerLevel)[score_index]) {
+        ((uint32_t *)GameStruct.jediScorePerLevel)[score_index] =
+            (uint32_t)points;
+    }
+    if ((abGlobalBits[1] & UINT8_C(0xe0)) == UINT8_C(0xe0) &&
+        (secretBits & UINT32_C(0x4)) == 0) {
+        secretBits |= UINT32_C(0x4);
+    }
+    if (current_level == 10) {
+        uint32_t unlock_bit = 0;
+        size_t extra_index;
+
+        switch (player_id) {
+        case qui_gon_model: unlock_bit = UINT32_C(0x10); break;
+        case obi_wan_model: unlock_bit = UINT32_C(0x40); break;
+        case plo_model: unlock_bit = UINT32_C(0x1); break;
+        case adi_model: unlock_bit = UINT32_C(0x20); break;
+        case mace_model: unlock_bit = UINT32_C(0x8); break;
+        default: break;
+        }
+        secretBits |= unlock_bit;
+        for (extra_index = 0;
+             extra_index < ExtraCharactersSize;
+             ++extra_index) {
+            if (ExtraCharacters[extra_index].ID != loader_model) {
+                ExtraCharacters[extra_index].Unlocked = 1;
+            }
+        }
+    }
+    if (award_level == 0) {
+        return 0;
+    }
+
+    previous_award = jediUpgrades[player_id].awardData[current_level];
+    if (award_level <= previous_award) {
+        return 0;
+    }
+    jediUpgrades[player_id].awardData[current_level] =
+        (int8_t)award_level;
+    for (tier = previous_award + 1; tier <= award_level; ++tier) {
+        flags |= award[current_level][tier - 1];
+    }
+    if (jediUpgrades[player_id].healthUpgrades >= 5) {
+        flags &= ~1;
+    }
+    if (jediUpgrades[player_id].forceUpgrades >= 5) {
+        flags &= ~2;
+    }
+    {
+        int missing_combo = 0;
+
+        for (tier = 0; tier < player->maxCombos; ++tier) {
+            if (game_getCombo(
+                    (uint32_t)GameStruct.ModelSelect[player->playernum],
+                    (uint32_t)tier) == 0) {
+                ++missing_combo;
+            }
+        }
+        if (missing_combo == 0) {
+            flags &= ~4;
+        }
+    }
+    jediUpgrades[player_id].forcePowers = (int16_t)(
+        jediUpgrades[player_id].forcePowers | flags);
+    if (player_id < 5) {
+        int attack =
+            ((jediUpgrades[player_id].forcePowers >> 5) & 1) +
+            ((jediUpgrades[player_id].forcePowers >> 8) & 1) +
+            ((jediUpgrades[player_id].forcePowers >> 10) & 1);
+        int defend =
+            ((jediUpgrades[player_id].forcePowers >> 4) & 1) +
+            ((jediUpgrades[player_id].forcePowers >> 7) & 1) +
+            ((jediUpgrades[player_id].forcePowers >> 9) & 1);
+
+        jediUpgrades[player_id].attackDefendUpgrades =
+            (int8_t)((defend << 4) | attack);
+    } else {
+        jediUpgrades[player_id].attackDefendUpgrades = 0;
+    }
+    if ((flags & 0x40) != 0) {
+        ++GameStruct.mNumContinues;
+        if (GameStruct.mNumContinues < 5) {
+            GameStruct.mNumContinues = 5;
+        } else if (GameStruct.mNumContinues > 9) {
+            GameStruct.mNumContinues = 9;
+        }
+        ++jediUpgrades[player_id].lifeUpgrades;
+        if (jediUpgrades[player_id].lifeUpgrades > 3) {
+            jediUpgrades[player_id].lifeUpgrades = 3;
+            flags &= ~0x40;
+        }
+    }
+    return flags;
+}
 
 /* 0xB2250, 23 bytes, global, 1 named locals
  * jedi_GetColorSprite
@@ -809,12 +1021,45 @@ uint32_t jedi_GetColour32(uint64_t playerID)
  * PDB type: int ()
  * Source: W:\SWJediPowerBattles\Work\jedi.c
  */
+int jedi_GetHighestLevel(void)
+{
+    int high = 0;
+    int player;
+    int level;
+
+    for (player = 0; player < 5; ++player) {
+        for (level = 1; level <= 10; ++level) {
+            if (GameStruct.jediLevelPlayed[player][level] != 0 &&
+                high < level) {
+                high = level;
+            }
+        }
+    }
+    return high + 1;
+}
 
 /* 0xB2390, 90 bytes, global, 2 named locals
  * jedi_GetLives
  * PDB type: int ()
  * Source: W:\SWJediPowerBattles\Work\jedi.c
  */
+int jedi_GetLives(void)
+{
+    int lives = jediUpgrades[GameStruct.ModelSelect[0]].lifeUpgrades;
+
+    if (GameStruct.NumPlayers == 2) {
+        int player_two_lives =
+            jediUpgrades[GameStruct.ModelSelect[1]].lifeUpgrades;
+
+        if (lives <= player_two_lives) {
+            lives = player_two_lives;
+        }
+    }
+    if (lives > 4) {
+        lives = 4;
+    }
+    return lives;
+}
 
 /* 0xB23F0, 3440 bytes, global, 44 named locals
  * jedi_HandleSabre
@@ -850,6 +1095,23 @@ static int16_t jedi_sabre_scaled_component(
         (product + ((product >> 31) & 0xfff)) >> 12);
 }
 
+static int16_t jedi_sabre_low_word(int32_t value)
+{
+    return (int16_t)(uint16_t)(uint32_t)value;
+}
+
+static int16_t jedi_sabre_add_low(int16_t left, int16_t right)
+{
+    return (int16_t)(uint16_t)(
+        (uint16_t)left + (uint16_t)right);
+}
+
+static int16_t jedi_sabre_sub_low(int16_t left, int16_t right)
+{
+    return (int16_t)(uint16_t)(
+        (uint16_t)left - (uint16_t)right);
+}
+
 static uint32_t jedi_sabre_color(int16_t player_id)
 {
     uint64_t color_index = (uint16_t)player_id;
@@ -876,10 +1138,13 @@ static void jedi_sabre_node_ids(
         *base_id = 0x14;
         *tip_id = 0x16;
     } else if (player_id == 5 || player_id == 0x2b) {
+        /* Both shipped Maul BMDs define these as the two independent
+         * v_weapon -> outer v_coll chains. The executable's legacy
+         * 0x12/0x13 and 0x17/0x13 pairing detaches the second blade. */
         *base_id = 0x12;
-        *tip_id = 0x13;
-        *second_base_id = 0x17;
-        *second_tip_id = 0x13;
+        *tip_id = 0x14;
+        *second_base_id = 0x13;
+        *second_tip_id = 0x17;
     } else if (player_id == 3 || player_id == 0x53) {
         *base_id = 0x13;
         *tip_id = 0x15;
@@ -899,47 +1164,50 @@ static int jedi_sabre_endpoints(
     _svector *inner)
 {
     _svector direction;
+    int16_t base_x = jedi_sabre_low_word(base->v3RotCenter.vx);
+    int16_t base_y = jedi_sabre_low_word(base->v3RotCenter.vy);
+    int16_t base_z = jedi_sabre_low_word(base->v3RotCenter.vz);
+    int16_t tip_x = jedi_sabre_low_word(tip->v3RotCenter.vx);
+    int16_t tip_y = jedi_sabre_low_word(tip->v3RotCenter.vy);
+    int16_t tip_z = jedi_sabre_low_word(tip->v3RotCenter.vz);
 
-    if (base == NULL || tip == NULL) {
-        return 0;
-    }
     (void)normalize(
-        base->v3RotCenter.vx - tip->v3RotCenter.vx,
-        base->v3RotCenter.vy - tip->v3RotCenter.vy,
-        base->v3RotCenter.vz - tip->v3RotCenter.vz,
+        jedi_sabre_sub_low(base_x, tip_x),
+        jedi_sabre_sub_low(base_y, tip_y),
+        jedi_sabre_sub_low(base_z, tip_z),
         &direction);
     if (direction_sign > 0) {
-        outer->vx = (int16_t)(
-            base->v3RotCenter.vx +
+        outer->vx = jedi_sabre_add_low(
+            base_x,
             jedi_sabre_scaled_component(direction.vx, scale));
-        outer->vy = (int16_t)(
-            base->v3RotCenter.vy +
+        outer->vy = jedi_sabre_add_low(
+            base_y,
             jedi_sabre_scaled_component(direction.vy, scale));
-        outer->vz = (int16_t)(
-            base->v3RotCenter.vz +
+        outer->vz = jedi_sabre_add_low(
+            base_z,
             jedi_sabre_scaled_component(direction.vz, scale));
-        inner->vx = (int16_t)(
-            base->v3RotCenter.vx +
+        inner->vx = jedi_sabre_add_low(
+            base_x,
             jedi_sabre_scaled_component(direction.vx, inner_scale));
-        inner->vy = (int16_t)(
-            base->v3RotCenter.vy +
+        inner->vy = jedi_sabre_add_low(
+            base_y,
             jedi_sabre_scaled_component(direction.vy, inner_scale));
-        inner->vz = (int16_t)(
-            base->v3RotCenter.vz +
+        inner->vz = jedi_sabre_add_low(
+            base_z,
             jedi_sabre_scaled_component(direction.vz, inner_scale));
     } else {
-        outer->vx = (int16_t)(
-            base->v3RotCenter.vx -
+        outer->vx = jedi_sabre_sub_low(
+            base_x,
             jedi_sabre_scaled_component(direction.vx, scale));
-        outer->vy = (int16_t)(
-            base->v3RotCenter.vy -
+        outer->vy = jedi_sabre_sub_low(
+            base_y,
             jedi_sabre_scaled_component(direction.vy, scale));
-        outer->vz = (int16_t)(
-            base->v3RotCenter.vz -
+        outer->vz = jedi_sabre_sub_low(
+            base_z,
             jedi_sabre_scaled_component(direction.vz, scale));
-        inner->vx = (int16_t)base->v3RotCenter.vx;
-        inner->vy = (int16_t)base->v3RotCenter.vy;
-        inner->vz = (int16_t)base->v3RotCenter.vz;
+        inner->vx = base_x;
+        inner->vy = base_y;
+        inner->vz = base_z;
     }
     outer->pad = 0;
     inner->pad = 0;
@@ -950,7 +1218,6 @@ static void jedi_draw_sabre_blade(
     playerObject *player,
     Mnode *base,
     Mnode *tip,
-    int second_blade,
     uint32_t color)
 {
     _svector outer;
@@ -961,8 +1228,8 @@ static void jedi_draw_sabre_blade(
             base,
             tip,
             JPB_SABRE_NORMAL_EXTENT,
-            second_blade ? 1 : -1,
-            second_blade ? 0x20 : 0,
+            -1,
+            0,
             &outer,
             &inner)) {
         return;
@@ -976,8 +1243,7 @@ static void jedi_draw_sabre_blade(
     fx_screenGlow(
         &outer, &inner,
         JPB_SABRE_NORMAL_CORE_WIDTH, UINT32_C(0xffffffff));
-    if (player->subOffset != 0 && player->pMotion != NULL &&
-        *player->pMotion != NULL &&
+    if (player->subOffset != 0 &&
         (*player->pMotion)->Damage > 1) {
         jedi_DrawBlur(
             &base->v3RotCenter,
@@ -994,9 +1260,7 @@ static void jedi_check_sabre_world_contact(
     _mvector swing;
     VECTOR last;
 
-    if (tip == NULL || player->pMotion == NULL ||
-        *player->pMotion == NULL ||
-        (*player->pMotion)->Damage <= 1) {
+    if ((*player->pMotion)->Damage <= 1) {
         return;
     }
     swing.speed = (int16_t)normalize(
@@ -1024,9 +1288,6 @@ static void jedi_draw_power_sabre(
     _svector rotation;
     float radius;
 
-    if (base == NULL || tip == NULL) {
-        return;
-    }
     start.vx = (int16_t)base->v3RotCenter.vx;
     start.vy = (int16_t)base->v3RotCenter.vy;
     start.vz = (int16_t)base->v3RotCenter.vz;
@@ -1039,9 +1300,15 @@ static void jedi_draw_power_sabre(
         &start, &end, JPB_SABRE_POWER_GLOW_WIDTH,
         color | UINT32_C(0xff000000));
     (void)normalize(
-        base->v3RotCenter.vx - tip->v3RotCenter.vx,
-        base->v3RotCenter.vy - tip->v3RotCenter.vy,
-        base->v3RotCenter.vz - tip->v3RotCenter.vz,
+        jedi_sabre_sub_low(
+            jedi_sabre_low_word(base->v3RotCenter.vx),
+            jedi_sabre_low_word(tip->v3RotCenter.vx)),
+        jedi_sabre_sub_low(
+            jedi_sabre_low_word(base->v3RotCenter.vy),
+            jedi_sabre_low_word(tip->v3RotCenter.vy)),
+        jedi_sabre_sub_low(
+            jedi_sabre_low_word(base->v3RotCenter.vz),
+            jedi_sabre_low_word(tip->v3RotCenter.vz)),
         &normal);
     (void)vec_RotFromNormalS(&rotation, &normal);
     rotation.vx = (int16_t)(rotation.vx - 0x400);
@@ -1125,8 +1392,7 @@ static void jedi_draw_long_sabre(
     fx_screenGlow(
         &outer, &inner,
         JPB_SABRE_LONG_CORE_WIDTH, UINT32_C(0xffffffff));
-    if (player->subOffset != 0 && player->pMotion != NULL &&
-        *player->pMotion != NULL &&
+    if (player->subOffset != 0 &&
         (*player->pMotion)->Damage > 1) {
         jedi_DrawBlur(
             &base->v3RotCenter,
@@ -1153,11 +1419,9 @@ int jedi_HandleSabre(
     int power_saber = 0;
 
     (void)cpad;
-    if (player == NULL) {
-        return 0;
-    }
+    (void)coll_GetNode(player->playernum, 0x0c);
     if (player->playerID == 6 || player->playerID == 7) {
-        return 1;
+        return 0;
     }
     color = jedi_sabre_color(player->playerID);
     ++jedi_sabre_counter;
@@ -1187,45 +1451,72 @@ int jedi_HandleSabre(
         &tip_id,
         &second_base_id,
         &second_tip_id);
-    base = coll_GetNode(player->playernum, base_id);
-    tip = coll_GetNode(player->playernum, tip_id);
-    if (base == NULL || tip == NULL) {
-        return 1;
-    }
-
     if (!long_saber) {
-        jedi_draw_sabre_blade(player, base, tip, 0, color);
+        base = coll_GetNode(player->playernum, base_id);
+        tip = coll_GetNode(player->playernum, tip_id);
+        if (base == NULL) {
+            return (int)(intptr_t)tip;
+        }
+        if (tip == NULL) {
+            return 0;
+        }
+        jedi_draw_sabre_blade(player, base, tip, color);
         if (second_base_id != 0 || second_tip_id != 0) {
             Mnode *second_base = coll_GetNode(
                 player->playernum, second_base_id);
             Mnode *second_tip = coll_GetNode(
                 player->playernum, second_tip_id);
 
+            if (second_base == NULL) {
+                return (int)(intptr_t)second_tip;
+            }
+            if (second_tip == NULL) {
+                return 0;
+            }
             jedi_draw_sabre_blade(
                 player,
                 second_base,
                 second_tip,
-                1,
                 color);
         }
     }
-    jedi_check_sabre_world_contact(player, tip);
+    if ((*player->pMotion)->Damage > 1) {
+        tip = coll_GetNode(player->playernum, tip_id);
+        jedi_check_sabre_world_contact(player, tip);
+    }
+    base = coll_GetNode(player->playernum, base_id);
+    tip = coll_GetNode(player->playernum, tip_id);
     if (long_saber) {
-        jedi_draw_long_sabre(player, base, tip, color);
-        tip->time = 0x16c;
-    } else {
+        if (base != NULL && tip != NULL) {
+            jedi_draw_long_sabre(player, base, tip, color);
+            tip->time = 0x16c;
+        }
+    } else if (base != NULL) {
         tip->time = 0xd0;
     }
     if (power_saber) {
-        jedi_draw_power_sabre(base, tip, color);
+        base = coll_GetNode(player->playernum, base_id);
+        tip = coll_GetNode(player->playernum, tip_id);
+        if (base != NULL && tip != NULL) {
+            jedi_draw_power_sabre(base, tip, color);
+        }
         if (second_base_id != 0 || second_tip_id != 0) {
+            Mnode *second_base = coll_GetNode(
+                player->playernum, second_base_id);
+            Mnode *second_tip = coll_GetNode(
+                player->playernum, second_tip_id);
+
+            if (second_base == NULL) {
+                return (int)(intptr_t)second_tip;
+            }
+            if (second_tip == NULL) {
+                return 0;
+            }
             jedi_draw_power_sabre(
-                coll_GetNode(player->playernum, second_base_id),
-                coll_GetNode(player->playernum, second_tip_id),
-                color);
+                second_base, second_tip, color);
         }
     }
-    return 1;
+    return 0;
 }
 
 /* 0xB3160, 80 bytes, global, 2 named locals
@@ -1255,7 +1546,7 @@ int jedi_HasProgression(model_id cnum)
     case loader_model: {
         ExtraCharacter *character = GetCharacterByID(cnum);
 
-        if (character != NULL && character->Unlocked == 1) {
+        if (character->Unlocked == 1) {
             return 0;
         }
         return 1;
@@ -1273,11 +1564,11 @@ int jedi_HasProgression(model_id cnum)
 void jedi_InitLives(void)
 {
     int life_upgrades =
-        jediUpgrades[(uint16_t)GameStruct.ModelSelect[0]].lifeUpgrades;
+        jediUpgrades[GameStruct.ModelSelect[0]].lifeUpgrades;
 
     if (GameStruct.NumPlayers == 2) {
         int player_two_lives =
-            jediUpgrades[(uint16_t)GameStruct.ModelSelect[1]].lifeUpgrades;
+            jediUpgrades[GameStruct.ModelSelect[1]].lifeUpgrades;
 
         if (life_upgrades <= player_two_lives) {
             life_upgrades = player_two_lives;
@@ -1370,8 +1661,8 @@ int jedi_InitPlayer(playerObject *player)
     player->pMainCallBack = jedi_Main;
     jedi_apply_player_settings(player);
 
-    /* The executable leaves EAX unspecified despite the PDB int type. */
-    return 0;
+    /* The final callback load leaves its low 32 bits in EAX at retail return. */
+    return (int)(intptr_t)jedi_Main;
 }
 
 /* 0xB3450, 121 bytes, global, 1 named locals
@@ -1468,6 +1759,236 @@ int jedi_Main(int32_t *cpad, playerObject *player)
  * PDB type: void (model_id)
  * Source: W:\SWJediPowerBattles\Work\jedi.c
  */
+int jedi_SetHighestLevel(int level)
+{
+    int player;
+
+    (void)level;
+    GameStruct.mNumContinues = 9;
+    for (player = 0; player < 9; ++player) {
+        int combo;
+        int stage;
+
+        GameStruct.maxEnergyLevels[player] = 200;
+        GameStruct.maxEnergyLineLength[player] = 50;
+        GameStruct.maxForceLevels[player] = 200;
+        GameStruct.maxForceLineLength[player] = 50;
+        jediUpgrades[player].healthUpgrades = 5;
+        jediUpgrades[player].forceUpgrades = 5;
+        jediUpgrades[player].forcePowers = -1;
+        for (combo = 0; combo < 48; ++combo) {
+            game_enableCombo((uint32_t)player, (uint32_t)combo);
+        }
+        for (stage = 1; stage <= 10; ++stage) {
+            GameStruct.jediLevelPlayed[player][stage] = 1;
+            GameStruct.jediScorePerLevel[player][stage] = 99999;
+            jediUpgrades[player].awardData[stage] = 3;
+        }
+    }
+    for (player = 1; player <= 10; ++player) {
+        jediUpgrades[battle_d_model].awardData[player] = 3;
+        GameStruct.jediLevelPlayed[battle_d_model][player] = 1;
+        GameStruct.jediScorePerLevel[battle_d_model][player] = 99999;
+    }
+    return 1;
+}
+
+static char *jedi_combo_icon(char command, int controller_icons)
+{
+    switch (command) {
+    case 'e': return controller_icons != 0 ? "<A>" : "<B>";
+    case 'f': return "<F>";
+    case 'n': return controller_icons != 0 ? "<B>" : "<Y>";
+    case 's': return controller_icons != 0 ? "<Y>" : "<A>";
+    case 'w': return "<X>";
+    default: return NULL;
+    }
+}
+
+static void jedi_draw_combo_commands(
+    const char *commands,
+    float *text_x,
+    float text_y,
+    int controller_icons,
+    int *last_icon_was_space)
+{
+    const char *cursor;
+
+    for (cursor = commands; *cursor != '\0'; ++cursor) {
+        char *icon = jedi_combo_icon(*cursor, controller_icons);
+
+        if (*cursor == '.') {
+            if (*last_icon_was_space == 0) {
+                *last_icon_was_space = 1;
+            } else {
+                *last_icon_was_space = 0;
+                (void)SDLTextWriteScale(
+                    15,
+                    255,
+                    0,
+                    (int)(*text_x - scaleAdjustmentMM * 7.0f),
+                    (int)(text_y + scaleAdjustmentMM * 15.0f),
+                    1.75f,
+                    0,
+                    "-");
+                *text_x += scaleAdjustmentMM * 50.0f;
+            }
+        } else if (icon != NULL) {
+            *last_icon_was_space = 0;
+            (void)SDLTextWriteScale(
+                15,
+                255,
+                0,
+                (int)*text_x,
+                (int)text_y,
+                1.75f,
+                0,
+                icon);
+        }
+        *text_x += scaleAdjustmentMM * 50.0f;
+    }
+}
+
+static void jedi_draw_combo_column(
+    int player_column,
+    int *last_icon_was_space)
+{
+    playerObject *player =
+        player_column == 0 ? gpWorld->player0 : gpWorld->player1;
+    int text_y = 0;
+    int combo_index;
+
+    for (combo_index = 0;
+         combo_index < player->maxCombos;
+         ++combo_index) {
+        const char *commands = player->paCombos[combo_index].String;
+        size_t command_length;
+
+        if (game_getCombo(
+                (uint32_t)(int32_t)GameStruct.ModelSelect[player_column],
+                (uint32_t)combo_index) == 0 &&
+            GameStruct.CurrentLevel != 25 &&
+            player->playerID <= 8) {
+            continue;
+        }
+        command_length = strlen(commands);
+        if (command_length <= 1 || commands[command_length - 1] == '.') {
+            continue;
+        }
+        {
+            float text_x = player_column == 0 ? 250.0f : 190.0f;
+            float row_y = (float)text_y - 360.0f;
+            int controller_icons =
+                player_column == 0
+                    ? (lastUsedInputType != 0 &&
+                       OptionStruct.ControllerConfig[0] != 0)
+                    : (OptionStruct.ControllerConfig[1] != 0);
+
+            setPivotPositionMM(
+                &text_x, &row_y, player_column == 0 ? 3 : 4);
+            (void)SDLTextWriteScale(
+                15,
+                255,
+                0,
+                (int)text_x,
+                (int)row_y,
+                1.75f,
+                0,
+                "%3d",
+                (int)comboTally[player_column][combo_index]);
+            text_x += scaleAdjustmentMM * 125.0f;
+            jedi_draw_combo_commands(
+                commands,
+                &text_x,
+                row_y,
+                controller_icons,
+                last_icon_was_space);
+        }
+        text_y += 46;
+    }
+}
+
+int jedi_ShowCombos(int versus_players)
+{
+    playerObject *residue_player = gpWorld->player0;
+    int last_icon_was_space = 0;
+    float text_x = -450.0f;
+    float text_y = -460.0f;
+
+    iconScaleOverride = 0.3f;
+    setPivotPositionMM(&text_x, &text_y, 4);
+    (void)SDLTextWriteScale(
+        14,
+        255,
+        2,
+        (int)text_x,
+        (int)text_y,
+        2.25f,
+        0,
+        allText[471]);
+    jedi_draw_combo_column(0, &last_icon_was_space);
+
+    if (GameStruct.NumPlayers != 1 &&
+        (GameStruct.CurrentLevel != 25 || versus_players != 1)) {
+        player2IconOverride = 1;
+        text_x = 450.0f;
+        text_y = -460.0f;
+        setPivotPositionMM(&text_x, &text_y, 4);
+        (void)SDLTextWriteScale(
+            14,
+            255,
+            2,
+            (int)text_x,
+            (int)text_y,
+            2.25f,
+            0,
+            allText[472]);
+        jedi_draw_combo_column(1, &last_icon_was_space);
+        residue_player = gpWorld->player1;
+        player2IconOverride = 0;
+        iconScaleOverride = -1.0f;
+    }
+
+    return (int)(intptr_t)(
+        residue_player->maxCombos > 0
+            ? (void *)residue_player
+            : (void *)gpWorld);
+}
+
+void jedi_ShowSecrets(void)
+{
+    static const struct {
+        uint32_t mask;
+        char *text;
+    } messages[] = {
+        {UINT32_C(0x00000001), "mini1 unlocked\n"},
+        {UINT32_C(0x00000002), "mini2 unlocked\n"},
+        {UINT32_C(0x00000004), "mini3 unlocked\n"},
+        {UINT32_C(0x00000008), "mini4 unlocked\n"},
+        {UINT32_C(0x00000010), "maul unlocked\n"},
+        {UINT32_C(0x00000020), "amidala unlocked\n"},
+        {UINT32_C(0x00000040), "panaka unlocked\n"},
+        {UINT32_C(0x00000080), "concept unlocked\n"},
+        {UINT32_C(0x00000100), "ultimate sabre unlocked\n"},
+        {UINT32_C(0x00000200), "ki-adi unlocked\n"},
+        {UINT32_C(0x00000400), "battle droid unlocked\n"},
+        {UINT32_C(0x00010000), "t1 beat\n"},
+        {UINT32_C(0x00020000), "t2 beat\n"},
+        {UINT32_C(0x00040000), "t3 beat\n"},
+        {UINT32_C(0x00080000), "t4 beat\n"},
+        {UINT32_C(0x00100000), "t5 beat\n"},
+        {UINT32_C(0x00200000), "t6 beat\n"},
+        {UINT32_C(0x00400000), "t7 beat\n"}
+    };
+    size_t index;
+
+    console_Printf("secret bits set\n");
+    for (index = 0; index < sizeof(messages) / sizeof(messages[0]); ++index) {
+        if ((secretBits & messages[index].mask) != 0) {
+            console_Printf(messages[index].text);
+        }
+    }
+}
 void jedi_ToggleSaberColor(model_id cnum)
 {
     uint64_t index = (uint32_t)cnum;
@@ -1496,6 +2017,13 @@ void jedi_ToggleSaberColor(model_id cnum)
  * PDB type: int (long*, playerObject*)
  * Source: W:\SWJediPowerBattles\Work\jedi.c
  */
+void jedi_ShowStats(int jedi_id)
+{
+    int level;
+    int skill;
+
+    jedi_CalcSkillLevels(jedi_id, &skill, &level);
+}
 int tusken_stab(int32_t *cpad, playerObject *player)
 {
     int frame = animutl_gGetCurrentFrameIndex(

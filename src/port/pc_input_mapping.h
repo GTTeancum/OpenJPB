@@ -8,25 +8,9 @@
  * field names preserve the matched ReadKeyboardInput key assignments while
  * keeping Win32 virtual-key polling out of the reconstructed game core.
  */
-typedef struct JPBPCGameplayKeyboardState {
-    uint8_t moveUp;
-    uint8_t moveLeft;
-    uint8_t moveDown;
-    uint8_t moveRight;
-    uint8_t walkModifier;
-    uint8_t zoomIn;
-    uint8_t comboSouth;
-    uint8_t comboWest;
-    uint8_t comboNorth;
-    uint8_t lockOn;
-    uint8_t jumpBlockChord;
-    uint8_t northBlockChord;
-    uint8_t southBlockChord;
-    uint8_t westBlockChord;
-    uint8_t block;
-    uint8_t jump;
-    uint8_t start;
-} JPBPCGameplayKeyboardState;
+#include "jpb/input.h"
+
+typedef JPBKeyboardState JPBPCGameplayKeyboardState;
 
 /*
  * Pure translation of the gameplay branch of PDB procedure

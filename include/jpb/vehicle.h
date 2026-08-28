@@ -13,6 +13,7 @@ typedef struct playerObject playerObject;
 typedef struct Mnode Mnode;
 
 extern int32_t stapbikeindex[2];
+extern int32_t playertankindex;
 extern uint16_t stapsound;
 extern uint16_t tanknoise;
 extern uint16_t turretnoise;

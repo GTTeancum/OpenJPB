@@ -1,3 +1,12 @@
+/*
+ * COMPLETE REVIEWED RECONSTRUCTION of
+ * W:\SWJediPowerBattles\work\extracharacters.c.
+ *
+ * The PDB fixes the 24-byte ExtraCharacter layout, 14-entry extent, and five
+ * procedure boundaries. The paired executable fixes every table byte at RVA
+ * 0x4B8B00, ExtraCharactersSize at RVA 0x335810, and the procedure bodies at
+ * RVAs 0x4BB60..0x4BC95.
+ */
 #include "jpb/extracharacters.h"
 
 /*

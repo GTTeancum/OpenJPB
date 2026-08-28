@@ -42,6 +42,9 @@ static int test_round_timer_table_and_conversion(void)
     CHECK(mRoundTimer == 12345);
     timer_gSetRoundTimer(5);
     CHECK(mRoundTimer == 12345);
+
+    mRoundTimer = INT32_C(0x20000000);
+    CHECK(timer_gGetRoundTimer() == -139810);
     return 0;
 }
 

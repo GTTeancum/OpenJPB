@@ -1,5 +1,5 @@
 /*
- * REVIEWED RECONSTRUCTION of
+ * COMPLETE REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\Work\animutil.c.
  *
  * All 22 emitted procedures preserve the exact freeze-window decision,
@@ -9,8 +9,9 @@
  * Provenance:
  *   direct     - name/signature/locals and dependent layouts from the PDB.
  *   decompiled - control flow checked against the raw Ghidra export.
- *   assembly   - comparisons, member widths, fixed-point rounding, and
- *                signed frame bounds checked at RVAs 0x19860..0x19CDF.
+ *   assembly   - all 22 bodies checked at RVAs 0x19860..0x19CDF, including
+ *                unchecked reset indexing, conditional pause mutation,
+ *                fixed-point rounding, and wrapped signed frame bounds.
  *
  * PDB module: 0006
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\animutil.obj
@@ -36,15 +37,6 @@ static animObject *animutil_from_object(objectRoot *object)
         (sceneObject *)object->pParent;
 
     return (animObject *)scene->pAnim;
-}
-
-static int32_t animutil_arithmetic_shift12(int32_t value)
-{
-    if (value >= 0) {
-        return value / JPB_FIXED_ONE;
-    }
-    return -1 -
-           (int32_t)((-(int64_t)value - 1) / JPB_FIXED_ONE);
 }
 
 /* 0x19860, 100 bytes, global, 5 named locals
@@ -141,13 +133,7 @@ _animTemplate *anim_GetTargetSeqPtr(
  */
 void anim_ResetJedi(int index)
 {
-    animObject *animation;
-
-    if ((unsigned)index >=
-        JPB_ANIMATION_CAPACITY) {
-        return;
-    }
-    animation = &maAnimationData[index];
+    animObject *animation = &maAnimationData[index];
     animation->animFlags = 0;
     list_MoveList(
         &animation->animFreeList,
@@ -326,8 +312,11 @@ int32_t animutl_gGetCurrentFrameIndex(objectRoot *object)
  */
 void animutl_gPauseAnim(objectRoot *object)
 {
-    animutil_from_object(object)->animFlags |=
-        0x00000004u;
+    animObject *animation = animutil_from_object(object);
+
+    if ((animation->animFlags & UINT32_C(4)) == 0) {
+        animation->animFlags |= UINT32_C(4);
+    }
 }
 
 /* 0x19BA0, 179 bytes, global, 6 named locals
@@ -372,12 +361,8 @@ void animutl_gScaleAnimFrameRate(
     int32_t product =
         (int32_t)((uint32_t)scale *
                   (uint32_t)animation->animFrameRate);
-    uint32_t adjusted =
-        (uint32_t)product +
-        (product < 0 ? JPB_FIXED_ONE - 1u : 0u);
 
-    animation->animFrameRate =
-        animutil_arithmetic_shift12((int32_t)adjusted);
+    animation->animFrameRate = product / JPB_FIXED_ONE;
 }
 
 /* 0x19C90, 14 bytes, global, 2 named locals
@@ -401,13 +386,13 @@ void animutl_gSetCurrentFrameIndex(
 {
     animObject *animation =
         animutil_from_object(object);
-    int32_t absolute_frame =
-        animation->pCurrentAnimSeq->pAnimTemplate->Fframe +
-        frame;
+    uint32_t absolute_frame =
+        (uint32_t)(int32_t)
+            animation->pCurrentAnimSeq->pAnimTemplate->Fframe +
+        (uint32_t)frame;
 
     animation->animFrameIndex =
-        (int32_t)((uint32_t)absolute_frame *
-                  (uint32_t)JPB_FIXED_ONE);
+        (int32_t)(absolute_frame * (uint32_t)JPB_FIXED_ONE);
 }
 
 /* 0x19CD0, 15 bytes, global, 2 named locals

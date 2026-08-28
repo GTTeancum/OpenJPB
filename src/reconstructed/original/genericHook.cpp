@@ -1,18 +1,22 @@
 #include "jpb/generic_hook.h"
 #include "jpb/world.h"
 
+#include <codecvt>
 #include <cstring>
+#include <locale>
+#include <string>
 
 /*
- * PARTIALLY REVIEWED RECONSTRUCTION
+ * COMPLETE REVIEWED RECONSTRUCTION
  * PDB module: 0040
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\genericHook.obj
  * Primary source: W:\SWJediPowerBattles\work\genericHook.cpp
  * Compiler language: c++
  * Emitted procedures: 59
  *
- * Reviewed bodies are marked with their PDB procedure name and RVA below.
- * Unreviewed procedures remain as inventory comments.
+ * All five project procedures are checked against their PDB procedure names,
+ * RVAs, and shipped bodies below. Toolchain-owned standard-library procedures
+ * remain inventory comments and are not project reconstruction claims.
  */
 
 /* Exact PDB globals at matched-PC RVAs 0x4BAC88/8C and 0x537F10. */
@@ -369,6 +373,26 @@ void SetTextureColorOverride(int level, _Material *material)
  * PDB type: void (const char*, SCREENRECT, i...
  * Source: W:\SWJediPowerBattles\work\genericHook.cpp
  */
+void _DrawUIText(
+    const char *text,
+    SCREENRECT destination,
+    int font_style,
+    int point_size,
+    CVECTOR color)
+{
+    std::wstring_convert<
+        std::codecvt<char16_t, char, std::mbstate_t>,
+        char16_t> converter;
+    const std::u16string converted = converter.from_bytes(
+        text, text + std::strlen(text));
+    _DrawUITextUTF16(
+        reinterpret_cast<uint16_t *>(
+            const_cast<char16_t *>(converted.c_str())),
+        destination,
+        font_style,
+        point_size,
+        color);
+}
 
 /* 0x270090, 16 bytes, local, 1 named locals
  * `std::wstring_convert<std::codecvt<char16_t,char,_Mbstatet>,char16_t,std::allocator<char16_t>,std::allocator<char> >::wstring_convert<std::codecvt<char16_t,char,_Mbstatet>,char16_t,std::allocator<char16_t>,std::allocator<char> >'::`1'::dtor$0

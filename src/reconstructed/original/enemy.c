@@ -1,5 +1,5 @@
 /*
- * PARTIAL REVIEWED RECONSTRUCTION of
+ * REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\Work\enemy.c.
  *
  * The reviewed subset contains placement activation/spawn and cleanup,

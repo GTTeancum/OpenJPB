@@ -9,13 +9,25 @@
 extern "C" {
 #endif
 
-typedef enum JPBBrainPartialResult {
-    JPB_BRAIN_PARTIAL_OK = 0,
-    JPB_BRAIN_PARTIAL_NO_CHANGE = 1,
-    JPB_BRAIN_PARTIAL_INVALID_ARGUMENT = -1,
-    JPB_BRAIN_PARTIAL_UNSUPPORTED_STATE = -2
-} JPBBrainPartialResult;
+typedef enum JPBBrainResult {
+    JPB_BRAIN_RESULT_OK = 0,
+    JPB_BRAIN_RESULT_NO_CHANGE = 1,
+    JPB_BRAIN_RESULT_INVALID_ARGUMENT = -1,
+    JPB_BRAIN_RESULT_UNSUPPORTED_STATE = -2
+} JPBBrainResult;
 
+typedef struct JPBBrainLockDiagnostics {
+    uint32_t calls;
+    uint32_t inputButtonFrames;
+    uint32_t eligibleFrames;
+    uint32_t targetSearches;
+    uint32_t targetsFound;
+    uint32_t lastPadBits;
+    int32_t lastLevel;
+    int32_t lastPlayerId;
+} JPBBrainLockDiagnostics;
+
+int IsPlayerCharacter(playerObject *player);
 void brain_CheckForEffects(playerObject *player);
 void brain_ControlPlayer(
     int32_t *cpad, playerObject *player, int AI_ON);
@@ -34,28 +46,31 @@ int brain_TakeOff(
     int32_t *cpad, playerObject *player, playerObject *target);
 int brain_ThrowEnder(int32_t *cpad, playerObject *player);
 void brain_ValidateLockOn(playerObject *player);
+void jpb_BrainResetLockDiagnostics(void);
+void jpb_BrainGetLockDiagnostics(
+    JPBBrainLockDiagnostics *diagnostics);
 
 int jpb_BrainDirectionAngle(
     float axis_x, float axis_y, int camera_angle);
-JPBBrainPartialResult jpb_BrainGroundDirectionState(
+JPBBrainResult jpb_BrainGroundDirectionState(
     playerObject *player,
     float axis_x,
     float axis_y,
     int camera_angle);
-JPBBrainPartialResult jpb_BrainLockOnDirectionState(
+JPBBrainResult jpb_BrainLockOnDirectionState(
     playerObject *player, int desired_facing);
-JPBBrainPartialResult jpb_BrainJumpLaunchState(
+JPBBrainResult jpb_BrainJumpLaunchState(
     playerObject *player,
     int stand,
     JPBPlayerCallback trajectory_callback);
-JPBBrainPartialResult jpb_BrainAlternateJumpLaunchState(
+JPBBrainResult jpb_BrainAlternateJumpLaunchState(
     playerObject *player,
     JPBPlayerCallback trajectory_callback);
-JPBBrainPartialResult jpb_BrainGroundAttackState(
+JPBBrainResult jpb_BrainGroundAttackState(
     playerObject *player);
-JPBBrainPartialResult jpb_BrainGroundIdleState(
+JPBBrainResult jpb_BrainGroundIdleState(
     playerObject *player, int energy);
-JPBBrainPartialResult jpb_BrainGroundSpecialDirectionState(
+JPBBrainResult jpb_BrainGroundSpecialDirectionState(
     playerObject *player, int energy);
 
 #ifdef __cplusplus

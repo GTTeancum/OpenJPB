@@ -1,5 +1,5 @@
 /*
- * PARTIALLY REVIEWED RECONSTRUCTION.
+ * REVIEWED RECONSTRUCTION.
  *
  * Provenance for brainutl_AddSabreEdge, brainutl_ConformGeomNodes,
  * brainutl_FindLSB, brainutl_Land, brainutil_PlotMaulTrajectory, and
@@ -41,6 +41,7 @@
 #include "jpb/scene.h"
 #include "jpb/sound.h"
 #include "jpb/world.h"
+#include "jpb/whook.h"
 
 #include <string.h>
 
@@ -98,16 +99,22 @@ int brainutil_PauseControl(
     held = (uint32_t)cpad[1];
     player_number = (uint16_t)player->playernum;
 
-    /*
-     * The two compiled source branches repeat these idempotent stores. The
-     * omitted alternative is KeyPressed(VK_SPACE), a Windows-only keyboard
-     * fallback; portable hosts publish their keyboard state through cpad.
-     */
     if ((held & UINT32_C(0x100)) != 0) {
         (void)game_gSetGameFlags(
             UINT32_C(0x200000) << (player_number & 31U));
     }
-    if (((pressed | held) & UINT32_C(0x800)) != 0) {
+    if ((held & UINT32_C(0x800)) != 0 ||
+        (pressed & UINT32_C(0x800)) != 0) {
+        (void)game_gSetGameFlags(
+            UINT32_C(0x1000) << (player_number & 31U));
+    }
+    if ((held & UINT32_C(0x100)) != 0) {
+        (void)game_gSetGameFlags(
+            UINT32_C(0x200000) << (player_number & 31U));
+    }
+    if ((held & UINT32_C(0x800)) != 0 ||
+        (pressed & UINT32_C(0x800)) != 0 ||
+        (KeyPressed(0x20) != 0 && player_number == 0)) {
         (void)game_gSetGameFlags(
             UINT32_C(0x1000) << (player_number & 31U));
     }
@@ -166,8 +173,7 @@ int brainutil_PlotMaulTrajectory(
                 .motionFlags |=
                 UINT32_C(0x04000000);
         }
-        player->pMotionCallBack =
-            jpb_MaulTrajectoryCallbackSlot;
+        player->pMotionCallBack = funcArray[48];
     }
 
     if (physics->airmov.vy <= 0.0f &&
@@ -332,8 +338,7 @@ int brainutil_PlotTrajectory(
                         &player->paMotions[22]);
                 }
             }
-            player->pMotionCallBack =
-                jpb_TrajectoryCallbackSlot;
+            player->pMotionCallBack = funcArray[6];
             if (player->paMotions != NULL &&
                 player->maxMotions > 22) {
                 player
@@ -368,8 +373,7 @@ int brainutil_PlotTrajectory(
             &player->playerRoot,
             &player
                  ->paMotions[recovery_motion]);
-        player->pMotionCallBack =
-            jpb_TrajectoryCallbackSlot;
+        player->pMotionCallBack = funcArray[6];
     }
 
     if (player_id <= 51 &&

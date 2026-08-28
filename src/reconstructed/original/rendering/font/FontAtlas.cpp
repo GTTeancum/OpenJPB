@@ -1,430 +1,322 @@
 /*
- * GENERATED RECONSTRUCTION SHELL - no function bodies recovered here.
+ * REVIEWED RECONSTRUCTION of
+ * W:\SWJediPowerBattles\work\rendering\font\FontAtlas.cpp.
  * PDB module: 0067
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\FontAtlas.obj
- * Primary source: W:\SWJediPowerBattles\work\rendering\font\FontAtlas.cpp
- * Compiler language: c++
- * Emitted procedures: 70
- *
- * Use inventory/function_map.tsv with ExportReconstruction.java.
  */
 
-/* 0xEB690, 156 bytes, global, 6 named locals
- * std::_Uhash_compare<Glyph,std::hash<Glyph>,std::equal_to<Glyph> >::operator()<Glyph>
- * PDB type: unsigned __int64 std::_Uhash_com...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\xhash
- */
-
-/* 0xEB730, 226 bytes, global, 9 named locals
- * std::_Hash<std::_Umap_traits<Glyph,GlyphEntry,std::_Uhash_compare<Glyph,std::hash<Glyph>,std::equal_to<Glyph> >,std::allocator<std::pair<Glyph const ,GlyphEntry> >,0> >::_Find_last<Glyph>
- * PDB type: std::_Hash_find_last_result<std:...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\xhash
- */
-
-/* 0xEB820, 204 bytes, global, 10 named locals
- * std::_Hash<std::_Umap_traits<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,TTF_Font_Wrapper,std::_Uhash_compare<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::hash<std::basic_string<char,std::char_traits<char>,std::allocator<char> > >,std::equal_to<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >,std::allocator<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper> >,0> >::_Find_last<std::basic_string<char,std::char_traits<char>,std::allocator<char> > >
- * PDB type: std::_Hash_find_last_result<std:...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\xhash
- */
-
-/* 0xEB8F0, 55 bytes, global, 3 named locals
- * std::_Fnv1a_append_value<int>
- * PDB type: unsigned __int64 (const unsigned...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\type_traits
- */
-
-/* 0xEB930, 149 bytes, global, 8 named locals
- * std::_List_node<std::pair<Glyph const ,GlyphEntry>,void *>::_Free_non_head<std::allocator<std::_List_node<std::pair<Glyph const ,GlyphEntry>,void *> > >
- * PDB type: void std::_List_node<std::pair<G...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\list
- */
-
-/* 0xEB9D0, 53 bytes, global, 4 named locals
- * std::_Hash_array_representation<char>
- * PDB type: unsigned __int64 (const char* co...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\type_traits
- */
-
-/* 0xEBA10, 68 bytes, global, 2 named locals
- * std::_Hash_representation<int>
- * PDB type: unsigned __int64 (const int&)
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\type_traits
- */
-
-/* 0xEBA60, 769 bytes, global, 22 named locals
- * std::_Hash<std::_Umap_traits<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,TTF_Font_Wrapper,std::_Uhash_compare<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::hash<std::basic_string<char,std::char_traits<char>,std::allocator<char> > >,std::equal_to<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >,std::allocator<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper> >,0> >::_Try_emplace<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const &,char const *>
- * PDB type: std::pair<std::_List_node<std::p...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\xhash
- */
-
-/* 0xEBD70, 578 bytes, global, 12 named locals
- * std::_Hash<std::_Umap_traits<Glyph,GlyphEntry,std::_Uhash_compare<Glyph,std::hash<Glyph>,std::equal_to<Glyph> >,std::allocator<std::pair<Glyph const ,GlyphEntry> >,0> >::emplace<Glyph &,GlyphEntry &>
- * PDB type: std::pair<std::_List_iterator<st...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\xhash
- */
-
-/* 0xEBFC0, 132 bytes, global, 4 named locals
- * std::fill<std::_List_unchecked_iterator<std::_List_val<std::_List_simple_types<std::pair<Glyph const ,GlyphEntry> > > > *,std::_List_unchecked_iterator<std::_List_val<std::_List_simple_types<std::pair<Glyph const ,GlyphEntry> > > > >
- * PDB type: void (std::_List_unchecked_itera...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\xutility
- */
-
-/* 0xEC050, 132 bytes, global, 4 named locals
- * std::fill<std::_List_unchecked_iterator<std::_List_val<std::_List_simple_types<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper> > > > *,std::_List_unchecked_iterator<std::_List_val<std::_List_simple_types<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper> > > > >
- * PDB type: void (std::_List_unchecked_itera...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\xutility
- */
-
-/* 0xEC0E0, 32 bytes, global, 4 named locals
- * std::uninitialized_fill<std::_List_unchecked_iterator<std::_List_val<std::_List_simple_types<std::pair<Glyph const ,GlyphEntry> > > > *,std::_List_unchecked_iterator<std::_List_val<std::_List_simple_types<std::pair<Glyph const ,GlyphEntry> > > > >
- * PDB type: void (std::_List_unchecked_itera...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\xmemory
- */
-
-/* 0xEC100, 32 bytes, global, 4 named locals
- * std::uninitialized_fill<std::_List_unchecked_iterator<std::_List_val<std::_List_simple_types<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper> > > > *,std::_List_unchecked_iterator<std::_List_val<std::_List_simple_types<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper> > > > >
- * PDB type: void (std::_List_unchecked_itera...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\xmemory
- */
-
-/* 0xEC120, 280 bytes, global, 9 named locals
- * std::basic_string<char,std::char_traits<char>,std::allocator<char> >::basic_string<char,std::char_traits<char>,std::allocator<char> >
- * PDB type: void std::basic_string<char,std:...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\xstring
- */
-
-/* 0xEC240, 435 bytes, global, 12 named locals
- * FontAtlas::FontAtlas
- * PDB type: void FontAtlas::(unsigned, unsig...
- * Source: W:\SWJediPowerBattles\work\rendering\font\FontAtlas.cpp
- */
-
-/* 0xEC400, 71 bytes, global, 6 named locals
- * SDL_Surface_Wrapper::SDL_Surface_Wrapper
- * PDB type: void SDL_Surface_Wrapper::(unsig...
- * Source: W:\SWJediPowerBattles\work\rendering\font\FontAtlas.cpp
- */
-
-/* 0xEC450, 7 bytes, global, 2 named locals
- * SDL_Surface_Wrapper::SDL_Surface_Wrapper
- * PDB type: void SDL_Surface_Wrapper::(SDL_S...
- * Source: W:\SWJediPowerBattles\work\rendering\font\FontAtlas.cpp
- */
-
-/* 0xEC460, 7 bytes, global, 2 named locals
- * TTF_Font_Wrapper::TTF_Font_Wrapper
- * PDB type: void TTF_Font_Wrapper::(_TTF_Fon...
- * Source: W:\SWJediPowerBattles\work\rendering\font\FontAtlas.cpp
- */
-
-/* 0xEC470, 66 bytes, global, 2 named locals
- * TTF_Font_Wrapper::TTF_Font_Wrapper
- * PDB type: void TTF_Font_Wrapper::(const ch...
- * Source: W:\SWJediPowerBattles\work\rendering\font\FontAtlas.cpp
- */
-
-/* 0xEC4C0, 21 bytes, global, 1 named locals
- * std::bad_optional_access::bad_optional_access
- * PDB type: void std::bad_optional_access::(...
- * Source: no line mapping
- */
-
-/* 0xEC4E0, 20 bytes, global, 2 named locals
- * std::_Alloc_construct_ptr<std::allocator<std::_List_node<std::pair<Glyph const ,GlyphEntry>,void *> > >::~_Alloc_construct_ptr<std::allocator<std::_List_node<std::pair<Glyph const ,GlyphEntry>,void *> > >
- * PDB type: void std::_Alloc_construct_ptr<s...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\xmemory
- */
-
-/* 0xEC500, 20 bytes, global, 2 named locals
- * std::_Alloc_construct_ptr<std::allocator<std::_List_node<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper>,void *> > >::~_Alloc_construct_ptr<std::allocator<std::_List_node<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper>,void *> > >
- * PDB type: void std::_Alloc_construct_ptr<s...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\xmemory
- */
-
-/* 0xEC520, 119 bytes, global, 6 named locals
- * std::_Hash<std::_Umap_traits<Glyph,GlyphEntry,std::_Uhash_compare<Glyph,std::hash<Glyph>,std::equal_to<Glyph> >,std::allocator<std::pair<Glyph const ,GlyphEntry> >,0> >::~_Hash<std::_Umap_traits<Glyph,GlyphEntry,std::_Uhash_compare<Glyph,std::hash<Glyph>,std::equal_to<Glyph> >,std::allocator<std::pair<Glyph const ,GlyphEntry> >,0> >
- * PDB type: void std::_Hash<std::_Umap_trait...
- * Source: no line mapping
- */
-
-/* 0xEC5A0, 101 bytes, global, 5 named locals
- * std::_Hash<std::_Umap_traits<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,TTF_Font_Wrapper,std::_Uhash_compare<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::hash<std::basic_string<char,std::char_traits<char>,std::allocator<char> > >,std::equal_to<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >,std::allocator<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper> >,0> >::~_Hash<std::_Umap_traits<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,TTF_Font_Wrapper,std::_Uhash_compare<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::hash<std::basic_string<char,std::char_traits<char>,std::allocator<char> > >,std::equal_to<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >,std::allocator<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper> >,0> >
- * PDB type: void std::_Hash<std::_Umap_trait...
- * Source: no line mapping
- */
-
-/* 0xEC610, 91 bytes, global, 5 named locals
- * std::_Hash_vec<std::allocator<std::_List_unchecked_iterator<std::_List_val<std::_List_simple_types<std::pair<Glyph const ,GlyphEntry> > > > > >::~_Hash_vec<std::allocator<std::_List_unchecked_iterator<std::_List_val<std::_List_simple_types<std::pair<Glyph const ,GlyphEntry> > > > > >
- * PDB type: void std::_Hash_vec<std::allocat...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\xhash
- */
-
-/* 0xEC670, 91 bytes, global, 5 named locals
- * std::_Hash_vec<std::allocator<std::_List_unchecked_iterator<std::_List_val<std::_List_simple_types<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper> > > > > >::~_Hash_vec<std::allocator<std::_List_unchecked_iterator<std::_List_val<std::_List_simple_types<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper> > > > > >
- * PDB type: void std::_Hash_vec<std::allocat...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\xhash
- */
-
-/* 0xEC6D0, 133 bytes, global, 6 named locals
- * std::_List_node_emplace_op2<std::allocator<std::_List_node<std::pair<Glyph const ,GlyphEntry>,void *> > >::~_List_node_emplace_op2<std::allocator<std::_List_node<std::pair<Glyph const ,GlyphEntry>,void *> > >
- * PDB type: void std::_List_node_emplace_op2...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\list
- */
-
-/* 0xEC760, 57 bytes, global, 2 named locals
- * std::_List_node_emplace_op2<std::allocator<std::_List_node<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper>,void *> > >::~_List_node_emplace_op2<std::allocator<std::_List_node<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper>,void *> > >
- * PDB type: void std::_List_node_emplace_op2...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\list
- */
-
-/* 0xEC7A0, 100 bytes, global, 5 named locals
- * std::_Optional_destruct_base<std::pair<Glyph,GlyphEntry>,0>::~_Optional_destruct_base<std::pair<Glyph,GlyphEntry>,0>
- * PDB type: void std::_Optional_destruct_bas...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\optional
- */
-
-/* 0xEC810, 35 bytes, global, 1 named locals
- * std::list<std::pair<Glyph const ,GlyphEntry>,std::allocator<std::pair<Glyph const ,GlyphEntry> > >::~list<std::pair<Glyph const ,GlyphEntry>,std::allocator<std::pair<Glyph const ,GlyphEntry> > >
- * PDB type: void std::list<std::pair<Glyph c...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\list
- */
-
-/* 0xEC840, 109 bytes, global, 4 named locals
- * std::list<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper>,std::allocator<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper> > >::~list<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper>,std::allocator<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper> > >
- * PDB type: void std::list<std::pair<std::ba...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\list
- */
-
-/* 0xEC8B0, 5 bytes, global, 1 named locals
- * std::optional<std::pair<Glyph,GlyphEntry> >::~optional<std::pair<Glyph,GlyphEntry> >
- * PDB type: void std::optional<std::pair<Gly...
- * Source: no line mapping
- */
-
-/* 0xEC8C0, 108 bytes, global, 5 named locals
- * std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper>::~pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper>
- * PDB type: void std::pair<std::basic_string...
- * Source: no line mapping
- */
-
-/* 0xEC930, 19 bytes, global, 1 named locals
- * std::unique_ptr<GlyphPackingPolicy,std::default_delete<GlyphPackingPolicy> >::~unique_ptr<GlyphPackingPolicy,std::default_delete<GlyphPackingPolicy> >
- * PDB type: void std::unique_ptr<GlyphPackin...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\memory
- */
-
-/* 0xEC950, 20 bytes, global, 1 named locals
- * std::unique_ptr<PHL::Texture2D,std::default_delete<PHL::Texture2D> >::~unique_ptr<PHL::Texture2D,std::default_delete<PHL::Texture2D> >
- * PDB type: void std::unique_ptr<PHL::Textur...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\memory
- */
-
-/* 0xEC970, 5 bytes, global, 1 named locals
- * std::unordered_map<Glyph,GlyphEntry,std::hash<Glyph>,std::equal_to<Glyph>,std::allocator<std::pair<Glyph const ,GlyphEntry> > >::~unordered_map<Glyph,GlyphEntry,std::hash<Glyph>,std::equal_to<Glyph>,std::allocator<std::pair<Glyph const ,GlyphEntry> > >
- * PDB type: void std::unordered_map<Glyph,Gl...
- * Source: no line mapping
- */
-
-/* 0xEC980, 5 bytes, global, 1 named locals
- * std::unordered_map<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,TTF_Font_Wrapper,std::hash<std::basic_string<char,std::char_traits<char>,std::allocator<char> > >,std::equal_to<std::basic_string<char,std::char_traits<char>,std::allocator<char> > >,std::allocator<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper> > >::~unordered_map<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,TTF_Font_Wrapper,std::hash<std::basic_string<char,std::char_traits<char>,std::allocator<char> > >,std::equal_to<std::basic_string<char,std::char_traits<char>,std::allocator<char> > >,std::allocator<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper> > >
- * PDB type: void std::unordered_map<std::bas...
- * Source: no line mapping
- */
-
-/* 0xEC990, 94 bytes, global, 5 named locals
- * Glyph::~Glyph
- * PDB type: void Glyph::()
- * Source: no line mapping
- */
-
-/* 0xEC9F0, 8 bytes, global, 1 named locals
- * SDL_Surface_Wrapper::~SDL_Surface_Wrapper
- * PDB type: void SDL_Surface_Wrapper::()
- * Source: W:\SWJediPowerBattles\work\rendering\font\FontAtlas.cpp
- */
-
-/* 0xECA00, 13 bytes, global, 1 named locals
- * TTF_Font_Wrapper::~TTF_Font_Wrapper
- * PDB type: void TTF_Font_Wrapper::()
- * Source: W:\SWJediPowerBattles\work\rendering\font\FontAtlas.cpp
- */
-
-/* 0xECA10, 1750 bytes, global, 47 named locals
- * FontAtlas::AddGlyph
- * PDB type: std::optional<std::pair<Glyph,Gl...
- * Source: W:\SWJediPowerBattles\work\rendering\font\FontAtlas.cpp
- */
-
-/* 0xED0F0, 3 bytes, global, 1 named locals
- * FontAtlas::ClearAtlas
- * PDB type: void FontAtlas::()
- * Source: W:\SWJediPowerBattles\work\rendering\font\FontAtlas.cpp
- */
-
-/* 0xED100, 86 bytes, global, 4 named locals
- * FontAtlas::Contains
- * PDB type: bool FontAtlas::(const Glyph&)
- * Source: W:\SWJediPowerBattles\work\rendering\font\FontAtlas.cpp
- */
-
-/* 0xED160, 4 bytes, global, 1 named locals
- * FontAtlas::GetAtlasSurface
- * PDB type: SDL_Surface* FontAtlas::()
- * Source: W:\SWJediPowerBattles\work\rendering\font\FontAtlas.cpp
- */
-
-/* 0xED170, 58 bytes, global, 4 named locals
- * FontAtlas::GetFont
- * PDB type: _TTF_Font* FontAtlas::(const std...
- * Source: W:\SWJediPowerBattles\work\rendering\font\FontAtlas.cpp
- */
-
-/* 0xED1B0, 119 bytes, global, 5 named locals
- * FontAtlas::GetGlyphEntry
- * PDB type: std::optional<GlyphEntry> FontAt...
- * Source: W:\SWJediPowerBattles\work\rendering\font\FontAtlas.cpp
- */
-
-/* 0xED230, 321 bytes, global, 10 named locals
- * FontAtlas::RenderGlyph
- * PDB type: void FontAtlas::(const Glyph&, c...
- * Source: W:\SWJediPowerBattles\work\rendering\font\FontAtlas.cpp
- */
-
-/* 0xED380, 118 bytes, global, 4 named locals
- * FontAtlas::UpdateTexture
- * PDB type: void FontAtlas::()
- * Source: W:\SWJediPowerBattles\work\rendering\font\FontAtlas.cpp
- */
-
-/* 0xED400, 314 bytes, global, 15 named locals
- * std::_Hash_vec<std::allocator<std::_List_unchecked_iterator<std::_List_val<std::_List_simple_types<std::pair<Glyph const ,GlyphEntry> > > > > >::_Assign_grow
- * PDB type: void std::_Hash_vec<std::allocat...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\xhash
- */
-
-/* 0xED540, 314 bytes, global, 15 named locals
- * std::_Hash_vec<std::allocator<std::_List_unchecked_iterator<std::_List_val<std::_List_simple_types<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper> > > > > >::_Assign_grow
- * PDB type: void std::_Hash_vec<std::allocat...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\xhash
- */
-
-/* 0xED680, 600 bytes, global, 24 named locals
- * std::_Hash<std::_Umap_traits<Glyph,GlyphEntry,std::_Uhash_compare<Glyph,std::hash<Glyph>,std::equal_to<Glyph> >,std::allocator<std::pair<Glyph const ,GlyphEntry> >,0> >::_Forced_rehash
- * PDB type: void std::_Hash<std::_Umap_trait...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\xhash
- */
-
-/* 0xED8E0, 632 bytes, global, 27 named locals
- * std::_Hash<std::_Umap_traits<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,TTF_Font_Wrapper,std::_Uhash_compare<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::hash<std::basic_string<char,std::char_traits<char>,std::allocator<char> > >,std::equal_to<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >,std::allocator<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper> >,0> >::_Forced_rehash
- * PDB type: void std::_Hash<std::_Umap_trait...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\xhash
- */
-
-/* 0xEDB60, 47 bytes, global, 0 named locals
- * std::_Throw_bad_optional_access
- * PDB type: void ()
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\optional
- */
-
-/* 0xEDB90, 352 bytes, global, 15 named locals
- * std::basic_string<char,std::char_traits<char>,std::allocator<char> >::assign
- * PDB type: std::basic_string<char,std::char...
- * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\xstring
- */
-
-/* 0x2704C0, 12 bytes, local, 1 named locals
- * `std::_Hash<std::_Umap_traits<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,TTF_Font_Wrapper,std::_Uhash_compare<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::hash<std::basic_string<char,std::char_traits<char>,std::allocator<char> > >,std::equal_to<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >,std::allocator<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper> >,0> >::_Try_emplace<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const &,char const *>'::`1'::dtor$0
- * PDB type: unknown
- * Source: no line mapping
- */
-
-/* 0x2704D0, 12 bytes, local, 1 named locals
- * `std::_Hash<std::_Umap_traits<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,TTF_Font_Wrapper,std::_Uhash_compare<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::hash<std::basic_string<char,std::char_traits<char>,std::allocator<char> > >,std::equal_to<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >,std::allocator<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,TTF_Font_Wrapper> >,0> >::_Try_emplace<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const &,char const *>'::`1'::dtor$1
- * PDB type: unknown
- * Source: no line mapping
- */
-
-/* 0x2704E0, 12 bytes, local, 1 named locals
- * `std::_Hash<std::_Umap_traits<Glyph,GlyphEntry,std::_Uhash_compare<Glyph,std::hash<Glyph>,std::equal_to<Glyph> >,std::allocator<std::pair<Glyph const ,GlyphEntry> >,0> >::emplace<Glyph &,GlyphEntry &>'::`1'::dtor$0
- * PDB type: unknown
- * Source: no line mapping
- */
-
-/* 0x2704F0, 12 bytes, local, 1 named locals
- * `std::_Hash<std::_Umap_traits<Glyph,GlyphEntry,std::_Uhash_compare<Glyph,std::hash<Glyph>,std::equal_to<Glyph> >,std::allocator<std::pair<Glyph const ,GlyphEntry> >,0> >::emplace<Glyph &,GlyphEntry &>'::`1'::dtor$1
- * PDB type: unknown
- * Source: no line mapping
- */
-
-/* 0x270500, 12 bytes, local, 1 named locals
- * `FontAtlas::FontAtlas'::`1'::dtor$0
- * PDB type: unknown
- * Source: no line mapping
- */
-
-/* 0x270510, 16 bytes, local, 1 named locals
- * `FontAtlas::FontAtlas'::`1'::dtor$1
- * PDB type: unknown
- * Source: no line mapping
- */
-
-/* 0x270520, 16 bytes, local, 1 named locals
- * `FontAtlas::FontAtlas'::`1'::dtor$2
- * PDB type: unknown
- * Source: no line mapping
- */
-
-/* 0x270530, 16 bytes, local, 1 named locals
- * `FontAtlas::FontAtlas'::`1'::dtor$3
- * PDB type: unknown
- * Source: no line mapping
- */
-
-/* 0x270540, 19 bytes, local, 1 named locals
- * `FontAtlas::FontAtlas'::`1'::dtor$4
- * PDB type: unknown
- * Source: no line mapping
- */
-
-/* 0x270560, 16 bytes, local, 1 named locals
- * `FontAtlas::FontAtlas'::`1'::dtor$7
- * PDB type: unknown
- * Source: no line mapping
- */
-
-/* 0x270570, 16 bytes, local, 1 named locals
- * `FontAtlas::FontAtlas'::`1'::dtor$8
- * PDB type: unknown
- * Source: no line mapping
- */
-
-/* 0x270580, 16 bytes, local, 1 named locals
- * `FontAtlas::FontAtlas'::`1'::dtor$10
- * PDB type: unknown
- * Source: no line mapping
- */
-
-/* 0x270590, 16 bytes, local, 1 named locals
- * `FontAtlas::FontAtlas'::`1'::dtor$11
- * PDB type: unknown
- * Source: no line mapping
- */
-
-/* 0x2705A0, 12 bytes, local, 2 named locals
- * `FontAtlas::AddGlyph'::`1'::dtor$0
- * PDB type: unknown
- * Source: no line mapping
- */
-
-/* 0x2705B0, 12 bytes, local, 2 named locals
- * `FontAtlas::AddGlyph'::`1'::dtor$2
- * PDB type: unknown
- * Source: no line mapping
- */
-
-/* 0x2705C0, 12 bytes, local, 2 named locals
- * `FontAtlas::AddGlyph'::`1'::dtor$4
- * PDB type: unknown
- * Source: no line mapping
- */
+#include "jpb/font_atlas.h"
+
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+static JPBFontAtlasPlatformHooks jpb_font_atlas_hooks;
+
+static const JPBFontAtlasPlatformHooks &font_atlas_hooks()
+{
+    if (jpb_font_atlas_hooks.create_rgb_surface_with_format == nullptr ||
+        jpb_font_atlas_hooks.free_surface == nullptr ||
+        jpb_font_atlas_hooks.lock_surface == nullptr ||
+        jpb_font_atlas_hooks.unlock_surface == nullptr ||
+        jpb_font_atlas_hooks.upper_blit == nullptr ||
+        jpb_font_atlas_hooks.get_error == nullptr ||
+        jpb_font_atlas_hooks.ttf_was_init == nullptr ||
+        jpb_font_atlas_hooks.ttf_init == nullptr ||
+        jpb_font_atlas_hooks.ttf_open_font == nullptr ||
+        jpb_font_atlas_hooks.ttf_close_font == nullptr ||
+        jpb_font_atlas_hooks.ttf_set_font_size == nullptr ||
+        jpb_font_atlas_hooks.ttf_glyph_metrics == nullptr ||
+        jpb_font_atlas_hooks.ttf_render_glyph_blended == nullptr ||
+        jpb_font_atlas_hooks.ttf_font_ascent == nullptr) {
+        std::abort();
+    }
+    return jpb_font_atlas_hooks;
+}
+
+void jpb_FontAtlasSetPlatformHooks(
+    const JPBFontAtlasPlatformHooks *hooks)
+{
+    if (hooks == nullptr) {
+        std::memset(&jpb_font_atlas_hooks, 0, sizeof(jpb_font_atlas_hooks));
+    } else {
+        jpb_font_atlas_hooks = *hooks;
+    }
+}
+
+SDL_Surface_Wrapper::SDL_Surface_Wrapper()
+    : Surface(nullptr)
+{
+}
+
+/* RVA 0xEC400 */
+SDL_Surface_Wrapper::SDL_Surface_Wrapper(
+    unsigned flags,
+    int width,
+    int height,
+    int depth,
+    unsigned format)
+    : Surface(font_atlas_hooks().create_rgb_surface_with_format(
+          flags, width, height, depth, format))
+{
+}
+
+/* RVA 0xEC450 */
+SDL_Surface_Wrapper::SDL_Surface_Wrapper(SDL_Surface *surface)
+    : Surface(surface)
+{
+}
+
+SDL_Surface_Wrapper::SDL_Surface_Wrapper(
+    SDL_Surface_Wrapper &&other) noexcept
+    : Surface(other.Surface)
+{
+    other.Surface = nullptr;
+}
+
+SDL_Surface_Wrapper &SDL_Surface_Wrapper::operator=(
+    SDL_Surface_Wrapper &&other) noexcept
+{
+    if (this != &other) {
+        font_atlas_hooks().free_surface(Surface);
+        Surface = other.Surface;
+        other.Surface = nullptr;
+    }
+    return *this;
+}
+
+/* RVA 0xEC9F0 */
+SDL_Surface_Wrapper::~SDL_Surface_Wrapper()
+{
+    font_atlas_hooks().free_surface(Surface);
+}
+
+TTF_Font_Wrapper::TTF_Font_Wrapper()
+    : Font(nullptr)
+{
+}
+
+/* RVA 0xEC470 */
+TTF_Font_Wrapper::TTF_Font_Wrapper(const char *font_file)
+    : Font(font_atlas_hooks().ttf_open_font(font_file, 0))
+{
+    if (Font == nullptr) {
+        std::printf("[Error] SDL TTF %s", font_atlas_hooks().get_error());
+    }
+}
+
+/* RVA 0xEC460 */
+TTF_Font_Wrapper::TTF_Font_Wrapper(_TTF_Font *font)
+    : Font(font)
+{
+}
+
+TTF_Font_Wrapper::TTF_Font_Wrapper(TTF_Font_Wrapper &&other) noexcept
+    : Font(other.Font)
+{
+    other.Font = nullptr;
+}
+
+TTF_Font_Wrapper &TTF_Font_Wrapper::operator=(
+    TTF_Font_Wrapper &&other) noexcept
+{
+    if (this != &other) {
+        if (Font != nullptr) {
+            font_atlas_hooks().ttf_close_font(Font);
+        }
+        Font = other.Font;
+        other.Font = nullptr;
+    }
+    return *this;
+}
+
+/* RVA 0xECA00 */
+TTF_Font_Wrapper::~TTF_Font_Wrapper()
+{
+    if (Font != nullptr) {
+        font_atlas_hooks().ttf_close_font(Font);
+    }
+}
+
+bool Glyph::operator==(const Glyph &other) const
+{
+    return FontFile == other.FontFile &&
+           Character == other.Character &&
+           FontSize == other.FontSize;
+}
+
+std::size_t std::hash<Glyph>::operator()(const Glyph &glyph) const noexcept
+{
+    constexpr std::size_t offset = UINT64_C(0xcbf29ce484222325);
+    constexpr std::size_t prime = UINT64_C(0x100000001b3);
+    std::size_t font_hash = offset;
+    std::size_t size_hash = offset;
+    const auto *size_bytes = reinterpret_cast<const unsigned char *>(
+        &glyph.FontSize);
+
+    for (unsigned char byte : glyph.FontFile) {
+        font_hash = (font_hash ^ byte) * prime;
+    }
+    for (std::size_t index = 0; index < sizeof(glyph.FontSize); ++index) {
+        size_hash = (size_hash ^ size_bytes[index]) * prime;
+    }
+    return font_hash ^ size_hash ^ glyph.Character;
+}
+
+/* RVA 0xEC240 */
+FontAtlas::FontAtlas(unsigned format, unsigned width, unsigned height)
+    : AtlasSurface(0, width, height, 32, format),
+      PackingPolicy(),
+      FontCache(),
+      AtlasGlyphs(),
+      Width(width),
+      Height(height),
+      Texture(PHL::Texture2D::CreateTexture(
+          width, height, PHL::TextureFormat::RGBA8888)),
+      bIsDirty(false)
+{
+    const JPBFontAtlasPlatformHooks &hooks = font_atlas_hooks();
+
+    if (hooks.ttf_was_init() == 0 && hooks.ttf_init() != 0) {
+        std::printf("SDL_ttf init Error %s", hooks.get_error());
+    }
+    PackingPolicy = std::make_unique<ShelfGlyphPackingPolicy>(width, height);
+    Texture->SetDebugName("FontAtlas");
+}
+
+FontAtlas::~FontAtlas() = default;
+
+/* RVA 0xECA10 */
+std::optional<std::pair<Glyph, GlyphEntry>> FontAtlas::AddGlyph(
+    const char *font_file,
+    unsigned short character,
+    int size)
+{
+    Glyph new_glyph = {font_file, character, size, {0, 0, 0, 0, 0}};
+    auto found = AtlasGlyphs.find(new_glyph);
+
+    if (found != AtlasGlyphs.end()) {
+        return std::make_pair(found->first, found->second);
+    }
+
+    _TTF_Font *font = GetFont(std::string(font_file));
+    const JPBFontAtlasPlatformHooks &hooks = font_atlas_hooks();
+    if (hooks.ttf_set_font_size(font, size) != 0) {
+        std::printf("[Font Atlas][Error] %s", hooks.get_error());
+    }
+    if (hooks.ttf_glyph_metrics(
+            font,
+            character,
+            &new_glyph.Metrics.minx,
+            &new_glyph.Metrics.maxx,
+            &new_glyph.Metrics.miny,
+            &new_glyph.Metrics.maxy,
+            &new_glyph.Metrics.advance) != 0) {
+        std::printf("[Font Atlas][Error] %s", hooks.get_error());
+    }
+    if (character == 0x2019U) {
+        new_glyph.Metrics.advance = 10;
+    } else if (character == 0x201DU) {
+        new_glyph.Metrics.advance = 18;
+    }
+
+    std::optional<GlyphEntry> entry =
+        PackingPolicy->AddGlyphEntry(&new_glyph.Metrics);
+    if (!entry.has_value()) {
+        return std::nullopt;
+    }
+
+    auto inserted = AtlasGlyphs.emplace(new_glyph, entry.value());
+    std::optional<std::pair<Glyph, GlyphEntry>> result =
+        std::make_pair(inserted.first->first, inserted.first->second);
+    RenderGlyph(result.value().first, result.value().second);
+    return result;
+}
+
+/* RVA 0xED0F0: shipped no-op. */
+void FontAtlas::ClearAtlas()
+{
+}
+
+/* RVA 0xED100 */
+bool FontAtlas::Contains(const Glyph &glyph) const
+{
+    return AtlasGlyphs.find(glyph) != AtlasGlyphs.end();
+}
+
+/* RVA 0xED160 */
+SDL_Surface *FontAtlas::GetAtlasSurface() const
+{
+    return AtlasSurface.GetSurface();
+}
+
+/* RVA 0xED170 */
+_TTF_Font *FontAtlas::GetFont(const std::string &font_file)
+{
+    return FontCache.try_emplace(font_file, font_file.c_str())
+        .first->second.GetFont();
+}
+
+/* RVA 0xED1B0 */
+std::optional<GlyphEntry> FontAtlas::GetGlyphEntry(
+    const Glyph &glyph) const
+{
+    std::optional<GlyphEntry> result;
+    auto found = AtlasGlyphs.find(glyph);
+    if (found != AtlasGlyphs.end()) {
+        result = found->second;
+    }
+    return result;
+}
+
+/* RVA 0xED230 */
+void FontAtlas::RenderGlyph(
+    const Glyph &glyph,
+    const GlyphEntry &entry)
+{
+    const JPBFontAtlasPlatformHooks &hooks = font_atlas_hooks();
+    _TTF_Font *font = GetFont(glyph.FontFile);
+
+    if (hooks.ttf_set_font_size(font, glyph.FontSize) != 0) {
+        std::printf("[Font Atlas][Error] %s", hooks.get_error());
+    }
+    SDL_Surface *surface = hooks.ttf_render_glyph_blended(
+        font, glyph.Character, UINT32_C(0xffffffff));
+    SDL_Rect destination = {
+        static_cast<int>(entry.Left),
+        static_cast<int>(entry.Top),
+        static_cast<int>(entry.Right - entry.Left),
+        static_cast<int>(entry.Bottom - entry.Top)};
+    SDL_Rect source = {
+        std::max(glyph.Metrics.minx, 0),
+        hooks.ttf_font_ascent(font) - glyph.Metrics.maxy,
+        glyph.Metrics.maxx - glyph.Metrics.minx,
+        glyph.Metrics.maxy - glyph.Metrics.miny};
+
+    if (hooks.upper_blit(
+            surface, &source, AtlasSurface.GetSurface(), &destination) != 0) {
+        std::printf("[Font Atlas][Error] %s", hooks.get_error());
+    }
+    bIsDirty = true;
+    hooks.free_surface(surface);
+}
+
+/* RVA 0xED380 */
+void FontAtlas::UpdateTexture()
+{
+    if (Texture) {
+        SDL_Surface *surface = AtlasSurface.GetSurface();
+        if (surface != nullptr) {
+            const JPBFontAtlasPlatformHooks &hooks = font_atlas_hooks();
+            if (hooks.lock_surface(surface) != 0) {
+                std::printf("[Font Atlas][Error] %s", hooks.get_error());
+            }
+            const std::uint64_t size = static_cast<std::uint64_t>(
+                static_cast<std::int64_t>(surface->pitch * surface->h));
+            Texture->UpdateTexture(surface->pixels, size);
+            hooks.unlock_surface(surface);
+            bIsDirty = false;
+        }
+    }
+}

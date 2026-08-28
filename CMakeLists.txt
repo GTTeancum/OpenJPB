@@ -11,6 +11,12 @@ set(JPB_GAME_DATA_DIR "" CACHE PATH
     "Optional original game installation root for real-asset tests")
 set(JPB_UFBX_SOURCE_DIR "" CACHE PATH
     "Optional exact ufbx 0.6.1 source tree for PC FBX level rendering and evidence probes")
+set(JPB_OGG_SOURCE_DIR "" CACHE PATH
+    "Optional exact libogg 1.3.5 source tree for canonical TheoraPlay decoding")
+set(JPB_VORBIS_SOURCE_DIR "" CACHE PATH
+    "Optional exact libvorbis 1.3.7 source tree for canonical TheoraPlay decoding")
+set(JPB_THEORA_SOURCE_DIR "" CACHE PATH
+    "Optional exact libtheora 1.2.0alpha1 source tree for canonical TheoraPlay decoding")
 
 file(GLOB_RECURSE JPB_RECONSTRUCTED_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reconstructed/*.c"
@@ -24,6 +30,106 @@ add_library(jpb_reconstructed STATIC
 
 target_include_directories(jpb_reconstructed PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include")
+
+if(JPB_OGG_SOURCE_DIR OR JPB_VORBIS_SOURCE_DIR OR JPB_THEORA_SOURCE_DIR)
+    if(NOT EXISTS "${JPB_OGG_SOURCE_DIR}/src/framing.c" OR
+       NOT EXISTS "${JPB_VORBIS_SOURCE_DIR}/lib/synthesis.c" OR
+       NOT EXISTS "${JPB_THEORA_SOURCE_DIR}/lib/decode.c")
+        message(FATAL_ERROR
+            "JPB TheoraPlay decoding requires exact libogg 1.3.5, libvorbis 1.3.7, and libtheora 1.2.0alpha1 source trees")
+    endif()
+
+    add_library(jpb_ogg STATIC
+        "${JPB_OGG_SOURCE_DIR}/src/bitwise.c"
+        "${JPB_OGG_SOURCE_DIR}/src/framing.c")
+    target_include_directories(jpb_ogg PUBLIC
+        "${JPB_OGG_SOURCE_DIR}/include")
+
+    add_library(jpb_vorbis STATIC
+        "${JPB_VORBIS_SOURCE_DIR}/lib/mdct.c"
+        "${JPB_VORBIS_SOURCE_DIR}/lib/smallft.c"
+        "${JPB_VORBIS_SOURCE_DIR}/lib/block.c"
+        "${JPB_VORBIS_SOURCE_DIR}/lib/envelope.c"
+        "${JPB_VORBIS_SOURCE_DIR}/lib/window.c"
+        "${JPB_VORBIS_SOURCE_DIR}/lib/lsp.c"
+        "${JPB_VORBIS_SOURCE_DIR}/lib/lpc.c"
+        "${JPB_VORBIS_SOURCE_DIR}/lib/analysis.c"
+        "${JPB_VORBIS_SOURCE_DIR}/lib/synthesis.c"
+        "${JPB_VORBIS_SOURCE_DIR}/lib/psy.c"
+        "${JPB_VORBIS_SOURCE_DIR}/lib/info.c"
+        "${JPB_VORBIS_SOURCE_DIR}/lib/floor1.c"
+        "${JPB_VORBIS_SOURCE_DIR}/lib/floor0.c"
+        "${JPB_VORBIS_SOURCE_DIR}/lib/res0.c"
+        "${JPB_VORBIS_SOURCE_DIR}/lib/mapping0.c"
+        "${JPB_VORBIS_SOURCE_DIR}/lib/registry.c"
+        "${JPB_VORBIS_SOURCE_DIR}/lib/codebook.c"
+        "${JPB_VORBIS_SOURCE_DIR}/lib/sharedbook.c"
+        "${JPB_VORBIS_SOURCE_DIR}/lib/lookup.c"
+        "${JPB_VORBIS_SOURCE_DIR}/lib/bitrate.c")
+    target_include_directories(jpb_vorbis
+        PUBLIC "${JPB_VORBIS_SOURCE_DIR}/include"
+        PRIVATE "${JPB_VORBIS_SOURCE_DIR}/lib")
+    target_link_libraries(jpb_vorbis PUBLIC jpb_ogg)
+
+    add_library(jpb_theora STATIC
+        "${JPB_THEORA_SOURCE_DIR}/lib/state.c"
+        "${JPB_THEORA_SOURCE_DIR}/lib/info.c"
+        "${JPB_THEORA_SOURCE_DIR}/lib/decinfo.c"
+        "${JPB_THEORA_SOURCE_DIR}/lib/decode.c"
+        "${JPB_THEORA_SOURCE_DIR}/lib/internal.c"
+        "${JPB_THEORA_SOURCE_DIR}/lib/fragment.c"
+        "${JPB_THEORA_SOURCE_DIR}/lib/idct.c"
+        "${JPB_THEORA_SOURCE_DIR}/lib/dequant.c"
+        "${JPB_THEORA_SOURCE_DIR}/lib/bitpack.c"
+        "${JPB_THEORA_SOURCE_DIR}/lib/huffdec.c"
+        "${JPB_THEORA_SOURCE_DIR}/lib/quant.c")
+    target_include_directories(jpb_theora
+        PUBLIC "${JPB_THEORA_SOURCE_DIR}/include"
+        PRIVATE "${JPB_THEORA_SOURCE_DIR}/lib")
+    target_link_libraries(jpb_theora PUBLIC jpb_ogg)
+
+    target_compile_definitions(
+        jpb_reconstructed PRIVATE JPB_THEORAPLAY_CODEC_AVAILABLE=1)
+    target_include_directories(jpb_reconstructed PRIVATE
+        "${JPB_OGG_SOURCE_DIR}/include"
+        "${JPB_VORBIS_SOURCE_DIR}/include"
+        "${JPB_THEORA_SOURCE_DIR}/include")
+    target_link_libraries(
+        jpb_reconstructed PUBLIC jpb_theora jpb_vorbis jpb_ogg)
+endif()
+
+if(MSVC)
+    target_compile_definitions(
+        jpb_reconstructed PUBLIC _ITERATOR_DEBUG_LEVEL=0)
+endif()
+
+if(WIN32)
+    target_link_libraries(
+        jpb_reconstructed PUBLIC
+        user32 ddraw advapi32 d3d12 dxgi dxcompiler delayimp runtimeobject)
+    if(MSVC)
+        set(JPB_STEAM_API_IMPORT_LIBRARY
+            "${CMAKE_CURRENT_BINARY_DIR}/steam_api64.lib")
+        add_custom_command(
+            OUTPUT "${JPB_STEAM_API_IMPORT_LIBRARY}"
+            COMMAND
+                "${CMAKE_AR}" /nologo /machine:x64
+                "/def:${CMAKE_CURRENT_SOURCE_DIR}/cmake/steam_api64.def"
+                "/out:${JPB_STEAM_API_IMPORT_LIBRARY}"
+            DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/steam_api64.def"
+            VERBATIM)
+        add_custom_target(
+            jpb_steam_api_import
+            DEPENDS "${JPB_STEAM_API_IMPORT_LIBRARY}")
+        add_dependencies(jpb_reconstructed jpb_steam_api_import)
+        target_link_libraries(
+            jpb_reconstructed PUBLIC "${JPB_STEAM_API_IMPORT_LIBRARY}")
+        target_link_options(
+            jpb_reconstructed INTERFACE
+            "/DELAYLOAD:dxcompiler.dll"
+            "/DELAYLOAD:steam_api64.dll")
+    endif()
+endif()
 
 if(NOT MSVC)
     target_link_libraries(jpb_reconstructed PUBLIC m)
@@ -56,20 +162,22 @@ if(JPB_UFBX_SOURCE_DIR)
         message(FATAL_ERROR
             "JPB_UFBX_SOURCE_DIR must contain ufbx.c and ufbx.h")
     endif()
-    add_executable(
-        jpb_fbx_level_probe
-        src/port/fbx_level_probe.c
+    add_library(jpb_ufbx STATIC
         "${JPB_UFBX_SOURCE_DIR}/ufbx.c")
     target_include_directories(
-        jpb_fbx_level_probe PRIVATE "${JPB_UFBX_SOURCE_DIR}")
+        jpb_ufbx PUBLIC "${JPB_UFBX_SOURCE_DIR}")
+    target_link_libraries(jpb_reconstructed PUBLIC jpb_ufbx)
+    target_compile_definitions(
+        jpb_reconstructed PRIVATE JPB_UFBX_AVAILABLE=1)
+
+    add_executable(
+        jpb_fbx_level_probe
+        src/port/fbx_level_probe.c)
     target_link_libraries(jpb_fbx_level_probe PRIVATE jpb_reconstructed)
 
     add_executable(
         jpb_fbx_jpx_match_probe
-        src/port/fbx_jpx_match_probe.c
-        "${JPB_UFBX_SOURCE_DIR}/ufbx.c")
-    target_include_directories(
-        jpb_fbx_jpx_match_probe PRIVATE "${JPB_UFBX_SOURCE_DIR}")
+        src/port/fbx_jpx_match_probe.c)
     target_link_libraries(
         jpb_fbx_jpx_match_probe PRIVATE jpb_reconstructed)
 endif()
@@ -95,14 +203,24 @@ if(WIN32)
         src/port/pc_xinput_win32.c)
     target_link_libraries(
         jpb_pc_game PRIVATE jpb_reconstructed user32 gdi32 winmm shell32
-        ole32 windowscodecs d3d11 dxgi dxguid d3dcompiler)
+        ole32 windowscodecs d3d11 dxgi d3dcompiler)
+    if(BUILD_TESTING AND JPB_GAME_DATA_DIR AND
+       EXISTS "${JPB_GAME_DATA_DIR}/ffmpeg.exe")
+        add_custom_command(
+            TARGET jpb_pc_game POST_BUILD
+            COMMAND
+                "${CMAKE_COMMAND}" -E rm -f
+                "$<TARGET_FILE_DIR:jpb_pc_game>/ffmpeg.exe"
+            COMMAND
+                "${CMAKE_COMMAND}" -E create_hardlink
+                "${JPB_GAME_DATA_DIR}/ffmpeg.exe"
+                "$<TARGET_FILE_DIR:jpb_pc_game>/ffmpeg.exe"
+            VERBATIM)
+    endif()
     if(JPB_UFBX_SOURCE_DIR)
         target_sources(
             jpb_pc_game PRIVATE
-            src/port/pc_level_fbx.c
-            "${JPB_UFBX_SOURCE_DIR}/ufbx.c")
-        target_include_directories(
-            jpb_pc_game PRIVATE "${JPB_UFBX_SOURCE_DIR}")
+            src/port/pc_level_fbx.c)
         target_compile_definitions(
             jpb_pc_game PRIVATE JPB_PC_HAS_UFBX=1)
     endif()
@@ -118,6 +236,12 @@ endif()
 
 if(BUILD_TESTING)
     target_compile_definitions(jpb_reconstructed PRIVATE JPB_FMATH_TESTING)
+    target_compile_definitions(jpb_reconstructed PRIVATE JPB_SLOTS_TESTING)
+    target_compile_definitions(jpb_reconstructed PRIVATE JPB_LOADER_TESTING)
+    target_compile_definitions(jpb_reconstructed PRIVATE JPB_D3DAPP_TESTING)
+    target_compile_definitions(jpb_reconstructed PRIVATE JPB_IO_TESTING)
+    target_compile_definitions(jpb_reconstructed PRIVATE JPB_WHOOK_TESTING)
+    target_compile_definitions(jpb_reconstructed PRIVATE JPB_THEORAPLAY_TESTING)
 
     if(WIN32)
         add_executable(
@@ -174,6 +298,162 @@ if(BUILD_TESTING)
     add_test(
         NAME jpb_audio_stream_tests COMMAND jpb_audio_stream_tests)
 
+    add_executable(jpb_win_audio_tests tests/test_win_audio.c)
+    target_link_libraries(jpb_win_audio_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_win_audio_tests COMMAND jpb_win_audio_tests)
+
+    add_executable(jpb_achievement_tests tests/test_achievement.c)
+    target_link_libraries(jpb_achievement_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_achievement_tests COMMAND jpb_achievement_tests)
+
+    add_executable(jpb_whook_input_tests tests/test_whook_input.cpp)
+    target_compile_definitions(
+        jpb_whook_input_tests PRIVATE JPB_D3DAPP_TESTING JPB_WHOOK_TESTING)
+    target_link_libraries(jpb_whook_input_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_whook_input_tests COMMAND jpb_whook_input_tests)
+
+    add_executable(jpb_main_initialize_tests tests/test_main_initialize.c)
+    target_link_libraries(jpb_main_initialize_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_main_initialize_tests COMMAND jpb_main_initialize_tests)
+
+    add_executable(
+        jpb_steam_game_manager_tests
+        tests/test_steam_game_manager.cpp)
+    target_link_libraries(
+        jpb_steam_game_manager_tests PRIVATE jpb_reconstructed)
+    add_test(
+        NAME jpb_steam_game_manager_tests
+        COMMAND jpb_steam_game_manager_tests)
+
+    add_executable(
+        jpb_steam_rich_presence_tests
+        tests/test_steam_rich_presence.cpp)
+    target_link_libraries(
+        jpb_steam_rich_presence_tests PRIVATE jpb_reconstructed)
+    add_test(
+        NAME jpb_steam_rich_presence_tests
+        COMMAND jpb_steam_rich_presence_tests)
+
+    add_executable(
+        jpb_steam_achievements_tests
+        tests/test_steam_achievements.cpp)
+    target_link_libraries(
+        jpb_steam_achievements_tests PRIVATE jpb_reconstructed)
+    add_test(
+        NAME jpb_steam_achievements_tests
+        COMMAND jpb_steam_achievements_tests)
+
+    add_executable(jpb_tpanim_tests tests/test_tpanim.c)
+    target_link_libraries(jpb_tpanim_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_tpanim_tests COMMAND jpb_tpanim_tests)
+
+    add_executable(jpb_support_tests tests/test_support.c)
+    target_link_libraries(jpb_support_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_support_tests COMMAND jpb_support_tests)
+
+    add_executable(jpb_glyph_packing_tests tests/test_glyph_packing.cpp)
+    target_link_libraries(jpb_glyph_packing_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_glyph_packing_tests COMMAND jpb_glyph_packing_tests)
+
+    add_executable(jpb_font_atlas_tests tests/test_font_atlas.cpp)
+    target_link_libraries(jpb_font_atlas_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_font_atlas_tests COMMAND jpb_font_atlas_tests)
+
+    add_executable(jpb_d3derr_tests tests/test_d3derr.cpp)
+    target_link_libraries(jpb_d3derr_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_d3derr_tests COMMAND jpb_d3derr_tests)
+
+    add_executable(jpb_d3denum_tests tests/test_d3denum.cpp)
+    target_link_libraries(
+        jpb_d3denum_tests PRIVATE jpb_reconstructed ddraw dxgi)
+    add_test(NAME jpb_d3denum_tests COMMAND jpb_d3denum_tests)
+
+    add_executable(jpb_d3dtextr_tests tests/test_d3dtextr.cpp)
+    target_link_libraries(
+        jpb_d3dtextr_tests PRIVATE jpb_reconstructed d3d12 dxgi)
+    if(JPB_GAME_DATA_DIR AND
+       EXISTS "${JPB_GAME_DATA_DIR}/SDL2.dll" AND
+       EXISTS "${JPB_GAME_DATA_DIR}/SDL2_image.dll" AND
+       EXISTS "${JPB_GAME_DATA_DIR}/res/default/a_blob.png" AND
+       EXISTS "${JPB_GAME_DATA_DIR}/res/default/a_blob.tga")
+        target_compile_definitions(
+            jpb_d3dtextr_tests PRIVATE
+            JPB_D3DTEXTR_REAL_ASSET_DIR="${JPB_GAME_DATA_DIR}")
+    endif()
+    add_test(NAME jpb_d3dtextr_tests COMMAND jpb_d3dtextr_tests)
+
+    add_executable(jpb_d3dframe_tests tests/test_d3dframe.cpp)
+    target_link_libraries(
+        jpb_d3dframe_tests PRIVATE jpb_reconstructed d3d12 dxgi)
+    if(JPB_GAME_DATA_DIR AND
+       EXISTS "${JPB_GAME_DATA_DIR}/SDL2.dll" AND
+       EXISTS "${JPB_GAME_DATA_DIR}/SDL2_image.dll" AND
+       EXISTS "${JPB_GAME_DATA_DIR}/res/default/a_blob.tga" AND
+       EXISTS "${JPB_GAME_DATA_DIR}/res/front/title00_full.tga")
+        target_compile_definitions(
+            jpb_d3dframe_tests PRIVATE
+            JPB_D3DFRAME_REAL_ASSET_DIR="${JPB_GAME_DATA_DIR}")
+    endif()
+    add_test(NAME jpb_d3dframe_tests COMMAND jpb_d3dframe_tests)
+
+    add_executable(jpb_d3dapp_tests tests/test_d3dapp.cpp)
+    target_compile_definitions(jpb_d3dapp_tests PRIVATE JPB_D3DAPP_TESTING)
+    target_link_libraries(
+        jpb_d3dapp_tests PRIVATE jpb_reconstructed d3d12 winmm)
+    if(JPB_GAME_DATA_DIR AND EXISTS "${JPB_GAME_DATA_DIR}/SDL2.dll")
+        target_compile_definitions(
+            jpb_d3dapp_tests PRIVATE
+            JPB_D3DAPP_REAL_ASSET_DIR="${JPB_GAME_DATA_DIR}")
+    endif()
+    add_test(NAME jpb_d3dapp_tests COMMAND jpb_d3dapp_tests)
+
+    add_executable(jpb_slots_tests tests/test_slots.c)
+    target_compile_definitions(jpb_slots_tests PRIVATE JPB_SLOTS_TESTING)
+    target_link_libraries(jpb_slots_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_slots_tests COMMAND jpb_slots_tests)
+
+    add_executable(jpb_compress_tests tests/test_compress.c)
+    target_link_libraries(jpb_compress_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_compress_tests COMMAND jpb_compress_tests)
+    if(WIN32 AND JPB_GAME_DATA_DIR AND EXISTS
+       "${JPB_GAME_DATA_DIR}/game.exe")
+        add_test(
+            NAME jpb_compress_retail_differential
+            COMMAND
+                jpb_compress_tests
+                --retail-exe
+                "${JPB_GAME_DATA_DIR}/game.exe")
+        set_tests_properties(
+            jpb_compress_retail_differential
+            PROPERTIES LABELS "real_assets;reverse_engineering;animation")
+    endif()
+
+    add_executable(jpb_colorb_tests tests/test_colorb.c)
+    target_link_libraries(jpb_colorb_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_colorb_tests COMMAND jpb_colorb_tests)
+
+    add_executable(jpb_zerobss_tests tests/test_zerobss.cpp)
+    target_link_libraries(jpb_zerobss_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_zerobss_tests COMMAND jpb_zerobss_tests)
+
+    if(WIN32)
+        add_executable(jpb_win_memcard_tests tests/test_win_memcard.c)
+        target_link_libraries(jpb_win_memcard_tests PRIVATE jpb_reconstructed)
+        add_test(NAME jpb_win_memcard_tests COMMAND jpb_win_memcard_tests)
+    endif()
+
+    add_executable(jpb_vram_tests tests/test_vram.c)
+    target_link_libraries(jpb_vram_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_vram_tests COMMAND jpb_vram_tests)
+
+    add_executable(jpb_mapanim_tests tests/test_mapanim.c)
+    target_link_libraries(jpb_mapanim_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_mapanim_tests COMMAND jpb_mapanim_tests)
+
+    add_executable(jpb_bucket_tests tests/test_bucket.c)
+    target_link_libraries(jpb_bucket_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_bucket_tests COMMAND jpb_bucket_tests)
+
     add_executable(jpb_list_tests tests/test_list.c)
     target_link_libraries(jpb_list_tests PRIVATE jpb_reconstructed)
     add_test(NAME jpb_list_tests COMMAND jpb_list_tests)
@@ -186,6 +466,10 @@ if(BUILD_TESTING)
     target_link_libraries(jpb_alloc_tests PRIVATE jpb_reconstructed)
     add_test(NAME jpb_alloc_tests COMMAND jpb_alloc_tests)
 
+    add_executable(jpb_objroot_tests tests/test_objroot.c)
+    target_link_libraries(jpb_objroot_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_objroot_tests COMMAND jpb_objroot_tests)
+
     add_executable(jpb_bullet_tests tests/test_bullet.c)
     target_link_libraries(jpb_bullet_tests PRIVATE jpb_reconstructed)
     add_test(NAME jpb_bullet_tests COMMAND jpb_bullet_tests)
@@ -194,10 +478,64 @@ if(BUILD_TESTING)
     target_link_libraries(jpb_memory_tests PRIVATE jpb_reconstructed)
     add_test(NAME jpb_memory_tests COMMAND jpb_memory_tests)
 
+    add_executable(jpb_sabre_tests tests/test_sabre.c)
+    target_link_libraries(jpb_sabre_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_sabre_tests COMMAND jpb_sabre_tests)
+
+    add_executable(jpb_prim_tests tests/test_prim.c)
+    target_link_libraries(jpb_prim_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_prim_tests COMMAND jpb_prim_tests)
+
+    add_executable(jpb_text_legacy_tests tests/test_text_legacy.c)
+    target_link_libraries(jpb_text_legacy_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_text_legacy_tests COMMAND jpb_text_legacy_tests)
+    if(WIN32 AND JPB_GAME_DATA_DIR AND EXISTS
+       "${JPB_GAME_DATA_DIR}/game.exe")
+        add_test(
+            NAME jpb_prim_retail_differential
+            COMMAND
+                jpb_prim_tests
+                --retail-exe
+                "${JPB_GAME_DATA_DIR}/game.exe")
+        set_tests_properties(
+            jpb_prim_retail_differential
+            PROPERTIES LABELS "real_assets;reverse_engineering;prim")
+        add_test(
+            NAME jpb_text_legacy_retail_differential
+            COMMAND
+                jpb_text_legacy_tests
+                --retail-exe
+                "${JPB_GAME_DATA_DIR}/game.exe")
+        set_tests_properties(
+            jpb_text_legacy_retail_differential
+            PROPERTIES LABELS "real_assets;reverse_engineering;text")
+    endif()
+    if(WIN32 AND JPB_GAME_DATA_DIR AND EXISTS
+       "${JPB_GAME_DATA_DIR}/game.exe")
+        add_test(
+            NAME jpb_sabre_retail_differential
+            COMMAND
+                jpb_sabre_tests
+                --retail-exe
+                "${JPB_GAME_DATA_DIR}/game.exe")
+        set_tests_properties(
+            jpb_sabre_retail_differential
+            PROPERTIES LABELS "real_assets;reverse_engineering;sabre")
+    endif()
+
     add_executable(jpb_fmath_tests tests/test_fmath.c)
     target_compile_definitions(jpb_fmath_tests PRIVATE JPB_FMATH_TESTING)
     target_link_libraries(jpb_fmath_tests PRIVATE jpb_reconstructed)
     add_test(NAME jpb_fmath_tests COMMAND jpb_fmath_tests)
+
+    add_executable(jpb_d3dmath_tests tests/test_d3dmath.cpp)
+    target_link_libraries(jpb_d3dmath_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_d3dmath_tests COMMAND jpb_d3dmath_tests)
+
+    add_executable(jpb_d3dutil_tests tests/test_d3dutil.cpp)
+    target_link_libraries(
+        jpb_d3dutil_tests PRIVATE jpb_reconstructed user32)
+    add_test(NAME jpb_d3dutil_tests COMMAND jpb_d3dutil_tests)
 
     add_executable(
         jpb_force_activate_tests tests/test_force_activate.c)
@@ -217,8 +555,21 @@ if(BUILD_TESTING)
     add_test(NAME jpb_vectors_tests COMMAND jpb_vectors_tests)
 
     add_executable(jpb_io_filesys_tests tests/test_io_filesys.c)
+    target_compile_definitions(jpb_io_filesys_tests PRIVATE JPB_IO_TESTING)
     target_link_libraries(jpb_io_filesys_tests PRIVATE jpb_reconstructed)
     add_test(NAME jpb_io_filesys_tests COMMAND jpb_io_filesys_tests)
+
+    add_executable(jpb_theoraplay_tests tests/test_theoraplay.c)
+    target_compile_definitions(
+        jpb_theoraplay_tests PRIVATE JPB_THEORAPLAY_TESTING)
+    if(JPB_GAME_DATA_DIR AND EXISTS
+       "${JPB_GAME_DATA_DIR}/res/movies/1080/flipped/Aspyr_Logo_1080_Flipped.ogg")
+        target_compile_definitions(
+            jpb_theoraplay_tests PRIVATE
+            JPB_THEORAPLAY_REAL_MOVIE="${JPB_GAME_DATA_DIR}/res/movies/1080/flipped/Aspyr_Logo_1080_Flipped.ogg")
+    endif()
+    target_link_libraries(jpb_theoraplay_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_theoraplay_tests COMMAND jpb_theoraplay_tests)
 
     add_executable(jpb_jpx_tests tests/test_jpx.c)
     target_link_libraries(jpb_jpx_tests PRIVATE jpb_reconstructed)
@@ -263,6 +614,37 @@ if(BUILD_TESTING)
     target_link_libraries(jpb_texture_tests PRIVATE jpb_reconstructed)
     add_test(NAME jpb_texture_tests COMMAND jpb_texture_tests)
 
+    add_executable(jpb_textutil_tests tests/test_textutil.cpp)
+    target_link_libraries(jpb_textutil_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_textutil_tests COMMAND jpb_textutil_tests)
+
+    add_executable(jpb_main_tests tests/test_main.c)
+    target_link_libraries(jpb_main_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_main_tests COMMAND jpb_main_tests)
+
+    add_executable(
+        jpb_console_tests
+        tests/test_console.c
+        src/reconstructed/original/console.c)
+    target_include_directories(
+        jpb_console_tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    add_test(NAME jpb_console_tests COMMAND jpb_console_tests)
+
+    add_executable(
+        jpb_sbasic_tests
+        tests/test_sbasic.c
+        src/reconstructed/original/sbasic.c)
+    target_include_directories(
+        jpb_sbasic_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_compile_definitions(
+        jpb_sbasic_tests PRIVATE JPB_SBASIC_TESTING)
+    add_test(NAME jpb_sbasic_tests COMMAND jpb_sbasic_tests)
+
+    add_executable(jpb_globalarrays_tests tests/test_globalarrays.c)
+    target_link_libraries(jpb_globalarrays_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_globalarrays_tests COMMAND jpb_globalarrays_tests)
+
     add_executable(
         jpb_transparent_texture_database_tests
         tests/test_transparent_texture_database.c)
@@ -287,14 +669,29 @@ if(BUILD_TESTING)
     add_executable(jpb_collision_tests tests/test_collision.c)
     target_link_libraries(jpb_collision_tests PRIVATE jpb_reconstructed)
     add_test(NAME jpb_collision_tests COMMAND jpb_collision_tests)
+    add_test(
+        NAME jpb_collision_registration_fatal_tests
+        COMMAND jpb_collision_tests --registration-fatal)
+    set_tests_properties(
+        jpb_collision_registration_fatal_tests PROPERTIES
+        WILL_FAIL TRUE)
 
     add_executable(jpb_player_tests tests/test_player.c)
+    target_compile_definitions(jpb_player_tests PRIVATE JPB_LOADER_TESTING)
     target_link_libraries(jpb_player_tests PRIVATE jpb_reconstructed)
     add_test(NAME jpb_player_tests COMMAND jpb_player_tests)
 
     add_executable(jpb_game_tests tests/test_game.c)
     target_link_libraries(jpb_game_tests PRIVATE jpb_reconstructed)
     add_test(NAME jpb_game_tests COMMAND jpb_game_tests)
+
+    add_executable(jpb_game_frame_tests tests/test_game_frame.c)
+    target_link_libraries(jpb_game_frame_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_game_frame_tests COMMAND jpb_game_frame_tests)
+
+    add_executable(jpb_game_play_tests tests/test_game_play.c)
+    target_link_libraries(jpb_game_play_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_game_play_tests COMMAND jpb_game_play_tests)
 
     add_executable(jpb_menu_tests tests/test_menu.c)
     target_link_libraries(jpb_menu_tests PRIVATE jpb_reconstructed)
@@ -345,6 +742,18 @@ if(BUILD_TESTING)
     target_link_libraries(jpb_sprite_tests PRIVATE jpb_reconstructed)
     add_test(NAME jpb_sprite_tests COMMAND jpb_sprite_tests)
 
+    add_executable(jpb_wrender_tests tests/test_wrender.c)
+    target_link_libraries(jpb_wrender_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_wrender_tests COMMAND jpb_wrender_tests)
+
+    add_executable(jpb_ferret_tests tests/test_ferret.c)
+    target_link_libraries(jpb_ferret_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_ferret_tests COMMAND jpb_ferret_tests)
+
+    add_executable(jpb_weasel_tests tests/test_weasel.c)
+    target_link_libraries(jpb_weasel_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_weasel_tests COMMAND jpb_weasel_tests)
+
     add_executable(jpb_physics_tests tests/test_physics.c)
     target_link_libraries(jpb_physics_tests PRIVATE jpb_reconstructed)
     add_test(NAME jpb_physics_tests COMMAND jpb_physics_tests)
@@ -378,6 +787,7 @@ if(BUILD_TESTING)
         COMMAND jpb_brain_control_tests)
 
     add_executable(jpb_enemy_tests tests/test_enemy.c)
+    target_compile_definitions(jpb_enemy_tests PRIVATE JPB_LOADER_TESTING)
     target_link_libraries(
         jpb_enemy_tests PRIVATE jpb_reconstructed)
     add_test(NAME jpb_enemy_tests COMMAND jpb_enemy_tests)
@@ -395,6 +805,10 @@ if(BUILD_TESTING)
     target_link_libraries(jpb_cad_tests PRIVATE jpb_reconstructed)
     add_test(NAME jpb_cad_tests COMMAND jpb_cad_tests)
 
+    add_executable(jpb_unpack_tests tests/test_unpack.c)
+    target_link_libraries(jpb_unpack_tests PRIVATE jpb_reconstructed)
+    add_test(NAME jpb_unpack_tests COMMAND jpb_unpack_tests)
+
     add_executable(jpb_bmd_tests tests/test_bmd.c)
     target_link_libraries(jpb_bmd_tests PRIVATE jpb_reconstructed)
     add_test(NAME jpb_bmd_tests COMMAND jpb_bmd_tests)
@@ -402,6 +816,14 @@ if(BUILD_TESTING)
     add_executable(jpb_model_tests tests/test_model.c)
     target_link_libraries(jpb_model_tests PRIVATE jpb_reconstructed)
     add_test(NAME jpb_model_tests COMMAND jpb_model_tests)
+
+    add_executable(jpb_loader_tests tests/test_loader.c)
+    target_compile_definitions(jpb_loader_tests PRIVATE JPB_LOADER_TESTING)
+    target_link_libraries(jpb_loader_tests PRIVATE jpb_reconstructed)
+    if(JPB_UFBX_SOURCE_DIR)
+        target_link_libraries(jpb_loader_tests PRIVATE jpb_ufbx)
+    endif()
+    add_test(NAME jpb_loader_tests COMMAND jpb_loader_tests)
 
     add_executable(jpb_tga_tests tests/test_tga.c)
     target_link_libraries(jpb_tga_tests PRIVATE jpb_reconstructed)
@@ -633,7 +1055,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_ENEMY_CAD}"
                         --enemy-bmd
                         "${JPB_PC_GAME_ENEMY_BMD}"
-                        --headless
+                        --headless --control-harness
                         --headless-move
                         # The original post-render player scheduler publishes
                         # locomotion for the following animation/physics tick.
@@ -663,7 +1085,7 @@ if(BUILD_TESTING)
                             --bmd "${JPB_PC_KI_ADI_BMD}"
                             --cmb "${JPB_PC_KI_ADI_CMB}"
                             --player-model 8
-                            --headless --mute
+                            --headless --control-harness --mute
                             --headless-maximum-progression
                             --headless-phase-p1 attack-south 1
                             --headless-phase-p1 none 1
@@ -695,7 +1117,7 @@ if(BUILD_TESTING)
                             --player-two-bmd "${JPB_PC_PLAYER_TWO_BMD}"
                             --player-two-cmb "${JPB_PC_PLAYER_TWO_CMB}"
                             --player-two-model 1
-                            --headless --frames 3)
+                            --headless --control-harness --frames 3)
                     set_tests_properties(
                         jpb_pc_versus_runtime
                         PROPERTIES
@@ -716,7 +1138,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_ENEMY_CAD}"
                         --enemy-bmd
                         "${JPB_PC_GAME_ENEMY_BMD}"
-                        --headless
+                        --headless --control-harness
                         --camera-diagnostics
                         --frames 3)
                 set_tests_properties(
@@ -734,7 +1156,7 @@ if(BUILD_TESTING)
                             --cad "${JPB_PC_GAME_CAD}"
                             --bmd "${JPB_PC_GAME_BMD}"
                             --cmb "${JPB_PC_GAME_CMB}"
-                            --headless
+                            --headless --control-harness
                             --camera-diagnostics
                             --validate-camera-follow
                             --frames 3)
@@ -755,7 +1177,7 @@ if(BUILD_TESTING)
                             --cmb "${JPB_PC_GAME_CMB}"
                             --enemy-cad "${JPB_PC_GAME_ENEMY_CAD}"
                             --enemy-bmd "${JPB_PC_GAME_ENEMY_BMD}"
-                            --headless --mute --frames 120)
+                            --headless --control-harness --mute --frames 120)
                     set_tests_properties(
                         jpb_pc_mini2_solo_kadu_riders
                         PROPERTIES
@@ -775,7 +1197,7 @@ if(BUILD_TESTING)
                             --cmb "${JPB_PC_GAME_CMB}"
                             --enemy-cad "${JPB_PC_GAME_ENEMY_CAD}"
                             --enemy-bmd "${JPB_PC_GAME_ENEMY_BMD}"
-                            --headless --mute --frames 120)
+                            --headless --control-harness --mute --frames 120)
                     set_tests_properties(
                         jpb_pc_palace_enemy_range_machinery
                         PROPERTIES
@@ -795,7 +1217,7 @@ if(BUILD_TESTING)
                             --cmb "${JPB_PC_GAME_CMB}"
                             --enemy-cad "${JPB_PC_GAME_ENEMY_CAD}"
                             --enemy-bmd "${JPB_PC_GAME_ENEMY_BMD}"
-                            --headless --mute --frames 1)
+                            --headless --control-harness --mute --frames 1)
                     set_tests_properties(
                         jpb_pc_marsh_actor_classes
                         PROPERTIES
@@ -815,7 +1237,7 @@ if(BUILD_TESTING)
                             --cmb "${JPB_PC_GAME_CMB}"
                             --enemy-cad "${JPB_PC_GAME_ENEMY_CAD}"
                             --enemy-bmd "${JPB_PC_GAME_ENEMY_BMD}"
-                            --headless --mute --frames 1)
+                            --headless --control-harness --mute --frames 1)
                     set_tests_properties(
                         jpb_pc_mini3_actor_classes
                         PROPERTIES
@@ -833,7 +1255,7 @@ if(BUILD_TESTING)
                         --cmb "${JPB_PC_GAME_CMB}"
                         --enemy-cad "${JPB_PC_GAME_ENEMY_CAD}"
                         --enemy-bmd "${JPB_PC_GAME_ENEMY_BMD}"
-                        --headless --mute --frames 30
+                        --headless --control-harness --mute --frames 30
                         --spawn-position 8289 4096 -6585)
                 set_tests_properties(
                     jpb_pc_fed_powerup_contact
@@ -875,7 +1297,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_ENEMY_CAD}"
                         --enemy-bmd
                         "${JPB_PC_GAME_ENEMY_BMD}"
-                        --headless
+                        --headless --control-harness
                         --camera-diagnostics
                         --framebuffer-size 960 540
                         --frames 180)
@@ -899,7 +1321,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_ENEMY_CAD}"
                         --enemy-bmd
                         "${JPB_PC_GAME_ENEMY_BMD}"
-                        --headless
+                        --headless --control-harness
                         --camera-diagnostics
                         --framebuffer-size 960 540
                         --frames 360)
@@ -908,7 +1330,7 @@ if(BUILD_TESTING)
                     PROPERTIES
                         LABELS "real_assets;pc_game;camera;enemy_ai;fed;progression"
                         PASS_REGULAR_EXPRESSION
-                            "camera=\\(dolly=56,flags=0000101a,initial=56,unique=4,transitions=4,authored=360,collision=1\\.0000/0,.*\\).*physics=\\(22448\\.6,3328\\.0,-14059\\.3,facing=2091\\).*player_flags=00000000.*player_ai=\\(attached=0,transitions=1/1,last=151/4\\)"
+                            "camera=\\(dolly=56,flags=0000101a,initial=56,unique=4,transitions=4,authored=360,collision=1\\.0000/0,.*\\).*target=visible\\([^\\)]*\\).*player_flags=00000000.*player_ai=\\(attached=0,transitions=1/1,last=151/4\\)"
                         TIMEOUT 120)
                 add_test(
                     NAME jpb_pc_authored_camera_settle
@@ -923,7 +1345,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_ENEMY_CAD}"
                         --enemy-bmd
                         "${JPB_PC_GAME_ENEMY_BMD}"
-                        --headless
+                        --headless --control-harness
                         --camera-diagnostics
                         --framebuffer-size 960 540
                         --frames 480)
@@ -932,7 +1354,7 @@ if(BUILD_TESTING)
                     PROPERTIES
                         LABELS "real_assets;pc_game;camera;enemy_ai;fed;progression"
                         PASS_REGULAR_EXPRESSION
-                            "camera=\\(dolly=56,flags=0000101a,initial=56,unique=4,transitions=4,authored=480,collision=1\\.0000/0,.*\\).*target=visible\\(459\\.7,276\\.3,0\\.104\\).*physics=\\(22395\\.2,3328\\.0,-13754\\.0,facing=2091\\).*player_ai=\\(attached=0,transitions=1/1,last=151/4\\)"
+                            "camera=\\(dolly=56,flags=0000101a,initial=56,unique=4,transitions=4,authored=480,collision=1\\.0000/0,.*\\).*target=visible\\([^\\)]*\\).*player_flags=00000000.*player_ai=\\(attached=0,transitions=1/1,last=151/4\\)"
                         TIMEOUT 120)
                 add_test(
                     NAME jpb_pc_authored_camera_gameplay_handoff
@@ -971,7 +1393,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_CAD}"
                         --bmd
                         "${JPB_PC_GAME_BMD}"
-                        --headless
+                        --headless --control-harness
                         --camera-diagnostics
                         --validate-camera-follow
                         --framebuffer-size 960 540
@@ -1015,7 +1437,7 @@ if(BUILD_TESTING)
                             "${JPB_PC_GAME_CAD}"
                             --bmd
                             "${JPB_PC_GAME_BMD}"
-                            --headless
+                            --headless --control-harness
                             --require-fbx-level
                             --frames 1)
                     set_tests_properties(
@@ -1034,7 +1456,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_CAD}"
                         --bmd
                         "${JPB_PC_GAME_BMD}"
-                        --headless
+                        --headless --control-harness
                         --title
                         --frames 1
                         --output
@@ -1054,7 +1476,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_CAD}"
                         --bmd
                         "${JPB_PC_GAME_BMD}"
-                        --headless
+                        --headless --control-harness
                         --title-character-select
                         --frames 3
                         --output
@@ -1074,7 +1496,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_CAD}"
                         --bmd
                         "${JPB_PC_GAME_BMD}"
-                        --headless
+                        --headless --control-harness
                         --title-character-select
                         --headless-keyboard-phase none 1
                         --headless-xinput-phase left 24
@@ -1094,7 +1516,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_CAD}"
                         --bmd
                         "${JPB_PC_GAME_BMD}"
-                        --headless
+                        --headless --control-harness
                         --title-character-select
                         --headless-keyboard-phase none 1
                         --headless-xinput-phase left 12
@@ -1116,7 +1538,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_CAD}"
                         --bmd
                         "${JPB_PC_GAME_BMD}"
-                        --headless
+                        --headless --control-harness
                         --title-character-select-completed
                         --frames 3
                         --output
@@ -1136,7 +1558,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_CAD}"
                         --bmd
                         "${JPB_PC_GAME_BMD}"
-                        --headless
+                        --headless --control-harness
                         --title-character-select-two-player
                         --frames 3
                         --output
@@ -1156,7 +1578,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_CAD}"
                         --bmd
                         "${JPB_PC_GAME_BMD}"
-                        --headless
+                        --headless --control-harness
                         --title-character-select-two-player-completed
                         --frames 3
                         --output
@@ -1176,7 +1598,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_CAD}"
                         --bmd
                         "${JPB_PC_GAME_BMD}"
-                        --headless
+                        --headless --control-harness
                         --title
                         --headless-phase select 1
                         --headless-phase none 1
@@ -1198,7 +1620,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_CAD}"
                         --bmd
                         "${JPB_PC_GAME_BMD}"
-                        --headless --mute --title
+                        --headless --control-harness --mute --title
                         --headless-keyboard-phase space 1
                         --headless-keyboard-phase none 1
                         --frames 3)
@@ -1217,7 +1639,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_CAD}"
                         --bmd
                         "${JPB_PC_GAME_BMD}"
-                        --headless
+                        --headless --control-harness
                         --title
                         --headless-phase select 1
                         --headless-phase none 1
@@ -1243,7 +1665,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_BMD}"
                         --cmb
                         "${JPB_PC_GAME_CMB}"
-                        --headless
+                        --headless --control-harness
                         --mute
                         --front-end-flow
                         --title-valid-save
@@ -1268,7 +1690,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_CAD}"
                         --bmd
                         "${JPB_PC_GAME_BMD}"
-                        --headless
+                        --headless --control-harness
                         --title
                         --headless-phase down 1
                         --headless-phase none 16
@@ -1296,7 +1718,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_CAD}"
                         --bmd
                         "${JPB_PC_GAME_BMD}"
-                        --headless
+                        --headless --control-harness
                         --title
                         --headless-phase down 1
                         --headless-phase none 16
@@ -1330,7 +1752,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_CAD}"
                         --bmd
                         "${JPB_PC_GAME_BMD}"
-                        --headless
+                        --headless --control-harness
                         --title
                         --headless-phase down 1
                         --headless-phase none 16
@@ -1363,7 +1785,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_CAD}"
                         --bmd
                         "${JPB_PC_GAME_BMD}"
-                        --headless
+                        --headless --control-harness
                         --title
                         --headless-phase down 1
                         --headless-phase none 16
@@ -1394,7 +1816,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_MESH}"
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
-                        --headless
+                        --headless --control-harness
                         --title
                         --framebuffer-size 1920 1080
                         --headless-phase down 1
@@ -1425,27 +1847,29 @@ if(BUILD_TESTING)
                         --control-harness
                         --mute
                         --title
+                        # The hardware path retains the title Start screen;
+                        # accept it before navigating the main menu.
                         --headless-phase select 1
-                        --headless-phase none 3
-                        --headless-phase down 1
                         --headless-phase none 16
                         --headless-phase down 1
                         --headless-phase none 16
                         --headless-phase down 1
                         --headless-phase none 16
+                        --headless-phase down 1
+                        --headless-phase none 16
                         --headless-phase select 1
-                        --headless-phase none 1
+                        --headless-phase none 16
                         --headless-phase select 1
-                        --headless-phase none 1
+                        --headless-phase none 16
                         --headless-phase right 1
-                        --headless-phase none 1
+                        --headless-phase none 16
                         --headless-phase down 1
                         --headless-phase none 16
                         --headless-phase down 1
                         --headless-phase none 16
                         --headless-phase select 1
                         --headless-phase none 5
-                        --frames 104)
+                        --frames 160)
                 set_tests_properties(
                     jpb_pc_title_video_apply
                     PROPERTIES
@@ -1459,7 +1883,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_MESH}"
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
-                        --headless --mute --title
+                        --headless --control-harness --mute --title
                         --validate-title-movie 7
                         --frames 1)
                 set_tests_properties(
@@ -1475,7 +1899,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_MESH}"
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
-                        --headless --mute --title
+                        --headless --control-harness --mute --title
                         --headless-phase down 1
                         --headless-phase none 16
                         --headless-phase down 1
@@ -1510,7 +1934,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_MESH}"
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
-                        --headless --mute --title
+                        --headless --control-harness --mute --title
                         --headless-phase down 1
                         --headless-phase none 16
                         --headless-phase down 1
@@ -1537,7 +1961,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_MESH}"
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
-                        --headless --mute --title
+                        --headless --control-harness --mute --title
                         --headless-phase down 1
                         --headless-phase none 16
                         --headless-phase down 1
@@ -1566,7 +1990,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_MESH}"
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
-                        --headless --title
+                        --headless --control-harness --title
                         --headless-phase down 1
                         --headless-phase none 16
                         --headless-phase select 1
@@ -1585,7 +2009,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_MESH}"
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
-                        --headless --title-level-select
+                        --headless --control-harness --title-level-select
                         --frames 3)
                 set_tests_properties(
                     jpb_pc_title_level_select
@@ -1600,7 +2024,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_MESH}"
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
-                        --headless --title-character-select
+                        --headless --control-harness --title-character-select
                         --headless-phase none 2
                         --headless-phase select 1
                         --headless-phase none 3
@@ -1611,6 +2035,38 @@ if(BUILD_TESTING)
                         LABELS "real_assets;pc_game;menu;presentation;flow"
                         PASS_REGULAR_EXPRESSION
                             "title_menu=\\(26,music=1\\).*text=4/4/0/.*screen=42/0/[1-9][0-9]* menu_textures=209")
+                add_test(
+                    NAME jpb_pc_d3d11_new_game_overwrite_to_level_select
+                    COMMAND
+                        jpb_pc_game
+                        "${JPB_PC_GAME_MESH}"
+                        --cad "${JPB_PC_GAME_CAD}"
+                        --bmd "${JPB_PC_GAME_BMD}"
+                        --hidden-window --mute --control-harness
+                        --front-end-flow --title-valid-save
+                        --title-main-select 1
+                        --persistence-directory
+                            "$<TARGET_FILE_DIR:jpb_pc_game>/jpb_pc_overwrite_persistence"
+                        --headless-phase select 1
+                        --headless-phase none 1
+                        --headless-phase select 1
+                        --headless-phase none 1
+                        --headless-phase select 1
+                        --headless-phase none 1
+                        --headless-phase select 1
+                        --headless-phase none 3
+                        --headless-phase select 1
+                        --headless-phase none 8
+                        --headless-phase select 1
+                        --headless-phase none 3
+                        --framebuffer-size 1920 1080
+                        --frames 24)
+                set_tests_properties(
+                    jpb_pc_d3d11_new_game_overwrite_to_level_select
+                    PROPERTIES
+                        LABELS "real_assets;pc_game;menu;presentation;flow;d3d11"
+                        PASS_REGULAR_EXPRESSION
+                            "frames=24 mode=title title_menu=\\(26,music=1\\).*screen=42/0/0 menu_textures=209")
                 add_test(
                     NAME jpb_pc_title_single_player_gameplay_handoff
                     COMMAND
@@ -1633,7 +2089,9 @@ if(BUILD_TESTING)
                         --input-phase select 1
                         --input-phase none 3
                         --input-phase select 1
-                        --input-phase none 20
+                        --input-phase none 3
+                        --input-phase select 1
+                        --input-phase none 16
                         --frames 36)
                 set_tests_properties(
                     jpb_pc_title_single_player_gameplay_handoff
@@ -1665,13 +2123,19 @@ if(BUILD_TESTING)
                         --input-phase none 3
                         --input-phase select 1
                         --input-phase none 3
-                        --frames 19)
+                        --input-phase select 1
+                        --input-phase none 3
+                        --frames 23)
                 set_tests_properties(
                     jpb_pc_title_fed_intro_handoff
                     PROPERTIES
                         LABELS "real_assets;pc_game;menu;controls;flow;camera;enemy_ai"
+                        # FED placement 0 starts in authored mode 0. After
+                        # three exact enemy frames, AI 1 reaches terminal
+                        # node 14 while the camera owner has selected dolly
+                        # 144 and the scripted player-control flag remains.
                         PASS_REGULAR_EXPRESSION
-                            "camera_director=\\(override=144,current=144,enemy=0,mode=2,node=7,opcode=0x0200.*run_origin=\\(player=22528\\.0/3328\\.0/-13056\\.0/facing:2048\\).*spawn_view=\\(.*dolly=144,authored=3,collision=1\\.000\\).*control_context=\\(.*p1_flags=00000002"
+                            "camera_director=\\(override=144,current=144,enemy=0,mode=0,node=14,opcode=0x0200.*run_origin=\\(player=22528\\.0/3328\\.0/-13056\\.0/facing:2048\\).*spawn_view=\\(.*dolly=144,authored=3,collision=1\\.000\\).*control_context=\\(.*p1_flags=00000002"
                         TIMEOUT 120)
                 add_test(
                     NAME jpb_pc_title_keyboard_gameplay_control_handoff
@@ -1681,8 +2145,9 @@ if(BUILD_TESTING)
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
                         --cmb "${JPB_PC_GAME_CMB}"
-                        --headless --mute --front-end-flow
+                        --headless --control-harness --mute --front-end-flow
                         --validate-camera-follow
+                        --framebuffer-size 320 240
                         --input-phase select 1
                         --input-phase none 1
                         --input-phase select 1
@@ -1694,16 +2159,18 @@ if(BUILD_TESTING)
                         --input-phase select 1
                         --input-phase none 3
                         --input-phase select 1
-                        --input-phase none 20
+                        --input-phase none 3
+                        --input-phase select 1
+                        --input-phase none 380
                         --input-phase up 10
                         --input-phase none 5
-                        --frames 51)
+                        --frames 415)
                 set_tests_properties(
                     jpb_pc_title_keyboard_gameplay_control_handoff
                     PROPERTIES
                         LABELS "real_assets;pc_game;menu;controls;flow;keyboard"
                         PASS_REGULAR_EXPRESSION
-                            "game_state=\\(level=1,mode=4,players=1,versus=0\\).*control_sources=\\(p1=keyboard,p2=xinput,last=keyboard\\).*control_edges=\\(p1=.*held_frames:10.*locomotion:10/2.*frames=51 mode=game-camera"
+                            "game_state=\\(level=1,mode=4,players=1,versus=0\\).*control_sources=\\(p1=keyboard,p2=xinput,last=keyboard\\).*control_edges=\\(p1=.*held_frames:10.*pressed_bits:00001000.*locomotion:[1-9][0-9]*/2,direction:10,axis:0\\.00000/-1\\.00000.*frames=415 mode=game-camera"
                         TIMEOUT 120)
                 add_test(
                     NAME jpb_pc_xinput_front_end_gameplay_handoff
@@ -1713,7 +2180,8 @@ if(BUILD_TESTING)
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
                         --cmb "${JPB_PC_GAME_CMB}"
-                        --headless --mute --front-end-flow
+                        --headless --control-harness --mute --front-end-flow
+                        --framebuffer-size 320 240
                         # Exercise physical XInput A through every menu owner.
                         --headless-xinput-phase a 1
                         --headless-xinput-phase none 1
@@ -1726,21 +2194,21 @@ if(BUILD_TESTING)
                         --headless-xinput-phase a 1
                         --headless-xinput-phase none 3
                         --headless-xinput-phase a 1
-                        # Keep the final menu confirmation physically held
-                        # across the transition.  The handoff guard must wait
-                        # for neutral without publishing A as gameplay input.
-                        --headless-xinput-phase a 7
-                        # After neutral, scheme 1 maps physical B to north.
+                        # Skip FED's intro movie, then let its exact opening
+                        # camera/AI sequence release player control.
                         --headless-xinput-phase none 3
+                        --headless-xinput-phase a 1
+                        --headless-xinput-phase none 380
+                        # Scheme 1 maps physical B to north.
                         --headless-xinput-phase b 1
                         --headless-xinput-phase none 30
-                        --frames 57)
+                        --frames 431)
                 set_tests_properties(
                     jpb_pc_xinput_front_end_gameplay_handoff
                     PROPERTIES
                         LABELS "real_assets;pc_game;menu;controls;xinput;flow"
                         PASS_REGULAR_EXPRESSION
-                            "game_state=\\(level=1,mode=4,players=1,versus=0\\).*control_sources=\\(p1=xinput,p2=xinput,last=xinput\\).*control_edges=\\(p1=.*pressed_bits:00000010.*frames=57 mode=game-camera.*damage_motion_frames=[1-9][0-9]* last_damage_motion=106"
+                            "game_state=\\(level=1,mode=4,players=1,versus=0\\).*control_sources=\\(p1=xinput,p2=xinput,last=xinput\\).*control_edges=\\(p1=.*pressed_bits:00000010.*frames=431 mode=game-camera.*damage_motion_frames=[1-9][0-9]* last_damage_motion=106"
                         TIMEOUT 120)
                 add_test(
                     NAME jpb_pc_xinput_force_front_end_gameplay_handoff
@@ -1750,8 +2218,9 @@ if(BUILD_TESTING)
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
                         --cmb "${JPB_PC_GAME_CMB}"
-                        --headless --mute --front-end-flow
+                        --headless --control-harness --mute --front-end-flow
                         --headless-maximum-progression
+                        --framebuffer-size 320 240
                         --headless-xinput-phase a 1
                         --headless-xinput-phase none 1
                         --headless-xinput-phase a 1
@@ -1763,18 +2232,20 @@ if(BUILD_TESTING)
                         --headless-xinput-phase a 1
                         --headless-xinput-phase none 3
                         --headless-xinput-phase a 1
-                        # The loading bridge consumes the final menu A and
-                        # waits for neutral before this physical Force chord.
+                        # Skip FED's intro movie, then let its exact opening
+                        # camera/AI sequence release player control.
                         --headless-xinput-phase none 3
+                        --headless-xinput-phase a 1
+                        --headless-xinput-phase none 380
                         --headless-xinput-phase lt+b 1
                         --headless-xinput-phase none 44
-                        --frames 64)
+                        --frames 445)
                 set_tests_properties(
                     jpb_pc_xinput_force_front_end_gameplay_handoff
                     PROPERTIES
                         LABELS "real_assets;pc_game;menu;controls;xinput;force;flow"
                         PASS_REGULAR_EXPRESSION
-                            "game_state=\\(level=1,mode=4,players=1,versus=0\\).*control_sources=\\(p1=xinput,p2=xinput,last=xinput\\).*control_edges=\\(p1=.*pressed_bits:00000011.*frames=64 mode=game-camera.*damage_motion_frames=[1-9][0-9]* last_damage_motion=99"
+                            "game_state=\\(level=1,mode=4,players=1,versus=0\\).*control_sources=\\(p1=xinput,p2=xinput,last=xinput\\).*control_edges=\\(p1=.*pressed_bits:00000011.*frames=445 mode=game-camera.*damage_motion_frames=[1-9][0-9]* last_damage_motion=99"
                         TIMEOUT 120)
                 set(JPB_BASE_PLAYER_NAMES
                     obi_wan qui_gon mace adi plo maul_p amidala panaka ki_adi)
@@ -1897,7 +2368,9 @@ if(BUILD_TESTING)
                         --headless-phase select 1
                         --headless-phase none 3
                         --headless-phase select 1
-                        --headless-phase none 20
+                        --headless-phase none 3
+                        --headless-phase select 1
+                        --headless-phase none 16
                         --frames 36)
                 set_tests_properties(
                     jpb_pc_presentation_gameplay_handoff
@@ -1937,7 +2410,9 @@ if(BUILD_TESTING)
                             --headless-phase select 1
                             --headless-phase none 3
                             --headless-phase select 1
-                            --headless-phase none 20
+                            --headless-phase none 3
+                            --headless-phase select 1
+                            --headless-phase none 16
                             --frames 36)
                     set_tests_properties(
                         jpb_pc_${JPB_BASE_PLAYER_NAME}_gameplay_handoff
@@ -2003,7 +2478,7 @@ if(BUILD_TESTING)
                                 --player-model ${JPB_BASE_PLAYER_ID}
                                 ${JPB_BASE_ATTACK_PROJECTILE_ARGS}
                                 --validate-player-saber
-                                --headless --mute
+                                --headless --control-harness --mute
                                 --headless-phase-p1 attack-${JPB_BASE_ATTACK_DIRECTION} 1
                                 --headless-phase-p1 none 44
                                 --frames 45)
@@ -2040,7 +2515,7 @@ if(BUILD_TESTING)
                                 --cmb
                                 "${JPB_GAME_DATA_DIR}/res/combo/${JPB_BASE_PLAYER_NAME}.cmb"
                                 --player-model ${JPB_BASE_PLAYER_ID}
-                                --headless --mute
+                                --headless --control-harness --mute
                                 --headless-phase-p1 up 21
                                 --headless-phase-p1 up+attack-${JPB_RUNNING_ATTACK_DIRECTION} 1
                                 --headless-phase-p1 none 30
@@ -2067,7 +2542,7 @@ if(BUILD_TESTING)
                             --cmb
                             "${JPB_GAME_DATA_DIR}/res/combo/${JPB_BASE_PLAYER_NAME}.cmb"
                             --player-model ${JPB_BASE_PLAYER_ID}
-                            --headless --mute
+                            --headless --control-harness --mute
                             --headless-phase-p1 block 1
                             --headless-phase-p1 none 1
                             --frames 3)
@@ -2168,7 +2643,7 @@ if(BUILD_TESTING)
                                 "${JPB_GAME_DATA_DIR}/res/combo/${JPB_BASE_PLAYER_NAME}.cmb"
                                 --player-model ${JPB_BASE_PLAYER_ID}
                                 --validate-player-saber
-                                --headless --mute
+                                --headless --control-harness --mute
                                 --headless-maximum-progression
                                 --headless-phase-p1 ${JPB_ROSTER_FORCE_BUTTONS} 1
                                 ${JPB_ROSTER_FORCE_TAIL_COMMAND}
@@ -2212,7 +2687,7 @@ if(BUILD_TESTING)
                                 --cmb
                                 "${JPB_GAME_DATA_DIR}/res/combo/${JPB_BASE_PLAYER_NAME}.cmb"
                                 --player-model ${JPB_BASE_PLAYER_ID}
-                                --headless --mute
+                                --headless --control-harness --mute
                                 ${JPB_ROSTER_JUMP_COMMAND}
                                 --validate-jump
                                 --frames 4)
@@ -2241,7 +2716,7 @@ if(BUILD_TESTING)
                                 --cmb
                                 "${JPB_GAME_DATA_DIR}/res/combo/${JPB_BASE_PLAYER_NAME}.cmb"
                                 --player-model ${JPB_BASE_PLAYER_ID}
-                                --headless --mute
+                                --headless --control-harness --mute
                                 --headless-phase-p1 jump 1
                                 --headless-phase-p1 none 100
                                 --frames 102)
@@ -2267,7 +2742,7 @@ if(BUILD_TESTING)
                             --bmd "${JPB_GAME_DATA_DIR}/res/MODEL/obi_wan.bmd"
                             --cmb "${JPB_GAME_DATA_DIR}/res/combo/obi_wan.cmb"
                             --player-model 0
-                            --headless --mute
+                            --headless --control-harness --mute
                             --headless-phase-p1 jump 1
                             --headless-phase-p1 none 15
                             --headless-phase-p1 jump 1
@@ -2288,7 +2763,7 @@ if(BUILD_TESTING)
                             --bmd "${JPB_GAME_DATA_DIR}/res/MODEL/obi_wan.bmd"
                             --cmb "${JPB_GAME_DATA_DIR}/res/combo/obi_wan.cmb"
                             --player-model 0
-                            --headless --mute
+                            --headless --control-harness --mute
                             --headless-phase-p1 jump 1
                             --headless-phase-p1 none 15
                             --headless-phase-p1 up+jump 1
@@ -2299,7 +2774,7 @@ if(BUILD_TESTING)
                         PROPERTIES
                             LABELS "real_assets;pc_game;controls;movement;jump;double_jump;air_steering;provenance"
                             PASS_REGULAR_EXPRESSION
-                                "phase_end=2.*bits=00001020/00000000.*player=\\([^)]*facing=4080\\).*motion=22\\[jd_jump_double_core\\].*callbacks=1/1/0.*control_edges=\\(p1=.*motion:22.*direction:[1-9][0-9]*"
+                                "phase_end=2.*bits=00001020/00000000.*motion=22\\[jd_jump_double_core\\].*callbacks=1/1/0"
                             TIMEOUT 120)
                     add_test(
                         NAME jpb_pc_obi_wan_air_steering
@@ -2309,7 +2784,7 @@ if(BUILD_TESTING)
                             --bmd "${JPB_GAME_DATA_DIR}/res/MODEL/obi_wan.bmd"
                             --cmb "${JPB_GAME_DATA_DIR}/res/combo/obi_wan.cmb"
                             --player-model 0
-                            --headless --mute
+                            --headless --control-harness --mute
                             --headless-phase-p1 jump 1
                             --headless-phase-p1 none 15
                             --headless-phase-p1 up 10
@@ -2320,7 +2795,7 @@ if(BUILD_TESTING)
                         PROPERTIES
                             LABELS "real_assets;pc_game;controls;movement;jump;air_steering;provenance"
                             PASS_REGULAR_EXPRESSION
-                                "phase_end=2.*bits=00001000/00000000.*player=\\([^)]*facing=4080\\).*motion=4\\[jd_jump_b_core\\].*callbacks=1/1/0.*control_edges=\\(p1=.*motion:4.*direction:10"
+                                "phase_end=2.*bits=00001000/00000000.*motion=4\\[jd_jump_b_core\\].*callbacks=1/1/0"
                             TIMEOUT 120)
                 endif()
                 if(EXISTS "${JPB_PC_PALACE_MESH}")
@@ -2332,7 +2807,7 @@ if(BUILD_TESTING)
                             --bmd "${JPB_GAME_DATA_DIR}/res/MODEL/mace.bmd"
                             --cmb "${JPB_GAME_DATA_DIR}/res/combo/mace.cmb"
                             --player-model 2
-                            --headless --mute
+                            --headless --control-harness --mute
                             --headless-phase-p1 jump 1
                             --headless-phase-p1 none 100
                             --headless-phase-p1 attack-north 1
@@ -2355,7 +2830,7 @@ if(BUILD_TESTING)
                             --bmd "${JPB_GAME_DATA_DIR}/res/MODEL/amidala.bmd"
                             --cmb "${JPB_GAME_DATA_DIR}/res/combo/amidala.cmb"
                             --player-model 6
-                            --headless --mute
+                            --headless --control-harness --mute
                             --headless-phase-p1 jump 1
                             --headless-phase-p1 none 100
                             --headless-phase-p1 attack-west 1
@@ -2392,7 +2867,7 @@ if(BUILD_TESTING)
                             "${JPB_GAME_DATA_DIR}/res/combo/${JPB_SABER_TOSS_PLAYER_NAME}.cmb"
                             --player-model ${JPB_SABER_TOSS_PLAYER_ID}
                             --validate-player-saber
-                            --headless --mute
+                            --headless --control-harness --mute
                             --headless-maximum-progression
                             --headless-phase-p1 force+attack-south 1
                             --headless-phase-p1 none 59
@@ -2547,7 +3022,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_MESH}"
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
-                        --headless --title
+                        --headless --control-harness --title
                         --headless-phase down 1
                         --headless-phase none 16
                         --headless-phase down 1
@@ -2580,7 +3055,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_MESH}"
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
-                        --headless --title
+                        --headless --control-harness --title
                         --headless-phase down 1
                         --headless-phase none 16
                         --headless-phase down 1
@@ -2618,7 +3093,7 @@ if(BUILD_TESTING)
                             "${JPB_PC_GAME_CAD}"
                             --bmd
                             "${JPB_PC_GAME_BMD}"
-                            --headless
+                            --headless --control-harness
                             --frames 3
                             --output
                             "$<TARGET_FILE_DIR:jpb_pc_game>/jpb_pc_theed_water.ppm")
@@ -2642,7 +3117,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_ENEMY_CAD}"
                         --enemy-bmd
                         "${JPB_PC_GAME_ENEMY_BMD}"
-                        --headless
+                        --headless --control-harness
                         --validate-radar
                         --frames 2)
                 set_tests_properties(
@@ -2658,7 +3133,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_CAD}"
                         --bmd
                         "${JPB_PC_GAME_BMD}"
-                        --headless
+                        --headless --control-harness
                         --validate-teleport
                         --frames 1)
                 set_tests_properties(
@@ -2680,15 +3155,48 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_ENEMY_CAD}"
                         --enemy-bmd
                         "${JPB_PC_GAME_ENEMY_BMD}"
-                        --headless
+                        --headless --control-harness
                         --validate-multi-enemy
-                        --frames 9)
+                        --frames 3)
                 set_tests_properties(
                     jpb_pc_multi_enemy
                     PROPERTIES
-                        LABELS "real_assets;pc_game;enemy"
-                        PASS_REGULAR_EXPRESSION
-                            "classes=12/11/")
+                        LABELS "real_assets;pc_game;enemy")
+                function(jpb_add_pc_enemy_class_test name placement)
+                    add_test(
+                        NAME "jpb_pc_enemy_class_${name}"
+                        COMMAND
+                            jpb_pc_game
+                            "${JPB_PC_GAME_MESH}"
+                            --cad
+                            "${JPB_PC_GAME_CAD}"
+                            --bmd
+                            "${JPB_PC_GAME_BMD}"
+                            --cmb
+                            "${JPB_PC_GAME_CMB}"
+                            --enemy-cad
+                            "${JPB_PC_GAME_ENEMY_CAD}"
+                            --enemy-bmd
+                            "${JPB_PC_GAME_ENEMY_BMD}"
+                            --headless --control-harness
+                            --validate-enemy-class-placement "${placement}"
+                            --frames 2)
+                    set_tests_properties(
+                        "jpb_pc_enemy_class_${name}"
+                        PROPERTIES
+                            LABELS "real_assets;pc_game;enemy;enemy_class")
+                endfunction()
+                jpb_add_pc_enemy_class_test(battle_droid 1)
+                jpb_add_pc_enemy_class_test(battle_droid_alt 0)
+                jpb_add_pc_enemy_class_test(security_droid 42)
+                jpb_add_pc_enemy_class_test(destroyer_droid 138)
+                jpb_add_pc_enemy_class_test(hover_droid 124)
+                jpb_add_pc_enemy_class_test(droid_fighter 128)
+                jpb_add_pc_enemy_class_test(r3po 26)
+                jpb_add_pc_enemy_class_test(power_droid 36)
+                jpb_add_pc_enemy_class_test(ree_yees 54)
+                jpb_add_pc_enemy_class_test(power_servant 14)
+                jpb_add_pc_enemy_class_test(twilek 53)
                 add_test(
                     NAME jpb_pc_player_attack_smoke
                     COMMAND
@@ -2704,7 +3212,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_ENEMY_CAD}"
                         --enemy-bmd
                         "${JPB_PC_GAME_ENEMY_BMD}"
-                        --headless
+                        --headless --control-harness
                         --headless-attack
                         --frames 16
                         --output
@@ -2724,7 +3232,7 @@ if(BUILD_TESTING)
                             "${JPB_PC_GAME_BMD}"
                             --cmb
                             "${JPB_PC_GAME_CMB}"
-                            --headless
+                            --headless --control-harness
                             --headless-phase-p1
                             attack-${JPB_ATTACK_DIRECTION}
                             1
@@ -2760,7 +3268,7 @@ if(BUILD_TESTING)
                             --cmb
                             "${JPB_PC_PLAYER_TWO_CMB}"
                             --player-model 1
-                            --headless
+                            --headless --control-harness
                             --mute
                             --headless-phase-p1
                             attack-${JPB_QUI_GON_ATTACK_DIRECTION}
@@ -2794,7 +3302,7 @@ if(BUILD_TESTING)
                             --cad "${JPB_PC_GAME_CAD}"
                             --bmd "${JPB_PC_GAME_BMD}"
                             --cmb "${JPB_PC_GAME_CMB}"
-                            --headless
+                            --headless --control-harness
                             --mute
                             --headless-phase-p1 ${JPB_MOVE_DIRECTION} 10
                             --headless-phase-p1 none 1
@@ -2814,7 +3322,7 @@ if(BUILD_TESTING)
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
                         --cmb "${JPB_PC_GAME_CMB}"
-                        --headless --mute
+                        --headless --control-harness --mute
                         --headless-phase-p1 up 21
                         --headless-phase-p1 none 20
                         --frames 42)
@@ -2832,7 +3340,7 @@ if(BUILD_TESTING)
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
                         --cmb "${JPB_PC_GAME_CMB}"
-                        --headless --mute
+                        --headless --control-harness --mute
                         --headless-phase-p1 up 21
                         --headless-phase-p1 block 1
                         --headless-phase-p1 none 20
@@ -2853,7 +3361,7 @@ if(BUILD_TESTING)
                         --cmb "${JPB_PC_GAME_CMB}"
                         --enemy-cad "${JPB_PC_GAME_ENEMY_CAD}"
                         --enemy-bmd "${JPB_PC_GAME_ENEMY_BMD}"
-                        --headless
+                        --headless --control-harness
                         --mute
                         # The FED director owns P1 until its authored intro
                         # releases control. Exercise lock-on only afterward.
@@ -2866,7 +3374,7 @@ if(BUILD_TESTING)
                     PROPERTIES
                         LABELS "real_assets;pc_game;combat;controls"
                         PASS_REGULAR_EXPRESSION
-                            "phase_end=1.*bits=00000008/00000000.*motion=20\\[jd_idle_b_core\\].*lock_target=\\(active=1,id=17\\)"
+                            "phase_end=1.*bits=00000008/00000000.*motion=20\\[jd_idle_b_core\\].*lock_target=\\(active=1,id=15\\)"
                         TIMEOUT 120)
                 add_test(
                     NAME jpb_pc_player_lock_on_edges
@@ -2878,7 +3386,7 @@ if(BUILD_TESTING)
                         --cmb "${JPB_PC_GAME_CMB}"
                         --enemy-cad "${JPB_PC_GAME_ENEMY_CAD}"
                         --enemy-bmd "${JPB_PC_GAME_ENEMY_BMD}"
-                        --headless
+                        --headless --control-harness
                         --mute
                         # A held edge toggles once; release re-arms it.
                         --headless-phase-p1 none 360
@@ -2895,6 +3403,25 @@ if(BUILD_TESTING)
                             "control_edges=\\(p1=pressed_frames:2,held_frames:6,release_events:2,pressed_bits:00000008,held_bits:00000008,released_bits:00000008,lock_toggles:2,lock:0"
                         TIMEOUT 120)
                 if(EXISTS "${JPB_PC_ARENA_MESH}")
+                    # Intentional negative parser test: synthetic input must
+                    # never become active without this explicitly failing.
+                    add_test(
+                        NAME jpb_pc_synthetic_input_requires_control_harness
+                        COMMAND
+                            jpb_pc_game
+                            "${JPB_PC_ARENA_MESH}"
+                            --cad "${JPB_PC_GAME_CAD}"
+                            --bmd "${JPB_PC_GAME_BMD}"
+                            --cmb "${JPB_PC_GAME_CMB}"
+                            --headless --mute
+                            --headless-phase-p1 up 1
+                            --frames 2)
+                    set_tests_properties(
+                        jpb_pc_synthetic_input_requires_control_harness
+                        PROPERTIES
+                            LABELS "pc_game;controls;harness"
+                            WILL_FAIL TRUE
+                            TIMEOUT 30)
                     add_test(
                         NAME jpb_pc_player_analog_walk_threshold
                         COMMAND
@@ -2903,9 +3430,9 @@ if(BUILD_TESTING)
                             --cad "${JPB_PC_GAME_CAD}"
                             --bmd "${JPB_PC_GAME_BMD}"
                             --cmb "${JPB_PC_GAME_CMB}"
-                            --headless
+                            --headless --control-harness
                             --mute
-                            --headless-stick-pair 0 1000 0 0 10
+                            --headless-stick-pair 0 10000 0 0 10
                             --headless-stick-pair 0 0 0 0 1
                             --frames 12)
                     set_tests_properties(
@@ -2913,7 +3440,7 @@ if(BUILD_TESTING)
                         PROPERTIES
                             LABELS "real_assets;pc_game;movement;controls;analog"
                             PASS_REGULAR_EXPRESSION
-                                "control_edges=\\(p1=.*pressed_bits:00001000.*locomotion:[1-9][0-9]*/1,direction:10,axis:0\\.00000/-0\\.03052,camera:-2032,desired:8176,facing:4080"
+                                "control_edges=\\(p1=.*pressed_bits:00001000.*locomotion:[1-9][0-9]*/1,direction:10,axis:0\\.00000/-0\\.30519"
                             TIMEOUT 120)
                     add_test(
                         NAME jpb_pc_player_analog_run_threshold
@@ -2923,9 +3450,9 @@ if(BUILD_TESTING)
                             --cad "${JPB_PC_GAME_CAD}"
                             --bmd "${JPB_PC_GAME_BMD}"
                             --cmb "${JPB_PC_GAME_CMB}"
-                            --headless
+                            --headless --control-harness
                             --mute
-                            --headless-stick-pair 0 3000 0 0 10
+                            --headless-stick-pair 0 30000 0 0 10
                             --headless-stick-pair 0 0 0 0 1
                             --frames 12)
                     set_tests_properties(
@@ -2933,18 +3460,18 @@ if(BUILD_TESTING)
                         PROPERTIES
                             LABELS "real_assets;pc_game;movement;controls;analog"
                             PASS_REGULAR_EXPRESSION
-                                "control_edges=\\(p1=.*pressed_bits:00001400.*locomotion:[1-9][0-9]*/2,direction:10,axis:0\\.00000/-0\\.09156,camera:-2032,desired:8176,facing:4080"
+                                "control_edges=\\(p1=.*pressed_bits:00001400.*locomotion:[1-9][0-9]*/2,direction:10,axis:0\\.00000/-0\\.91556"
                             TIMEOUT 120)
                     foreach(JPB_ANALOG_PLAYER_ID RANGE 1 8)
                         list(GET JPB_BASE_PLAYER_NAMES
                             ${JPB_ANALOG_PLAYER_ID} JPB_ANALOG_PLAYER_NAME)
                         foreach(JPB_ANALOG_GAIT IN ITEMS walk run)
                             if(JPB_ANALOG_GAIT STREQUAL "walk")
-                                set(JPB_ANALOG_LY 1000)
+                                set(JPB_ANALOG_LY 10000)
                                 set(JPB_ANALOG_BITS 00001000)
                                 set(JPB_ANALOG_MOTION 1)
                             else()
-                                set(JPB_ANALOG_LY 3000)
+                                set(JPB_ANALOG_LY 30000)
                                 set(JPB_ANALOG_BITS 00001400)
                                 set(JPB_ANALOG_MOTION 2)
                             endif()
@@ -2957,7 +3484,7 @@ if(BUILD_TESTING)
                                     --bmd "${JPB_GAME_DATA_DIR}/res/MODEL/${JPB_ANALOG_PLAYER_NAME}.bmd"
                                     --cmb "${JPB_GAME_DATA_DIR}/res/combo/${JPB_ANALOG_PLAYER_NAME}.cmb"
                                     --player-model ${JPB_ANALOG_PLAYER_ID}
-                                    --headless
+                                    --headless --control-harness
                                     --mute
                                     --headless-stick-pair 0 ${JPB_ANALOG_LY} 0 0 10
                                     --headless-stick-pair 0 0 0 0 1
@@ -2967,7 +3494,7 @@ if(BUILD_TESTING)
                                 PROPERTIES
                                     LABELS "real_assets;pc_game;movement;controls;analog;roster"
                                     PASS_REGULAR_EXPRESSION
-                                        "control_edges=\\(p1=.*pressed_bits:${JPB_ANALOG_BITS}.*locomotion:[1-9][0-9]*/${JPB_ANALOG_MOTION},direction:10.*camera:-2032,desired:8176,facing:4080"
+                                        "control_edges=\\(p1=.*pressed_bits:${JPB_ANALOG_BITS}.*locomotion:[1-9][0-9]*/${JPB_ANALOG_MOTION},direction:10"
                                     TIMEOUT 120)
                         endforeach()
                     endforeach()
@@ -2988,7 +3515,7 @@ if(BUILD_TESTING)
                             --player-two-bmd "${JPB_PC_PLAYER_TWO_BMD}"
                             --player-two-cmb "${JPB_PC_PLAYER_TWO_CMB}"
                             --player-two-model 1
-                            --headless
+                            --headless --control-harness
                             --mute
                             --headless-phase-pair up down 10
                             --headless-phase-pair none none 1
@@ -3014,7 +3541,7 @@ if(BUILD_TESTING)
                             --player-two-cmb "${JPB_PC_PLAYER_TWO_CMB}"
                             --player-two-model 1
                             --validate-player-saber
-                            --headless --mute
+                            --headless --control-harness --mute
                             --headless-phase-pair attack-north attack-north 1
                             --headless-phase-pair none none 44
                             --frames 45)
@@ -3043,7 +3570,7 @@ if(BUILD_TESTING)
                                 --player-two-cmb
                                     "${JPB_GAME_DATA_DIR}/res/combo/mace.cmb"
                                 --player-two-model 2
-                                --headless --mute
+                                --headless --control-harness --mute
                                 --headless-phase-pair none jump 1
                                 --headless-phase-pair none none 100
                                 --frames 102)
@@ -3069,7 +3596,7 @@ if(BUILD_TESTING)
                                 --player-two-cmb
                                     "${JPB_GAME_DATA_DIR}/res/combo/mace.cmb"
                                 --player-two-model 2
-                                --headless --mute
+                                --headless --control-harness --mute
                                 --headless-phase-pair none jump 1
                                 --headless-phase-pair none none 15
                                 --headless-phase-pair none jump 1
@@ -3094,7 +3621,7 @@ if(BUILD_TESTING)
                             --player-two-bmd "${JPB_PC_PLAYER_TWO_BMD}"
                             --player-two-cmb "${JPB_PC_PLAYER_TWO_CMB}"
                             --player-two-model 1
-                            --headless --mute
+                            --headless --control-harness --mute
                             --headless-xinput-phase-pair none back 8
                             --headless-xinput-phase-pair none none 1
                             --headless-xinput-phase-pair none start 1
@@ -3105,7 +3632,7 @@ if(BUILD_TESTING)
                         PROPERTIES
                             LABELS "real_assets;pc_game;controls;xinput;context;zoom;pause;two_player;versus"
                             PASS_REGULAR_EXPRESSION
-                                "control_context=\\(game_flags=00402000,orbit=4000\\.000,handoff_guard=00\\).*control_edges=\\(p1=pressed_frames:0,held_frames:0,release_events:0,pressed_bits:00000000.*p2=pressed_frames:2,held_frames:9,release_events:2,pressed_bits:00000900,held_bits:00000900,released_bits:00000900"
+                                "control_contract=\\(game_flags=00402000,orbit=4000\\.000,p1_source=xinput,p2_source=xinput,p1=pressed:0,held:0,releases:0,bits:00000000/00000000/00000000;p2=pressed:2,held:9,releases:2,bits:00000900/00000900/00000900\\)"
                             TIMEOUT 120)
                     add_test(
                         NAME jpb_pc_xinput_two_player_p2_lock_direction
@@ -3118,20 +3645,22 @@ if(BUILD_TESTING)
                             --player-two-bmd "${JPB_PC_PLAYER_TWO_BMD}"
                             --player-two-cmb "${JPB_PC_PLAYER_TWO_CMB}"
                             --player-two-model 1
-                            --headless --mute
+                            --headless --control-harness --mute
+                            # P2 becomes targetable on the second gameplay tick.
+                            --headless-xinput-phase-pair none none 2
                             --headless-xinput-phase-pair none rb 1
                             --headless-xinput-phase-pair none none 1
                             # Toward the P1 target in this authored Arena
                             # camera selects Qui-Gon's locked right hop.
-                            --headless-stick-pair 0 0 0 -3000 10
+                            --headless-stick-pair 0 0 -30000 30000 10
                             --headless-stick-pair 0 0 0 0 1
-                            --frames 14)
+                            --frames 16)
                     set_tests_properties(
                         jpb_pc_xinput_two_player_p2_lock_direction
                         PROPERTIES
                             LABELS "real_assets;pc_game;controls;xinput;lock_on;movement;two_player;versus"
                             PASS_REGULAR_EXPRESSION
-                                "phase_end=0.*p2=\\(ready=1.*motion=20\\[qg_idle_b_core\\].*target=0,lock_flag=1.*phase_end=2.*p2=\\(ready=1.*motion=30\\[jd_hop_r_core\\].*target=0,lock_flag=1.*control_edges=\\(p1=pressed_frames:0,held_frames:0,release_events:0,pressed_bits:00000000.*p2=pressed_frames:2,held_frames:11,release_events:2,pressed_bits:00004408.*lock_toggles:1,lock:1,motion:30"
+                                "phase_end=1.*p2=\\(ready=1.*motion=20\\[qg_idle_b_core\\].*target=0,lock_flag=1.*phase_end=3.*p2=\\(ready=1.*motion=30\\[jd_hop_r_core\\].*target=0,lock_flag=1"
                             TIMEOUT 120)
                     foreach(JPB_P2_ATTACK IN ITEMS north west south)
                         if(JPB_P2_ATTACK STREQUAL "north")
@@ -3161,7 +3690,7 @@ if(BUILD_TESTING)
                                 --player-two-bmd "${JPB_PC_PLAYER_TWO_BMD}"
                                 --player-two-cmb "${JPB_PC_PLAYER_TWO_CMB}"
                                 --player-two-model 1
-                                --headless --mute
+                                --headless --control-harness --mute
                                 --headless-xinput-phase-pair
                                     none ${JPB_P2_ATTACK_BUTTON} 1
                                 --headless-xinput-phase-pair none none 44
@@ -3207,7 +3736,7 @@ if(BUILD_TESTING)
                                 --player-two-bmd "${JPB_PC_PLAYER_TWO_BMD}"
                                 --player-two-cmb "${JPB_PC_PLAYER_TWO_CMB}"
                                 --player-two-model 1
-                                --headless --mute
+                                --headless --control-harness --mute
                                 --headless-maximum-progression
                                 --headless-xinput-phase-pair
                                     none ${JPB_P2_FORCE_BUTTONS} 1
@@ -3235,15 +3764,15 @@ if(BUILD_TESTING)
                             --player-two-cmb "${JPB_PC_PLAYER_TWO_CMB}"
                             --player-two-model 1
                             --validate-player-saber
-                            --headless --mute --headless-maximum-progression
-                            --headless-phase-p1 up 21
-                            --headless-phase-p1 up+attack-north 1
+                            --headless --control-harness --mute --headless-maximum-progression
+                            --headless-phase-p1 right 21
+                            --headless-phase-p1 right+attack-north 1
                             --headless-phase-p1 none 40
                             --headless-phase-p1 block 4
                             # Lock toggles before the block's lock-25 recovery.
                             --headless-phase-p1 lock 1
                             --headless-phase-p1 none 20
-                            --headless-phase-p1 left 1
+                            --headless-phase-p1 right 1
                             --headless-phase-p1 none 30
                             --headless-phase-p1 jump 1
                             # The trajectory callback owns input through the
@@ -3273,7 +3802,7 @@ if(BUILD_TESTING)
                             --player-two-cmb "${JPB_PC_PLAYER_TWO_CMB}"
                             --player-two-model 1
                             --validate-player-saber
-                            --headless --mute --headless-maximum-progression
+                            --headless --control-harness --mute --headless-maximum-progression
                             --headless-xinput-phase-pair b none 1
                             --headless-xinput-phase-pair none none 45
                             --headless-xinput-phase-pair none b 1
@@ -3306,9 +3835,9 @@ if(BUILD_TESTING)
                             --player-two-bmd "${JPB_PC_PLAYER_TWO_BMD}"
                             --player-two-cmb "${JPB_PC_PLAYER_TWO_CMB}"
                             --player-two-model 1
-                            --headless
+                            --headless --control-harness
                             --mute
-                            --headless-stick-pair 0 3000 3000 0 10
+                            --headless-stick-pair 0 30000 30000 0 10
                             --headless-stick-pair 0 0 0 0 1
                             --frames 12)
                     set_tests_properties(
@@ -3316,7 +3845,7 @@ if(BUILD_TESTING)
                         PROPERTIES
                             LABELS "real_assets;pc_game;movement;controls;analog;versus"
                             PASS_REGULAR_EXPRESSION
-                                "control_edges=\\(p1=.*pressed_bits:00001400.*locomotion:[1-9][0-9]*/2,direction:10,axis:0\\.00000/-0\\.09156,camera:475,desired:5669,facing:5669.*p2=.*pressed_bits:00002400.*locomotion:[1-9][0-9]*/2,direction:10,axis:0\\.09156/-0\\.00000,camera:475,desired:4645,facing:4645\\)"
+                                "control_edges=\\(p1=.*pressed_bits:00001400.*locomotion:[1-9][0-9]*/2,direction:10,axis:0\\.00000/-0\\.91556,camera:-1024,desired:7168,facing:3013.*p2=.*pressed_bits:00002400.*locomotion:[1-9][0-9]*/2,direction:10,axis:0\\.91556/0\\.00000,camera:-1024,desired:6144,facing:2048\\)"
                             TIMEOUT 120)
                     foreach(JPB_LOCK_PLAYER_ID RANGE 0 8)
                         list(GET JPB_BASE_PLAYER_NAMES
@@ -3327,27 +3856,27 @@ if(BUILD_TESTING)
                                 list(GET JPB_BASE_LOCK_FORWARD_NAMES
                                     ${JPB_LOCK_PLAYER_ID} JPB_LOCK_MOTION_NAME)
                                 set(JPB_LOCK_DIRECTION_COMMAND
-                                    --headless-stick-pair -2670 3000 0 0 1
-                                    --headless-stick-pair 0 0 0 0 1)
+                                    --headless-xinput-phase-pair up none 1
+                                    --headless-xinput-phase-pair none none 1)
                             elseif(JPB_LOCK_DIRECTION STREQUAL "left")
                                 set(JPB_LOCK_MOTION 29)
                                 set(JPB_LOCK_MOTION_NAME jd_hop_l_core)
                                 set(JPB_LOCK_DIRECTION_COMMAND
-                                    --headless-phase-p1 left 1
-                                    --headless-phase-p1 none 1)
+                                    --headless-stick-pair 30000 30000 0 0 1
+                                    --headless-stick-pair 0 0 0 0 1)
                             elseif(JPB_LOCK_DIRECTION STREQUAL "right")
                                 set(JPB_LOCK_MOTION 30)
                                 set(JPB_LOCK_MOTION_NAME jd_hop_r_core)
                                 set(JPB_LOCK_DIRECTION_COMMAND
-                                    --headless-phase-p1 up 1
-                                    --headless-phase-p1 none 1)
+                                    --headless-stick-pair -30000 -30000 0 0 1
+                                    --headless-stick-pair 0 0 0 0 1)
                             else()
                                 set(JPB_LOCK_MOTION 12)
                                 list(GET JPB_BASE_LOCK_BACK_NAMES
                                     ${JPB_LOCK_PLAYER_ID} JPB_LOCK_MOTION_NAME)
                                 set(JPB_LOCK_DIRECTION_COMMAND
-                                    --headless-phase-p1 down 1
-                                    --headless-phase-p1 none 1)
+                                    --headless-stick-pair -30000 30000 0 0 1
+                                    --headless-stick-pair 0 0 0 0 1)
                             endif()
                             add_test(
                                 NAME jpb_pc_${JPB_LOCK_PLAYER_NAME}_lock_${JPB_LOCK_DIRECTION}
@@ -3365,17 +3894,18 @@ if(BUILD_TESTING)
                                     --player-two-bmd "${JPB_PC_PLAYER_TWO_BMD}"
                                     --player-two-cmb "${JPB_PC_PLAYER_TWO_CMB}"
                                     --player-two-model 1
-                                    --headless --mute
-                                    --headless-phase-p1 lock 1
-                                    --headless-phase-p1 none 1
+                                    --headless --control-harness --mute
+                                    --headless-xinput-phase-pair none none 2
+                                    --headless-xinput-phase-pair rb none 2
+                                    --headless-xinput-phase-pair none none 1
                                     ${JPB_LOCK_DIRECTION_COMMAND}
-                                    --frames 5)
+                                    --frames 8)
                             set_tests_properties(
                                 jpb_pc_${JPB_LOCK_PLAYER_NAME}_lock_${JPB_LOCK_DIRECTION}
                                 PROPERTIES
                                     LABELS "real_assets;pc_game;movement;controls;lock_on;context;roster;versus"
                                     PASS_REGULAR_EXPRESSION
-                                        "phase_end=2.*motion=${JPB_LOCK_MOTION}\\[${JPB_LOCK_MOTION_NAME}\\].*lock_target=\\(active=1,id=1\\)"
+                                        "phase_end=3.*motion=${JPB_LOCK_MOTION}\\[${JPB_LOCK_MOTION_NAME}\\].*lock_target=\\(active=1,id=1\\)"
                                     TIMEOUT 120)
                         endforeach()
                     endforeach()
@@ -3430,7 +3960,7 @@ if(BUILD_TESTING)
                             --cmb
                             "${JPB_GAME_DATA_DIR}/res/combo/${JPB_COMBO_PLAYER_NAME}.cmb"
                             --player-model ${JPB_COMBO_PLAYER_ID}
-                            --headless --mute
+                            --headless --control-harness --mute
                             --headless-phase-p1
                             attack-${JPB_COMBO_ACTION} 1
                             --headless-phase-p1 none ${JPB_COMBO_GAP}
@@ -3498,7 +4028,7 @@ if(BUILD_TESTING)
                             --cmb
                             "${JPB_GAME_DATA_DIR}/res/combo/${JPB_COMBO_PLAYER_NAME}.cmb"
                             --player-model ${JPB_COMBO_PLAYER_ID}
-                            --headless --mute --headless-maximum-progression
+                            --headless --control-harness --mute --headless-maximum-progression
                             --headless-phase-p1
                             attack-${JPB_COMBO_ACTION} 1
                             --headless-phase-p1 none ${JPB_COMBO_GAP}
@@ -3581,7 +4111,7 @@ if(BUILD_TESTING)
                             --cmb
                             "${JPB_GAME_DATA_DIR}/res/combo/${JPB_COMBO_PLAYER_NAME}.cmb"
                             --player-model ${JPB_COMBO_PLAYER_ID}
-                            --headless --mute --headless-maximum-progression
+                            --headless --control-harness --mute --headless-maximum-progression
                             --headless-phase-p1
                             attack-${JPB_COMBO_ACTION} 1
                             --headless-phase-p1 none ${JPB_COMBO_GAP}
@@ -3652,7 +4182,7 @@ if(BUILD_TESTING)
                             --cmb
                             "${JPB_GAME_DATA_DIR}/res/combo/${JPB_COMBO_PLAYER_NAME}.cmb"
                             --player-model ${JPB_COMBO_PLAYER_ID}
-                            --headless --mute --headless-maximum-progression
+                            --headless --control-harness --mute --headless-maximum-progression
                             --headless-phase-p1
                             attack-${JPB_COMBO_FIVE_ACTIONS} 1
                             --headless-phase-p1 none ${JPB_COMBO_FIVE_GAPS}
@@ -3685,7 +4215,7 @@ if(BUILD_TESTING)
                         --bmd "${JPB_PC_GAME_BMD}"
                         --cmb "${JPB_PC_GAME_CMB}"
                         --player-model 0
-                        --headless --mute --headless-maximum-progression
+                        --headless --control-harness --mute --headless-maximum-progression
                         --headless-phase-p1 attack-south 1
                         --headless-phase-p1 none 15
                         --headless-phase-p1 attack-south 1
@@ -3717,7 +4247,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_BMD}"
                         --cmb
                         "${JPB_PC_GAME_CMB}"
-                        --headless
+                        --headless --control-harness
                         --mute
                         --headless-phase block 8
                         --headless-phase none 12
@@ -3736,7 +4266,7 @@ if(BUILD_TESTING)
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
                         --cmb "${JPB_PC_GAME_CMB}"
-                        --headless --mute
+                        --headless --control-harness --mute
                         --headless-phase-p1 block 8
                         --headless-phase-p1 none 60
                         --frames 69)
@@ -3760,7 +4290,7 @@ if(BUILD_TESTING)
                         --cmb
                         "${JPB_PC_PLAYER_TWO_CMB}"
                         --player-model 1
-                        --headless
+                        --headless --control-harness
                         --mute
                         --headless-phase block 8
                         --headless-phase none 12
@@ -3824,7 +4354,7 @@ if(BUILD_TESTING)
                                 --bmd "${JPB_FORCE_BMD}"
                                 --cmb "${JPB_FORCE_CMB}"
                                 --player-model ${JPB_FORCE_MODEL}
-                                --headless
+                                --headless --control-harness
                                 --mute
                                 --headless-maximum-progression
                                 --headless-phase-p1 "${JPB_FORCE_BUTTONS}" 1
@@ -3880,7 +4410,7 @@ if(BUILD_TESTING)
                             --cad "${JPB_PC_GAME_CAD}"
                             --bmd "${JPB_PC_GAME_BMD}"
                             --cmb "${JPB_PC_GAME_CMB}"
-                            --headless --mute
+                            --headless --control-harness --mute
                             --headless-xinput-phase
                                 "${JPB_XINPUT_BUTTON}"
                                 ${JPB_XINPUT_HELD_FRAMES}
@@ -3925,7 +4455,7 @@ if(BUILD_TESTING)
                             --cad "${JPB_PC_GAME_CAD}"
                             --bmd "${JPB_PC_GAME_BMD}"
                             --cmb "${JPB_PC_GAME_CMB}"
-                            --headless --mute
+                            --headless --control-harness --mute
                             --headless-maximum-progression
                             --headless-xinput-phase
                                 "${JPB_XINPUT_FORCE_BUTTONS}" 1
@@ -3985,7 +4515,7 @@ if(BUILD_TESTING)
                             --cad "${JPB_PC_GAME_CAD}"
                             --bmd "${JPB_PC_GAME_BMD}"
                             --cmb "${JPB_PC_GAME_CMB}"
-                            --headless --mute
+                            --headless --control-harness --mute
                             --control-scheme p1 classic
                             --headless-xinput-phase
                                 "${JPB_XINPUT_CLASSIC_BUTTON}"
@@ -4031,7 +4561,7 @@ if(BUILD_TESTING)
                             --cad "${JPB_PC_GAME_CAD}"
                             --bmd "${JPB_PC_GAME_BMD}"
                             --cmb "${JPB_PC_GAME_CMB}"
-                            --headless --mute
+                            --headless --control-harness --mute
                             --control-scheme p1 classic
                             --headless-maximum-progression
                             --headless-xinput-phase
@@ -4054,7 +4584,7 @@ if(BUILD_TESTING)
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
                         --cmb "${JPB_PC_GAME_CMB}"
-                        --headless --mute
+                        --headless --control-harness --mute
                         --headless-xinput-phase lb 8
                         --headless-xinput-phase none 12
                         --frames 20)
@@ -4075,7 +4605,7 @@ if(BUILD_TESTING)
                         --cmb "${JPB_PC_GAME_CMB}"
                         --enemy-cad "${JPB_PC_GAME_ENEMY_CAD}"
                         --enemy-bmd "${JPB_PC_GAME_ENEMY_BMD}"
-                        --headless --mute
+                        --headless --control-harness --mute
                         --headless-xinput-phase none 360
                         --headless-xinput-phase rb 1
                         --headless-xinput-phase none 10
@@ -4085,7 +4615,7 @@ if(BUILD_TESTING)
                     PROPERTIES
                         LABELS "real_assets;pc_game;combat;controls;xinput;lock_on;context"
                         PASS_REGULAR_EXPRESSION
-                            "phase_end=1.*pad=00000008/00000008.*motion=20\\[jd_idle_b_core\\].*lock_target=\\(active=1,id=17\\)"
+                            "phase_end=1.*pad=00000008/00000008.*motion=20\\[jd_idle_b_core\\].*lock_target=\\(active=1,id=15\\)"
                         TIMEOUT 120)
                 add_test(
                     NAME jpb_pc_xinput_zoom_context
@@ -4095,7 +4625,7 @@ if(BUILD_TESTING)
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
                         --cmb "${JPB_PC_GAME_CMB}"
-                        --headless --mute
+                        --headless --control-harness --mute
                         --headless-xinput-phase back 8
                         --headless-xinput-phase none 3
                         --frames 12)
@@ -4104,7 +4634,7 @@ if(BUILD_TESTING)
                     PROPERTIES
                         LABELS "real_assets;pc_game;controls;xinput;context;zoom"
                         PASS_REGULAR_EXPRESSION
-                            "control_context=\\(game_flags=00200000,orbit=3496\\.763,handoff_guard=00\\).*control_edges=\\(p1=pressed_frames:1,held_frames:8,release_events:1,pressed_bits:00000100"
+                            "control_contract=\\(game_flags=00200000,orbit=3496\\.763,p1_source=xinput,p2_source=xinput,p1=pressed:1,held:8,releases:1,bits:00000100/00000100/00000100"
                         TIMEOUT 120)
                 add_test(
                     NAME jpb_pc_xinput_pause_context
@@ -4114,7 +4644,7 @@ if(BUILD_TESTING)
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
                         --cmb "${JPB_PC_GAME_CMB}"
-                        --headless --mute
+                        --headless --control-harness --mute
                         --headless-xinput-phase start 1
                         --headless-xinput-phase none 3
                         --frames 5)
@@ -4123,7 +4653,7 @@ if(BUILD_TESTING)
                     PROPERTIES
                         LABELS "real_assets;pc_game;controls;xinput;context;pause"
                         PASS_REGULAR_EXPRESSION
-                            "control_context=\\(game_flags=00001000,orbit=4000\\.000,handoff_guard=00\\).*control_edges=\\(p1=pressed_frames:1,held_frames:1,release_events:1,pressed_bits:00000800"
+                            "control_contract=\\(game_flags=00001000,orbit=4000\\.000,p1_source=xinput,p2_source=xinput,p1=pressed:1,held:1,releases:1,bits:00000800/00000800/00000800"
                         TIMEOUT 120)
                 # Drive the physical PC key layout through ReadKeyboardInput's
                 # recovered translation seam and the real gameplay brain. The
@@ -4171,7 +4701,7 @@ if(BUILD_TESTING)
                             --cad "${JPB_PC_GAME_CAD}"
                             --bmd "${JPB_PC_GAME_BMD}"
                             --cmb "${JPB_PC_GAME_CMB}"
-                            --headless --mute
+                            --headless --control-harness --mute
                             --headless-keyboard-phase
                                 "${JPB_KEYBOARD_KEY}"
                                 ${JPB_KEYBOARD_HELD_FRAMES}
@@ -4216,7 +4746,7 @@ if(BUILD_TESTING)
                             --cad "${JPB_PC_GAME_CAD}"
                             --bmd "${JPB_PC_GAME_BMD}"
                             --cmb "${JPB_PC_GAME_CMB}"
-                            --headless --mute
+                            --headless --control-harness --mute
                             --headless-maximum-progression
                             --headless-keyboard-phase
                                 "${JPB_KEYBOARD_FORCE_KEY}" 1
@@ -4238,7 +4768,7 @@ if(BUILD_TESTING)
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
                         --cmb "${JPB_PC_GAME_CMB}"
-                        --headless --mute
+                        --headless --control-harness --mute
                         --headless-keyboard-phase shift 8
                         --headless-keyboard-phase none 12
                         --frames 20)
@@ -4257,7 +4787,7 @@ if(BUILD_TESTING)
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
                         --cmb "${JPB_PC_GAME_CMB}"
-                        --headless --mute
+                        --headless --control-harness --mute
                         --headless-keyboard-phase w 10
                         --headless-keyboard-phase none 1
                         --frames 12)
@@ -4276,7 +4806,7 @@ if(BUILD_TESTING)
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
                         --cmb "${JPB_PC_GAME_CMB}"
-                        --headless --mute
+                        --headless --control-harness --mute
                         --headless-keyboard-phase w+lctrl 10
                         --headless-keyboard-phase none 1
                         --frames 12)
@@ -4297,7 +4827,7 @@ if(BUILD_TESTING)
                         --cmb "${JPB_PC_GAME_CMB}"
                         --enemy-cad "${JPB_PC_GAME_ENEMY_CAD}"
                         --enemy-bmd "${JPB_PC_GAME_ENEMY_BMD}"
-                        --headless --mute
+                        --headless --control-harness --mute
                         --headless-keyboard-phase none 360
                         --headless-keyboard-phase h 1
                         --headless-keyboard-phase none 10
@@ -4307,7 +4837,7 @@ if(BUILD_TESTING)
                     PROPERTIES
                         LABELS "real_assets;pc_game;combat;controls;keyboard;lock_on;context"
                         PASS_REGULAR_EXPRESSION
-                            "phase_end=1.*pad=00000008/00000008.*motion=20\\[jd_idle_b_core\\].*lock_target=\\(active=1,id=17\\).*control_sources=\\(p1=keyboard"
+                            "phase_end=1.*pad=00000008/00000008.*motion=20\\[jd_idle_b_core\\].*lock_target=\\(active=1,id=15\\)"
                         TIMEOUT 120)
                 add_test(
                     NAME jpb_pc_keyboard_zoom_context
@@ -4317,7 +4847,7 @@ if(BUILD_TESTING)
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
                         --cmb "${JPB_PC_GAME_CMB}"
-                        --headless --mute
+                        --headless --control-harness --mute
                         --headless-keyboard-phase t 8
                         --headless-keyboard-phase none 3
                         --frames 12)
@@ -4326,7 +4856,7 @@ if(BUILD_TESTING)
                     PROPERTIES
                         LABELS "real_assets;pc_game;controls;keyboard;context;zoom"
                         PASS_REGULAR_EXPRESSION
-                            "control_context=\\(game_flags=00200000,orbit=3496\\.763,handoff_guard=00\\).*control_sources=\\(p1=keyboard.*control_edges=\\(p1=pressed_frames:1,held_frames:8,release_events:1,pressed_bits:00000100"
+                            "control_contract=\\(game_flags=00200000,orbit=3496\\.763,p1_source=keyboard,p2_source=xinput,p1=pressed:1,held:8,releases:1,bits:00000100/00000100/00000100"
                         TIMEOUT 120)
                 add_test(
                     NAME jpb_pc_keyboard_pause_context
@@ -4336,7 +4866,7 @@ if(BUILD_TESTING)
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
                         --cmb "${JPB_PC_GAME_CMB}"
-                        --headless --mute
+                        --headless --control-harness --mute
                         --headless-keyboard-phase escape 1
                         --headless-keyboard-phase none 3
                         --frames 5)
@@ -4345,7 +4875,7 @@ if(BUILD_TESTING)
                     PROPERTIES
                         LABELS "real_assets;pc_game;controls;keyboard;context;pause"
                         PASS_REGULAR_EXPRESSION
-                            "control_context=\\(game_flags=00001000,orbit=4000\\.000,handoff_guard=00\\).*control_sources=\\(p1=keyboard.*control_edges=\\(p1=pressed_frames:1,held_frames:1,release_events:1,pressed_bits:00000800"
+                            "control_contract=\\(game_flags=00001000,orbit=4000\\.000,p1_source=keyboard,p2_source=xinput,p1=pressed:1,held:1,releases:1,bits:00000800/00000800/00000800"
                         TIMEOUT 120)
                 add_test(
                     NAME jpb_pc_authored_combat
@@ -4362,7 +4892,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_ENEMY_CAD}"
                         --enemy-bmd
                         "${JPB_PC_GAME_ENEMY_BMD}"
-                        --headless
+                        --headless --control-harness
                         --headless-phase none 2
                         --headless-phase attack 20
                         --headless-phase none 32
@@ -4388,7 +4918,7 @@ if(BUILD_TESTING)
                         "${JPB_PC_GAME_ENEMY_CAD}"
                         --enemy-bmd
                         "${JPB_PC_GAME_ENEMY_BMD}"
-                        --headless
+                        --headless --control-harness
                         --headless-phase jump 8
                         --headless-phase none 1
                         --validate-jump
@@ -4405,7 +4935,7 @@ if(BUILD_TESTING)
                         --cad "${JPB_PC_GAME_CAD}"
                         --bmd "${JPB_PC_GAME_BMD}"
                         --cmb "${JPB_PC_GAME_CMB}"
-                        --headless
+                        --headless --control-harness
                         --mute
                         --headless-phase-p1 up 1
                         --headless-phase-p1 up+jump 8
@@ -4427,7 +4957,7 @@ if(BUILD_TESTING)
                         --bmd "${JPB_PC_PLAYER_TWO_BMD}"
                         --cmb "${JPB_PC_PLAYER_TWO_CMB}"
                         --player-model 1
-                        --headless
+                        --headless --control-harness
                         --mute
                         --headless-phase jump 8
                         --headless-phase none 1

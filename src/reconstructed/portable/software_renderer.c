@@ -10,11 +10,21 @@
  */
 
 #include "jpb/software_renderer.h"
+#include "jpb/effects.h"
+#include "jpb/flex.h"
+#include "jpb/game.h"
+#include "jpb/generic_hook.h"
+#include "jpb/level.h"
 #include "jpb/level_world.h"
 #include "jpb/material.h"
+#include "jpb/physics.h"
 #include "jpb/projection.h"
+#include "jpb/scene.h"
+#include "jpb/sound.h"
+#include "jpb/sprite.h"
 #include "jpb/streets_cull_map.h"
 #include "jpb/transparent_texture_database.h"
+#include "jpb/world.h"
 
 #include <float.h>
 #include <limits.h>
@@ -24,7 +34,7 @@
 
 enum {
     SOFTWARE_RENDER_MARGIN = 24,
-    SOFTWARE_SCREEN_POLY_VERTEX_CAPACITY = 32,
+    SOFTWARE_SCREEN_POLY_VERTEX_CAPACITY = 4,
     /* A convex triangle or quad gains at most one vertex at one clip plane. */
     SOFTWARE_CLIPPED_POLYGON_CAPACITY = 5,
     SOFTWARE_LEVEL_CORUS1 = 6
@@ -77,6 +87,8 @@ typedef struct SoftwareModelDraw {
     SoftwareJpxPass jpxPass;
     JPBSoftwareTriangleSink triangleSink;
     void *triangleUserData;
+    sceneObject *sceneObject;
+    physicsObject *physics;
 } SoftwareModelDraw;
 
 static void software_set_level_camera_origin(
@@ -161,10 +173,25 @@ typedef struct SoftwareNoScaleClipVertex {
 static float software_material_polygon_winding(
     const SoftwareMaterialVertex *vertices,
     size_t vertex_count);
-static int software_no_scale_apply_culling(
+static int ApplyCulling(
     const SoftwareNoScaleClipVertex *vertices,
     int vertex_count,
     int material_flags);
+static void ApplyProjection(
+    const JPBScreenPolyVertex *source,
+    const JPBSoftwareFramebuffer *framebuffer,
+    SoftwareNoScaleClipVertex *destination);
+static void ApplyProjectionPolyArray(
+    const JPBScreenPolyVertex *vertices,
+    int vertex_count,
+    const JPBSoftwareFramebuffer *framebuffer,
+    SoftwareNoScaleClipVertex *projected);
+static int software_no_scale_backface_rejected(
+    const SoftwareNoScaleClipVertex *vertices,
+    int vertex_count);
+static int software_no_scale_special_y_rejected(
+    const SoftwareNoScaleClipVertex *vertices,
+    int vertex_count);
 static void software_draw_material_triangle(
     SoftwareModelDraw *state,
     const SoftwareMaterialVertex *first,
@@ -868,6 +895,160 @@ static void software_draw_line(
     }
 }
 
+static uint32_t SetVert(
+    const JPBScreenPolyVertex *vertex)
+{
+    uint32_t outcode = 0;
+
+    if (vertex->y > (float)OptionStruct.ScreenHeight) outcode |= 1u;
+    if (vertex->y < 0.0f) outcode |= 2u;
+    if (vertex->x > (float)OptionStruct.ScreenWidth) outcode |= 4u;
+    if (vertex->x < 0.0f) outcode |= 8u;
+    return outcode;
+}
+
+static void ApplyProjection(
+    const JPBScreenPolyVertex *source,
+    const JPBSoftwareFramebuffer *framebuffer,
+    SoftwareNoScaleClipVertex *destination)
+{
+    const float vertical_fov = 0.9250245094299316f;
+    const float near_clip = 1.0f;
+    const float far_clip = 10000.0f;
+    float y_scale = 1.0f / tanf(vertical_fov * 0.5f);
+    float aspect =
+        (float)framebuffer->width / (float)framebuffer->height;
+
+    destination->x = source->x * (y_scale / aspect) / source->z;
+    destination->y = source->y * y_scale / source->z;
+    destination->z =
+        far_clip / (far_clip - near_clip) -
+        (near_clip * far_clip) /
+            ((far_clip - near_clip) * source->z);
+}
+
+static void ApplyProjectionPolyArray(
+    const JPBScreenPolyVertex *vertices,
+    int vertex_count,
+    const JPBSoftwareFramebuffer *framebuffer,
+    SoftwareNoScaleClipVertex *projected)
+{
+    int vertex;
+
+    for (vertex = 0; vertex < vertex_count; ++vertex) {
+        ApplyProjection(&vertices[vertex], framebuffer, &projected[vertex]);
+    }
+}
+
+static int EndPoly(
+    const JPBScreenPolyVertex *vertices,
+    int vertex_count,
+    const JPBSoftwareFramebuffer *framebuffer,
+    SoftwareMaterialVertex *projected,
+    SoftwareNoScaleClipVertex *clip_vertices)
+{
+    uint32_t shared_outcode;
+    int vertex;
+
+    shared_outcode = SetVert(&vertices[0]);
+    for (vertex = 1; vertex < vertex_count; ++vertex) {
+        shared_outcode &= SetVert(&vertices[vertex]);
+    }
+    if (shared_outcode != 0) return 1;
+
+    for (vertex = 0; vertex < vertex_count; ++vertex) {
+        const JPBScreenPolyVertex *source = &vertices[vertex];
+        SoftwareMaterialVertex *destination = &projected[vertex];
+        float normalized_x = source->x * 0.0035f;
+        float normalized_y = source->y * 0.0035f;
+
+        normalized_x *= 0.6666666865348816f;
+        normalized_x -= 1.0f;
+        normalized_y *= 1.159999966621399f;
+        normalized_y = 1.0f - normalized_y;
+        destination->x =
+            (normalized_x + 1.0f) *
+            (float)framebuffer->width * 0.5f;
+        destination->y =
+            (1.0f - normalized_y) *
+            (float)framebuffer->height * 0.5f;
+        destination->depth = source->z;
+        destination->inverseDepth = 1.0f;
+        destination->clipDepth = source->z;
+        clip_vertices[vertex].x = 0.0f;
+        clip_vertices[vertex].y = 0.0f;
+        clip_vertices[vertex].z = 0.0f;
+    }
+    return 0;
+}
+
+static int NoScaleEndPoly(
+    const JPBScreenPolyVertex *vertices,
+    int vertex_count,
+    const JPBSoftwareFramebuffer *framebuffer,
+    int transparent,
+    int material_flags,
+    int opaque_special_culling,
+    SoftwareMaterialVertex *projected,
+    SoftwareNoScaleClipVertex *clip_vertices)
+{
+    const float near_clip = 1.0f;
+    int vertex;
+
+    ApplyProjectionPolyArray(
+        vertices, vertex_count, framebuffer, clip_vertices);
+    for (vertex = 0; vertex < vertex_count; ++vertex) {
+        const JPBScreenPolyVertex *source = &vertices[vertex];
+        SoftwareMaterialVertex *destination = &projected[vertex];
+        float depth = source->z;
+        float projection_depth = depth;
+
+        if (projection_depth < near_clip) {
+            projection_depth = near_clip;
+        }
+        destination->x =
+            clip_vertices[vertex].x *
+                (float)framebuffer->width * 0.5f +
+            (float)framebuffer->width * 0.5f;
+        destination->y =
+            clip_vertices[vertex].y *
+                (float)framebuffer->height * 0.5f +
+            (float)framebuffer->height * 0.5f;
+        destination->depth = projection_depth / 10240.0f;
+        destination->inverseDepth = 1.0f;
+        destination->clipDepth = clip_vertices[vertex].z;
+    }
+
+    if (ApplyCulling(
+            clip_vertices,
+            vertex_count,
+            transparent
+                ? material_flags
+                : JPB_MATERIAL_MODE_BACKFACE_REJECT)) {
+        return 1;
+    }
+    if ((opaque_special_culling &&
+         software_no_scale_special_y_rejected(
+             clip_vertices, vertex_count)) ||
+        (!opaque_special_culling &&
+         (!transparent ||
+          material_flags == JPB_MATERIAL_MODE_BACKFACE_REJECT) &&
+         software_no_scale_backface_rejected(
+             clip_vertices, vertex_count))) {
+        return 1;
+    }
+
+    if (transparent &&
+        material_flags == JPB_MATERIAL_MODE_SCREEN_TILE) {
+        for (vertex = 0; vertex < vertex_count; ++vertex) {
+            projected[vertex].depth = 0.0001f;
+            projected[vertex].inverseDepth = 1.0f;
+            projected[vertex].clipDepth = 0.0001f;
+        }
+    }
+    return 0;
+}
+
 static int software_draw_screen_poly(
     const _Material *material,
     int vertex_count,
@@ -885,11 +1066,12 @@ static int software_draw_screen_poly(
     SoftwareNoScaleClipVertex clip_vertices[
         SOFTWARE_SCREEN_POLY_VERTEX_CAPACITY];
     const JPBSoftwareTexture *texture = NULL;
-    MATRIX perspective_marker;
     size_t triangle_count;
     int material_flags = material != NULL
         ? (int)material->flags
         : JPB_MATERIAL_MODE_BACKFACE_REJECT;
+    int transparent = 0;
+    int opaque_special_culling = 0;
     int vertex;
 
     if (vertices == NULL || framebuffer == NULL ||
@@ -906,17 +1088,8 @@ static int software_draw_screen_poly(
     }
 
     memset(&state, 0, sizeof(state));
-    memset(&perspective_marker, 0, sizeof(perspective_marker));
-    perspective_marker.m[0][0] = 1.0f;
-    perspective_marker.m[1][1] = 1.0f;
-    perspective_marker.m[2][2] = 1.0f;
     state.draw.framebuffer = framebuffer;
-    /*
-     * software_draw_material_triangle uses a non-null view only to select
-     * perspective-correct interpolation. The exact camera-space projection
-     * is performed below because fx_Water has already applied CameraMatrix.
-     */
-    state.draw.view = no_scale != 0 ? &perspective_marker : NULL;
+    state.draw.view = NULL;
     state.depthBuffer = depth_buffer->values;
     state.depthStride = depth_buffer->strideValues;
     state.repeatTexture = 1;
@@ -946,6 +1119,7 @@ static int software_draw_screen_poly(
      * a_SMOKEGRY, uses SrcAlpha/InvSrcAlpha non-premultiplied blending.
      */
     if (texture != NULL && texture->materialType != 0) {
+        transparent = 1;
         state.repeatTexture =
             material != NULL &&
             material->samplerType != TEXTURESAMPLER_LINEARCLAMP &&
@@ -957,59 +1131,54 @@ static int software_draw_screen_poly(
             SOFTWARE_MATERIAL_SHADER_TRANSPARENCY_PASS;
     }
 
+    if (no_scale != 0 && !transparent &&
+        material != NULL && texture != NULL) {
+        opaque_special_culling = IsBusTextureForCorus2(
+            (int)(int8_t)LevelSelect,
+            material->filename,
+            texture->descriptorIndex);
+        if (!opaque_special_culling && vertex_count != 3) {
+            opaque_special_culling = IsCoffinTextureForPalace(
+                (int)(int8_t)LevelSelect,
+                material->filename,
+                texture->descriptorIndex);
+        }
+    }
+
+    if (no_scale != 0) {
+        if (NoScaleEndPoly(
+                vertices,
+                vertex_count,
+                framebuffer,
+                transparent,
+                material_flags,
+                opaque_special_culling,
+                projected,
+                clip_vertices)) {
+            if (stats != NULL) {
+                stats->triangles += (size_t)vertex_count - 2u;
+                stats->pixels += state.draw.stats.pixels;
+            }
+            return JPB_SOFTWARE_RENDER_OK;
+        }
+    } else {
+        if (EndPoly(
+                vertices,
+                vertex_count,
+                framebuffer,
+                projected,
+                clip_vertices)) {
+            if (stats != NULL) {
+                stats->triangles += (size_t)vertex_count - 2u;
+            }
+            return JPB_SOFTWARE_RENDER_OK;
+        }
+    }
+
     for (vertex = 0; vertex < vertex_count; ++vertex) {
         const JPBScreenPolyVertex *source = &vertices[vertex];
         SoftwareMaterialVertex *destination = &projected[vertex];
 
-        if (no_scale != 0) {
-            const float vertical_fov = 0.9250245094299316f;
-            const float near_clip = 1.0f;
-            const float far_clip = 10000.0f;
-            float depth = source->z;
-            float projection_depth = depth;
-            float y_scale;
-            float x_scale;
-            float aspect;
-
-            if (!isfinite(depth) || depth == 0.0f) {
-                return JPB_SOFTWARE_RENDER_OK;
-            }
-            y_scale = 1.0f / tanf(vertical_fov * 0.5f);
-            aspect =
-                (float)framebuffer->width /
-                (float)framebuffer->height;
-            x_scale = y_scale / aspect;
-            clip_vertices[vertex].x =
-                source->x * x_scale / depth;
-            clip_vertices[vertex].y =
-                source->y * y_scale / depth;
-            clip_vertices[vertex].z =
-                far_clip / (far_clip - near_clip) -
-                (near_clip * far_clip) /
-                    ((far_clip - near_clip) * depth);
-            if (projection_depth < near_clip) {
-                projection_depth = near_clip;
-            }
-            destination->x =
-                clip_vertices[vertex].x *
-                    (float)framebuffer->width * 0.5f +
-                (float)framebuffer->width * 0.5f;
-            destination->y =
-                clip_vertices[vertex].y *
-                    (float)framebuffer->height * 0.5f +
-                (float)framebuffer->height * 0.5f;
-            destination->depth = projection_depth / 10240.0f;
-            destination->inverseDepth =
-                1.0f / destination->depth;
-        } else {
-            destination->x = source->x;
-            destination->y = source->y;
-            destination->depth = source->z;
-            destination->inverseDepth = 1.0f;
-            clip_vertices[vertex].x = 0.0f;
-            clip_vertices[vertex].y = 0.0f;
-            clip_vertices[vertex].z = 0.0f;
-        }
         destination->u = source->tu;
         destination->v = source->tv;
         destination->red =
@@ -1019,23 +1188,6 @@ static int software_draw_screen_poly(
         destination->blue =
             (float)(source->argb & UINT32_C(0xff));
         destination->alpha = (float)(source->argb >> 24);
-    }
-
-    if (no_scale != 0 &&
-        software_no_scale_apply_culling(
-            clip_vertices, vertex_count, material_flags)) {
-        if (stats != NULL) {
-            stats->triangles += (size_t)vertex_count - 2u;
-            stats->pixels += state.draw.stats.pixels;
-        }
-        return JPB_SOFTWARE_RENDER_OK;
-    }
-
-    if (material_flags == JPB_MATERIAL_MODE_SCREEN_TILE) {
-        for (vertex = 0; vertex < vertex_count; ++vertex) {
-            projected[vertex].depth = 0.0001f;
-            projected[vertex].inverseDepth = 10000.0f;
-        }
     }
 
     triangle_count = (size_t)vertex_count - 2u;
@@ -1048,21 +1200,6 @@ static int software_draw_screen_poly(
          * triangles are 0,1,2 for a tri and 0,1,2 + 1,3,2 for a quad.
          */
         if (vertex_count == 3) {
-            SoftwareMaterialVertex winding_vertices[3] = {
-                projected[0],
-                projected[1],
-                projected[2]
-            };
-
-            if (material_flags == JPB_MATERIAL_MODE_BACKFACE_REJECT &&
-                software_material_polygon_winding(
-                    winding_vertices, 3) < 0.0f) {
-                if (stats != NULL) {
-                    stats->triangles += triangle_count;
-                    stats->pixels += state.draw.stats.pixels;
-                }
-                return JPB_SOFTWARE_RENDER_OK;
-            }
             software_draw_material_triangle(
                 &state,
                 &projected[0],
@@ -1070,27 +1207,6 @@ static int software_draw_screen_poly(
                 &projected[2],
                 texture);
         } else if (vertex_count == 4) {
-            SoftwareMaterialVertex winding_vertices[4] = {
-                projected[0],
-                projected[1],
-                projected[2],
-                projected[3]
-            };
-
-            /*
-             * NoScaleEndPoly runs el_chavo::ApplyCulling before filling the
-             * transparency queue. D3D cull-none only applies after this CPU
-             * acceptance gate has already decided the card should be emitted.
-             */
-            if (material_flags == JPB_MATERIAL_MODE_BACKFACE_REJECT &&
-                software_material_polygon_winding(
-                    winding_vertices, 4) < 0.0f) {
-                if (stats != NULL) {
-                    stats->triangles += triangle_count;
-                    stats->pixels += state.draw.stats.pixels;
-                }
-                return JPB_SOFTWARE_RENDER_OK;
-            }
             software_draw_material_triangle(
                 &state,
                 &projected[0],
@@ -1117,25 +1233,12 @@ static int software_draw_screen_poly(
             &projected[vertex];
         const SoftwareMaterialVertex *third =
             &projected[vertex + 1];
-        SoftwareMaterialVertex winding_vertices[3];
-
         /* _StartPoly's submitted vertices form the retail triangle strip. */
         if ((vertex & 1) == 0) {
             const SoftwareMaterialVertex *swap = first;
 
             first = second;
             second = swap;
-        }
-        winding_vertices[0] = *first;
-        winding_vertices[1] = *second;
-        winding_vertices[2] = *third;
-        if (state.materialShader !=
-                SOFTWARE_MATERIAL_SHADER_TRANSPARENCY_PASS &&
-            (material == NULL ||
-             material->flags == JPB_MATERIAL_MODE_BACKFACE_REJECT) &&
-            software_material_polygon_winding(
-                winding_vertices, 3) < 0.0f) {
-            continue;
         }
         software_draw_material_triangle(
             &state,
@@ -1322,6 +1425,7 @@ static int software_project_material_vertex(
         vertex->y = screen.vy;
         vertex->depth = screen.vz;
         vertex->inverseDepth = 1.0f / screen.vz;
+        vertex->clipDepth = 0.0f;
     } else {
         vertex->x =
             state->draw.offsetX +
@@ -1334,6 +1438,7 @@ static int software_project_material_vertex(
                  state->draw.scale);
         vertex->depth = -world->vy;
         vertex->inverseDepth = 1.0f;
+        vertex->clipDepth = 0.0f;
     }
     vertex->u = uv->u;
     vertex->v = uv->v;
@@ -1497,6 +1602,7 @@ static size_t software_clip_project_material_polygon(
         projected[vertex].y = screen.vy;
         projected[vertex].depth = screen.vz;
         projected[vertex].inverseDepth = 1.0f / screen.vz;
+        projected[vertex].clipDepth = 0.0f;
         projected[vertex].u = clipped[vertex].u;
         projected[vertex].v = clipped[vertex].v;
         projected[vertex].red = clipped[vertex].red;
@@ -1558,7 +1664,7 @@ static int software_no_scale_extended_outside(
            y > 5.0f;
 }
 
-static int software_no_scale_apply_culling(
+static int ApplyCulling(
     const SoftwareNoScaleClipVertex *vertices,
     int vertex_count,
     int material_flags)
@@ -1625,13 +1731,58 @@ static int software_no_scale_apply_culling(
     return outside_count >= vertex_count;
 }
 
-static int software_no_scale_camera_polygon_culled(
+static int software_no_scale_backface_rejected(
+    const SoftwareNoScaleClipVertex *vertices,
+    int vertex_count)
+{
+    float winding = 0.0f;
+    int vertex;
+
+    if (vertices == NULL || vertex_count < 3) {
+        return 1;
+    }
+    for (vertex = 0; vertex < vertex_count; ++vertex) {
+        int next = (vertex + 1) % vertex_count;
+
+        winding +=
+            vertices[vertex].x * vertices[next].y -
+            vertices[vertex].y * vertices[next].x;
+    }
+    /*
+     * NoScaleEndPoly converts the projected winding with CVTTSS2SI and
+     * rejects only a negative integer result. Small negative NDC areas
+     * therefore truncate to zero; evaluating them after viewport scaling
+     * makes the decision resolution-dependent and drops glow-card caps.
+     */
+    return !isfinite(winding) || winding <= -1.0f;
+}
+
+static int software_no_scale_special_y_rejected(
+    const SoftwareNoScaleClipVertex *vertices,
+    int vertex_count)
+{
+    int vertex;
+
+    if (vertices == NULL || vertex_count <= 0) {
+        return 1;
+    }
+    for (vertex = 0; vertex < vertex_count; ++vertex) {
+        if (-vertices[vertex].y > 2.0999999046325684f) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int software_no_scale_camera_polygon_rejected(
     SoftwareModelDraw *state,
     const FVECTOR *world,
     const pairUV *uv,
     const CVECTOR *color,
     size_t vertex_count,
-    int material_flags)
+    int material_flags,
+    int transparent,
+    int opaque_special_culling)
 {
     const float vertical_fov = 0.9250245094299316f;
     const float near_clip = 1.0f;
@@ -1665,8 +1816,22 @@ static int software_no_scale_camera_polygon_culled(
             (near_clip * far_clip) /
                 (far_clip - near_clip) * reciprocal_depth;
     }
-    return software_no_scale_apply_culling(
-        projected, (int)vertex_count, material_flags);
+    if (ApplyCulling(
+            projected,
+            (int)vertex_count,
+            transparent
+                ? material_flags
+                : JPB_MATERIAL_MODE_BACKFACE_REJECT)) {
+        return 1;
+    }
+    if (opaque_special_culling) {
+        return software_no_scale_special_y_rejected(
+            projected, (int)vertex_count);
+    }
+    return (!transparent ||
+            material_flags == JPB_MATERIAL_MODE_BACKFACE_REJECT) &&
+        software_no_scale_backface_rejected(
+            projected, (int)vertex_count);
 }
 
 static float software_clamp_unit(float value)
@@ -1861,7 +2026,11 @@ static void software_store_material_pixel(
         texture_color & UINT32_C(0xff);
     uint32_t destination;
 
-    if (depth >= state->depthBuffer[depth_offset]) {
+    /* Shipped transparency PSOs use LESS_EQUAL; opaque passes use LESS. */
+    if (state->materialShader ==
+            SOFTWARE_MATERIAL_SHADER_TRANSPARENCY_PASS
+            ? depth > state->depthBuffer[depth_offset]
+            : depth >= state->depthBuffer[depth_offset]) {
         return;
     }
     if (state->materialShader ==
@@ -2727,8 +2896,20 @@ static int software_render_level_mesh_range(
                         &batch->vertices[vertex + corner];
 
                     world[corner] = source->position;
-                    uv[corner].u = source->u;
-                    uv[corner].v = source->v;
+                    uv[corner].u =
+                        source->u + fabsf(source->uvScrollU) -
+                        (source->uvScrollU < 0.0f
+                            ? -g_levelUVScroll.vx
+                            : (source->uvScrollU > 0.0f
+                                   ? g_levelUVScroll.vx
+                                   : 0.0f));
+                    uv[corner].v =
+                        source->v + fabsf(source->uvScrollV) -
+                        (source->uvScrollV < 0.0f
+                            ? -g_levelUVScroll.vy
+                            : (source->uvScrollV > 0.0f
+                                   ? g_levelUVScroll.vy
+                                   : 0.0f));
                     color[corner].r = (uint8_t)
                         software_clamp_byte(source->red);
                     color[corner].g = (uint8_t)
@@ -2834,6 +3015,7 @@ static int software_draw_model_node(
         (float)node->v3Translation.vz
     };
     FVECTOR transformed_translation;
+    uint32_t node_index = (uint32_t)node->id & NODE_INDEX_MASK;
     size_t vertex;
     size_t face;
     int child;
@@ -2844,13 +3026,53 @@ static int software_draw_model_node(
         &transformed_translation);
     if ((node->flags & UINT32_C(0x04000004)) ==
         UINT32_C(0x04000000)) {
+        EffectHeader *effect;
+
+        if (state->sceneObject == NULL || state->physics == NULL) {
+            return JPB_SOFTWARE_RENDER_INVALID_ARGUMENT;
+        }
         current.translation.vx =
             (float)node->v3Translation2.vx;
         current.translation.vy =
             (float)node->v3Translation2.vy;
         current.translation.vz =
             (float)node->v3Translation2.vz;
-    } else if (((uint32_t)node->id & NODE_INDEX_MASK) != 0) {
+        node->v3Translation2.vx = (int16_t)(
+            node->v3Translation2.vx + node->v3Velocity2.vx);
+        node->v3Translation2.vy = (int16_t)(
+            node->v3Translation2.vy + node->v3Velocity2.vy -
+            node->time / 16);
+        node->v3Translation2.vz = (int16_t)(
+            node->v3Translation2.vz + node->v3Velocity2.vz);
+        node->time += flexmul12(0x40, gGlobalFrameRate);
+
+        if ((node->flags & UINT32_C(0x20)) == 0 &&
+            (node->time > 0x800 ||
+             (float)node->v3Translation2.vy <=
+                 state->physics->airGround)) {
+            if (node->time < 0x1000) {
+                VECTOR sound_position;
+
+                effect = paEffects[node_index == 8 ? 71 : 83];
+                (void)sprite_AddSpriteEffectAtNode(
+                    effect->aEffects,
+                    (int)effect->num,
+                    state->sceneObject->sceneRoot.objectID,
+                    (int)node_index);
+                memcpy(
+                    &sound_position,
+                    &current.translation,
+                    3U * sizeof(int32_t));
+                sound_position.pad = 0;
+                (void)sound_Play(
+                    &sound_position, 0, "explosm", 0);
+                node->flags |= UINT32_C(0x4);
+                node->time = 0x1000;
+            } else {
+                node->flags |= UINT32_C(0x4);
+            }
+        }
+    } else if (node_index != 0) {
         current.translation.vx += transformed_translation.vx;
         current.translation.vy += transformed_translation.vy;
         current.translation.vz += transformed_translation.vz;
@@ -2877,6 +3099,11 @@ static int software_draw_model_node(
     node->v3RotCenter.vz =
         (int32_t)current.translation.vz;
 
+    if ((node->flags & UINT32_C(0x1000)) != 0 &&
+        (node->flags & UINT32_C(0x4)) == 0) {
+        node->flags |= UINT32_C(0x4);
+    }
+
     fRotMatrixZYX(
         (_svector *)&node->v3CurrentRotation,
         &local_rotation);
@@ -2887,6 +3114,9 @@ static int software_draw_model_node(
     }
     fMulMatrix(&current.rotation, &local_rotation);
 
+    if ((node->flags & UINT32_C(0x4)) != 0) {
+        goto clear_transient_hide;
+    }
     if (jpb_BmdGetGeometry(
             state->bmd, node->pGeomData, &geometry) != JPB_BMD_OK) {
         return JPB_SOFTWARE_RENDER_BMD_ERROR;
@@ -2910,6 +3140,11 @@ static int software_draw_model_node(
         material_texture->stridePixels >= material_texture->width) {
         resolved_texture = material_texture;
     } else if (state->depthBuffer != NULL &&
+        state->bmd->material_handles_relocated &&
+        material != NULL) {
+        return JPB_SOFTWARE_RENDER_BMD_ERROR;
+    } else if (state->depthBuffer != NULL &&
+        !state->bmd->material_handles_relocated &&
         state->resolveTexture != NULL &&
         state->resolveTexture(
             state->textureUserData,
@@ -2947,6 +3182,12 @@ static int software_draw_model_node(
         CVECTOR material_color[4];
         int material_face_visible =
             state->depthBuffer != NULL;
+        int material_flags = material != NULL
+            ? (int)material->flags
+            : JPB_MATERIAL_MODE_BACKFACE_REJECT;
+        int transparent = resolved_texture != NULL &&
+            resolved_texture->materialType != 0;
+        int opaque_special_culling = 0;
         float height = 0.0f;
         size_t corner;
 
@@ -2990,21 +3231,34 @@ static int software_draw_model_node(
                 }
             }
         }
+        if (!transparent && material != NULL &&
+            resolved_texture != NULL) {
+            opaque_special_culling = IsBusTextureForCorus2(
+                (int)(int8_t)LevelSelect,
+                material->filename,
+                resolved_texture->descriptorIndex);
+            if (!opaque_special_culling && corners != 3) {
+                opaque_special_culling = IsCoffinTextureForPalace(
+                    (int)(int8_t)LevelSelect,
+                    material->filename,
+                    resolved_texture->descriptorIndex);
+            }
+        }
         /*
          * _RenderNode submits each complete BMD face through
          * _NoScaleEndPoly. The shipped PC path projects the original tri or
          * quad and applies el_chavo::ApplyCulling before GPU clipping.
          */
         if (material_face_visible &&
-            software_no_scale_camera_polygon_culled(
+            software_no_scale_camera_polygon_rejected(
                 state,
                 material_world,
                 material_uv,
                 material_color,
                 corners,
-                resolved_texture != NULL
-                    ? resolved_texture->materialFlags
-                    : JPB_MATERIAL_MODE_BACKFACE_REJECT)) {
+                material_flags,
+                transparent,
+                opaque_special_culling)) {
             material_face_visible = 0;
         }
         if (material_face_visible) {
@@ -3057,17 +3311,11 @@ static int software_draw_model_node(
                         triangle_color,
                         3,
                         material_vertices);
-                if (projected_corners < 3 ||
-                    ((resolved_texture == NULL ||
-                      resolved_texture->materialFlags ==
-                          JPB_MATERIAL_MODE_BACKFACE_REJECT) &&
-                     software_material_polygon_winding(
-                         material_vertices,
-                         projected_corners) < 0.0f)) {
+                if (projected_corners < 3) {
                     continue;
                 }
-                if (resolved_texture != NULL &&
-                    resolved_texture->materialFlags ==
+                if (transparent &&
+                    material_flags ==
                         JPB_MATERIAL_MODE_SCREEN_TILE) {
                     for (clipped_corner = 0;
                          clipped_corner < projected_corners;
@@ -3133,6 +3381,8 @@ static int software_draw_model_node(
         state->draw.stats.triangles += corners - 2;
         state->draw.stats.modelTriangles += corners - 2;
     }
+clear_transient_hide:
+    node->flags &= ~UINT32_C(0x4);
 
     for (child = 0; child < node->numChildNodes; ++child) {
         int result = software_draw_model_node(
@@ -3149,6 +3399,8 @@ static int software_render_bmd(
     const JPBBmdView *bmd,
     modelObject *model,
     const _animFrame *key_frame,
+    sceneObject *scene_object,
+    physicsObject *physics,
     const FVECTOR *world_position,
     int32_t world_facing,
     MATRIX *view_matrix,
@@ -3185,6 +3437,8 @@ static int software_render_bmd(
 
     memset(&state, 0, sizeof(state));
     state.bmd = bmd;
+    state.sceneObject = scene_object;
+    state.physics = physics;
     state.draw.scene = world_scene;
     state.draw.framebuffer = framebuffer;
     state.draw.view = view_matrix;
@@ -3336,6 +3590,8 @@ int jpb_SoftwareRenderBmdWireframe(
         bmd,
         model,
         key_frame,
+        NULL,
+        NULL,
         world_position,
         world_facing,
         view_matrix,
@@ -3367,6 +3623,8 @@ int jpb_SoftwareRenderBmdMaterialized(
         bmd,
         model,
         key_frame,
+        NULL,
+        NULL,
         world_position,
         world_facing,
         view_matrix,
@@ -3399,6 +3657,8 @@ int jpb_SoftwareRenderBmdMaterializedWithDepth(
         bmd,
         model,
         key_frame,
+        NULL,
+        NULL,
         world_position,
         world_facing,
         view_matrix,
@@ -3430,8 +3690,34 @@ int jpb_SoftwareRenderBmdMaterializedWithDepthToSink(
     JPBSoftwareRenderStats *stats)
 {
     return software_render_bmd(
-        bmd, model, key_frame, world_position, world_facing,
+        bmd, model, key_frame, NULL, NULL,
+        world_position, world_facing,
         view_matrix, world_scene, framebuffer, 1,
         resolve_texture, texture_user_data, depth_buffer,
         triangle_sink, triangle_user_data, stats);
+}
+
+int jpb_SoftwareRenderBmdForScene(
+    const JPBBmdView *bmd,
+    modelObject *model,
+    const _animFrame *key_frame,
+    sceneObject *scene_object,
+    physicsObject *physics,
+    const FVECTOR *world_position,
+    int32_t world_facing,
+    MATRIX *view_matrix,
+    const JPBSoftwareJpxScene *world_scene,
+    JPBSoftwareFramebuffer *framebuffer,
+    JPBSoftwareTextureResolver resolve_texture,
+    void *texture_user_data,
+    JPBSoftwareDepthBuffer *depth_buffer,
+    JPBSoftwareTriangleSink triangle_sink,
+    void *triangle_user_data,
+    JPBSoftwareRenderStats *stats)
+{
+    return software_render_bmd(
+        bmd, model, key_frame, scene_object, physics,
+        world_position, world_facing, view_matrix, world_scene,
+        framebuffer, 1, resolve_texture, texture_user_data,
+        depth_buffer, triangle_sink, triangle_user_data, stats);
 }

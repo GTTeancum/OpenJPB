@@ -74,6 +74,8 @@ void addTexTrack(
     TextureTracker *tt,
     uint32_t *name,
     struct _Material *pTextureHandle);
+int console_NodeCommand(
+    int narg, char **arg_str, int *arg_int, float *arg_float);
 unsigned levTexParseFarce(unsigned char *name);
 modelObject *model_GetModel(int id);
 Mnode *model_GetNodes(int id, int num);

@@ -7,10 +7,9 @@
 extern "C" {
 #endif
 
-/*
- * mem_heap is a direct optimized-local name from the PDB. mem_heapend is an
- * inferred name for the companion bound used by inlined ownership checks.
- */
+/* Exact PDB globals; localheap includes the writable terminal boundary tag. */
+extern unsigned mem_heaplen;
+extern unsigned localheap[0x4001];
 extern uint32_t *mem_heap;
 extern uint32_t *mem_heapend;
 

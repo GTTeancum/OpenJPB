@@ -16,6 +16,9 @@ enum {
     JPB_POWERUP_CAPACITY = 128,
     JPB_POWERUP_CHECKPOINT_CAPACITY = 32,
     JPB_POWERUP_DISK_RECORD_SIZE = 12,
+    JPB_POWERUP_MODEL_CAPACITY = 36,
+    JPB_POWERUP_TRANSFORMED_VERTEX_CAPACITY = 3072,
+    JPB_POWERUP_CHARPOS_CAPACITY = 7,
     JPB_POWERUP_TYPE_CHECKPOINT = 5,
     JPB_POWERUP_COLLECTED_FLAG = 0x8000
 };
@@ -26,12 +29,7 @@ typedef struct powerPoop {
     _svector pos;
 } powerPoop;
 
-/*
- * Portable realization seam for exact PDB procedure DrawPowerUp. The
- * recovered gameplay owner still supplies its original position, type,
- * rotation, fixed-point scale, and offset; a host renderer may consume that
- * request without introducing a graphics-library dependency into pwrup.c.
- */
+/* Portable observation hook; it does not replace DrawPowerUp rendering. */
 typedef void (*JPBPowerupDrawHook)(
     void *user_data,
     _svector *position,
@@ -52,7 +50,10 @@ extern CVECTOR pwrIcons[17];
 extern int32_t mRandomPower[9];
 extern int32_t cheat_currentCheckPoint;
 extern char *powerUpNames[17];
-extern char *powerUpFiles[17];
+extern char *powerUpFiles[18];
+extern void *powerUpData[JPB_POWERUP_MODEL_CAPACITY];
+extern FVECTOR vert[JPB_POWERUP_TRANSFORMED_VERTEX_CAPACITY];
+extern FVECTOR4 charpos[JPB_POWERUP_CHARPOS_CAPACITY];
 
 void DrawPowerUp(
     _svector *position,
@@ -60,8 +61,19 @@ void DrawPowerUp(
     _svector *rotation,
     VECTOR *scale,
     _svector *offset);
+void FixDrawPowerUp(unsigned type);
 void cheat_nextCheckPoint(void);
+int console_PowerCommand(
+    int argument_count,
+    char **string_arguments,
+    int *integer_arguments,
+    float *float_arguments);
 unsigned fixPowColor(unsigned color);
+void jitteryFesteringMatrixCrack(
+    _svector *position,
+    _svector *rotation,
+    _svector *offset,
+    VECTOR *scale);
 int kmAudioSFX_DumpBank(int bankID);
 int mrktng_GoToNextCheckpoint(void);
 void pwrup_CheckPowerUps(void);

@@ -1,11 +1,11 @@
 /*
- * PARTIAL REVIEWED RECONSTRUCTION of
+ * REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\Work\brain.c.
  *
- * Fourteen PDB procedures are reviewed in this translation unit. The fifteenth
- * and largest procedure, exact brain_ControlPlayer, lives in the sibling
- * brain_control.c so unrecovered cross-module dependencies remain link-isolated
- * while those modules are reconstructed.
+ * Fourteen PDB procedures live in this translation unit. The fifteenth and
+ * largest, exact brain_ControlPlayer, is split into sibling brain_control.c to
+ * keep its private block helpers readable; together they cover all 15 emitted
+ * procedures.
  *
  * Provenance:
  *   direct     - names/signatures/locals and player/physics layouts from PDB.
@@ -45,6 +45,24 @@
 #include <stdlib.h>
 #include <string.h>
 
+static JPBBrainLockDiagnostics jpb_brain_lock_diagnostics;
+
+void jpb_BrainResetLockDiagnostics(void)
+{
+    memset(
+        &jpb_brain_lock_diagnostics,
+        0,
+        sizeof(jpb_brain_lock_diagnostics));
+}
+
+void jpb_BrainGetLockDiagnostics(
+    JPBBrainLockDiagnostics *diagnostics)
+{
+    if (diagnostics != NULL) {
+        *diagnostics = jpb_brain_lock_diagnostics;
+    }
+}
+
 static physicsObject *brain_player_physics(playerObject *player)
 {
     sceneObject *scene =
@@ -83,7 +101,7 @@ int jpb_BrainDirectionAngle(
 }
 
 /*
- * Bounded extraction of brain_ControlPlayer's ordinary, unlocked directional
+ * Instruction-reviewed extraction of brain_ControlPlayer's ordinary, unlocked directional
  * ground branch (0x1D141..0x1D166 and 0x1D5FB..0x1D64E).
  *
  * The special motion-2/motion-60 paths are rejected until their dependencies
@@ -92,7 +110,7 @@ int jpb_BrainDirectionAngle(
  * and omnidirectional Motion[26]/Motion[8] selection preserve executable
  * order and stores.
  */
-JPBBrainPartialResult jpb_BrainGroundDirectionState(
+JPBBrainResult jpb_BrainGroundDirectionState(
     playerObject *player,
     float axis_x,
     float axis_y,
@@ -104,11 +122,11 @@ JPBBrainPartialResult jpb_BrainGroundDirectionState(
         player->playerRoot.pParent == NULL ||
         player->paMotions == NULL ||
         player->maxMotions <= 1) {
-        return JPB_BRAIN_PARTIAL_INVALID_ARGUMENT;
+        return JPB_BRAIN_RESULT_INVALID_ARGUMENT;
     }
     if (player->currentMotion == 2 ||
         player->currentMotion == 0x3c) {
-        return JPB_BRAIN_PARTIAL_UNSUPPORTED_STATE;
+        return JPB_BRAIN_RESULT_UNSUPPORTED_STATE;
     }
 
     facing = jpb_BrainDirectionAngle(
@@ -135,7 +153,7 @@ JPBBrainPartialResult jpb_BrainGroundDirectionState(
         Motion *motion;
 
         if (player->maxMotions <= motion_index) {
-            return JPB_BRAIN_PARTIAL_UNSUPPORTED_STATE;
+            return JPB_BRAIN_RESULT_UNSUPPORTED_STATE;
         }
         motion = &player->paMotions[motion_index];
         motion->Speed = 0x24;
@@ -146,12 +164,12 @@ JPBBrainPartialResult jpb_BrainGroundDirectionState(
         physics_gSetFacing(
             &player->playerRoot, facing);
         if (player->currentMotion == motion_index) {
-            return JPB_BRAIN_PARTIAL_NO_CHANGE;
+            return JPB_BRAIN_RESULT_NO_CHANGE;
         }
         return animctrl_MotionEqualLock(
                    &player->playerRoot, motion)
-                   ? JPB_BRAIN_PARTIAL_OK
-                   : JPB_BRAIN_PARTIAL_NO_CHANGE;
+                   ? JPB_BRAIN_RESULT_OK
+                   : JPB_BRAIN_RESULT_NO_CHANGE;
     }
     if ((player->pFlags & 0x00000010u) != 0) {
         physics_gTurnToAttack(
@@ -162,16 +180,16 @@ JPBBrainPartialResult jpb_BrainGroundDirectionState(
     }
     if (!animctrl_MotionLock(
             &player->playerRoot, &player->paMotions[1])) {
-        return JPB_BRAIN_PARTIAL_NO_CHANGE;
+        return JPB_BRAIN_RESULT_NO_CHANGE;
     }
     if (player->playerID <= 1) {
         player->paMotions[1].vel = 0x15;
     }
-    return JPB_BRAIN_PARTIAL_OK;
+    return JPB_BRAIN_RESULT_OK;
 }
 
 /*
- * Bounded extraction of brain_ControlPlayer's lock-on directional branch
+ * Instruction-reviewed extraction of brain_ControlPlayer's lock-on directional branch
  * (0x1D28D..0x1D3AF).
  *
  * The original selects forward Motion[26], left/right Motion[29]/Motion[30],
@@ -180,7 +198,7 @@ JPBBrainPartialResult jpb_BrainGroundDirectionState(
  * lock, and increments the exact 16-bit runCounter. This descriptive facade
  * is not an original PDB symbol.
  */
-JPBBrainPartialResult jpb_BrainLockOnDirectionState(
+JPBBrainResult jpb_BrainLockOnDirectionState(
     playerObject *player, int desired_facing)
 {
     enum {
@@ -197,11 +215,11 @@ JPBBrainPartialResult jpb_BrainLockOnDirectionState(
     if (player == NULL ||
         player->playerRoot.pParent == NULL ||
         player->paMotions == NULL) {
-        return JPB_BRAIN_PARTIAL_INVALID_ARGUMENT;
+        return JPB_BRAIN_RESULT_INVALID_ARGUMENT;
     }
     if ((player->pFlags & UINT32_C(0x00400000)) == 0 ||
         player->maxMotions <= right_motion) {
-        return JPB_BRAIN_PARTIAL_UNSUPPORTED_STATE;
+        return JPB_BRAIN_RESULT_UNSUPPORTED_STATE;
     }
 
     current_facing =
@@ -254,11 +272,11 @@ JPBBrainPartialResult jpb_BrainLockOnDirectionState(
     }
     player->runCounter = (int16_t)(
         (uint16_t)player->runCounter + UINT16_C(1));
-    return JPB_BRAIN_PARTIAL_OK;
+    return JPB_BRAIN_RESULT_OK;
 }
 
 /*
- * Bounded extraction of brain_ControlPlayer's successful jump-launch block
+ * Instruction-reviewed extraction of brain_ControlPlayer's successful jump-launch block
  * (0x1CFF0..0x1D08C).
  *
  * The runtime callback table slot at 0x1410EFBB0 is initialized by
@@ -266,7 +284,7 @@ JPBBrainPartialResult jpb_BrainLockOnDirectionState(
  * by the existing extension layer. This descriptive boundary therefore
  * accepts the slot value explicitly instead of hard-wiring a PC-only global.
  */
-JPBBrainPartialResult jpb_BrainJumpLaunchState(
+JPBBrainResult jpb_BrainJumpLaunchState(
     playerObject *player,
     int stand,
     JPBPlayerCallback trajectory_callback)
@@ -277,10 +295,10 @@ JPBBrainPartialResult jpb_BrainJumpLaunchState(
     if (player == NULL ||
         player->playerRoot.pParent == NULL ||
         player->paMotions == NULL) {
-        return JPB_BRAIN_PARTIAL_INVALID_ARGUMENT;
+        return JPB_BRAIN_RESULT_INVALID_ARGUMENT;
     }
     if (player->maxMotions <= jump_motion) {
-        return JPB_BRAIN_PARTIAL_UNSUPPORTED_STATE;
+        return JPB_BRAIN_RESULT_UNSUPPORTED_STATE;
     }
     physics = brain_player_physics(player);
     if (physics->mapinfo.poly != NULL &&
@@ -288,12 +306,12 @@ JPBBrainPartialResult jpb_BrainJumpLaunchState(
              (uint32_t)*physics->mapinfo.poly &
              UINT32_C(0x1ffff)] &
          INT32_C(0x4000)) != 0) {
-        return JPB_BRAIN_PARTIAL_NO_CHANGE;
+        return JPB_BRAIN_RESULT_NO_CHANGE;
     }
     if (!animctrl_MotionLock(
             &player->playerRoot,
             &player->paMotions[jump_motion])) {
-        return JPB_BRAIN_PARTIAL_NO_CHANGE;
+        return JPB_BRAIN_RESULT_NO_CHANGE;
     }
 
     brain_SetJumpTrajectory(player, stand != 0);
@@ -305,7 +323,7 @@ JPBBrainPartialResult jpb_BrainJumpLaunchState(
     physics_gSnapShotPosition(
         &player->playerRoot, 0x3c);
     physics->reversoi = 0;
-    return JPB_BRAIN_PARTIAL_OK;
+    return JPB_BRAIN_RESULT_OK;
 }
 
 /*
@@ -313,7 +331,7 @@ JPBBrainPartialResult jpb_BrainJumpLaunchState(
  * (0x1D23E..0x1D28C). Unlike the ordinary launch, this path quantizes facing
  * to the original 128-angle boundary and requests Motion[4] at lock level 30.
  */
-JPBBrainPartialResult jpb_BrainAlternateJumpLaunchState(
+JPBBrainResult jpb_BrainAlternateJumpLaunchState(
     playerObject *player,
     JPBPlayerCallback trajectory_callback)
 {
@@ -326,10 +344,10 @@ JPBBrainPartialResult jpb_BrainAlternateJumpLaunchState(
     if (player == NULL ||
         player->playerRoot.pParent == NULL ||
         player->paMotions == NULL) {
-        return JPB_BRAIN_PARTIAL_INVALID_ARGUMENT;
+        return JPB_BRAIN_RESULT_INVALID_ARGUMENT;
     }
     if (player->maxMotions <= jump_motion) {
-        return JPB_BRAIN_PARTIAL_UNSUPPORTED_STATE;
+        return JPB_BRAIN_RESULT_UNSUPPORTED_STATE;
     }
     physics = brain_player_physics(player);
     if (physics->mapinfo.poly != NULL &&
@@ -337,7 +355,7 @@ JPBBrainPartialResult jpb_BrainAlternateJumpLaunchState(
              (uint32_t)*physics->mapinfo.poly &
              UINT32_C(0x1ffff)] &
          INT32_C(0x4000)) != 0) {
-        return JPB_BRAIN_PARTIAL_NO_CHANGE;
+        return JPB_BRAIN_RESULT_NO_CHANGE;
     }
 
     physics->angle.vy &= 0x0f80;
@@ -345,7 +363,7 @@ JPBBrainPartialResult jpb_BrainAlternateJumpLaunchState(
             &player->playerRoot,
             &player->paMotions[jump_motion],
             jump_lock_level)) {
-        return JPB_BRAIN_PARTIAL_NO_CHANGE;
+        return JPB_BRAIN_RESULT_NO_CHANGE;
     }
 
     brain_SetJumpTrajectory(player, 0);
@@ -356,7 +374,7 @@ JPBBrainPartialResult jpb_BrainAlternateJumpLaunchState(
         player->airAngle);
     physics_gSnapShotPosition(
         &player->playerRoot, 0x3c);
-    return JPB_BRAIN_PARTIAL_OK;
+    return JPB_BRAIN_RESULT_OK;
 }
 
 /*
@@ -365,7 +383,7 @@ JPBBrainPartialResult jpb_BrainAlternateJumpLaunchState(
  * evidence; this descriptive boundary remains separate until the complete
  * PDB entry can own the full input/callback prelude.
  */
-JPBBrainPartialResult jpb_BrainGroundAttackState(
+JPBBrainResult jpb_BrainGroundAttackState(
     playerObject *player)
 {
     enum {
@@ -381,10 +399,10 @@ JPBBrainPartialResult jpb_BrainGroundAttackState(
     if (player == NULL ||
         player->playerRoot.pParent == NULL ||
         player->paMotions == NULL) {
-        return JPB_BRAIN_PARTIAL_INVALID_ARGUMENT;
+        return JPB_BRAIN_RESULT_INVALID_ARGUMENT;
     }
     if (player->maxMotions <= run_stop_motion) {
-        return JPB_BRAIN_PARTIAL_UNSUPPORTED_STATE;
+        return JPB_BRAIN_RESULT_UNSUPPORTED_STATE;
     }
     physics = brain_player_physics(player);
 
@@ -397,7 +415,7 @@ JPBBrainPartialResult jpb_BrainGroundAttackState(
             player->hitDelay = 0;
             player->paMotions[run_stop_motion].FunctPtr = 4;
             player->pFlags &= UINT32_C(0xffbfffff);
-            return JPB_BRAIN_PARTIAL_OK;
+            return JPB_BRAIN_RESULT_OK;
         }
         if (animctrl_MotionNoLock(
                 &player->playerRoot,
@@ -405,9 +423,9 @@ JPBBrainPartialResult jpb_BrainGroundAttackState(
             player->hitDelay = 0;
             physics_gClrConstantVector(
                 &player->playerRoot);
-            return JPB_BRAIN_PARTIAL_OK;
+            return JPB_BRAIN_RESULT_OK;
         }
-        return JPB_BRAIN_PARTIAL_NO_CHANGE;
+        return JPB_BRAIN_RESULT_NO_CHANGE;
     }
 
     player->pFlags |= UINT32_C(0x20);
@@ -417,22 +435,22 @@ JPBBrainPartialResult jpb_BrainGroundAttackState(
     if (player->currentMotion == chained_attack_motion ||
         player->currentMotion == attack_motion ||
         player->currentMotion == alternate_attack_motion) {
-        return JPB_BRAIN_PARTIAL_NO_CHANGE;
+        return JPB_BRAIN_RESULT_NO_CHANGE;
     }
     if (!animctrl_MotionLock(
             &player->playerRoot,
             &player->paMotions[attack_motion])) {
-        return JPB_BRAIN_PARTIAL_NO_CHANGE;
+        return JPB_BRAIN_RESULT_NO_CHANGE;
     }
     player->pFlags &= UINT32_C(0xffffffef);
     (void)animctrl_MotionChain(
         &player->playerRoot,
         &player->paMotions[chained_attack_motion]);
-    return JPB_BRAIN_PARTIAL_OK;
+    return JPB_BRAIN_RESULT_OK;
 }
 
 /*
- * Bounded extraction of brain_ControlPlayer's stationary ground branch
+ * Instruction-reviewed extraction of brain_ControlPlayer's stationary ground branch
  * (0x1D65C..0x1D766, with the run-stop exit at 0x1D7A2).
  *
  * game_gGetEnergy remains outside the reviewed subset, so its result is an
@@ -444,7 +462,7 @@ JPBBrainPartialResult jpb_BrainGroundAttackState(
  * component's current Motion pointer. This bounded seam tolerates an absent
  * link, but performs the exact action-flag cleanup whenever it is present.
  */
-JPBBrainPartialResult jpb_BrainGroundIdleState(
+JPBBrainResult jpb_BrainGroundIdleState(
     playerObject *player, int energy)
 {
     enum {
@@ -463,11 +481,11 @@ JPBBrainPartialResult jpb_BrainGroundIdleState(
     if (player == NULL ||
         player->playerRoot.pParent == NULL ||
         player->paMotions == NULL) {
-        return JPB_BRAIN_PARTIAL_INVALID_ARGUMENT;
+        return JPB_BRAIN_RESULT_INVALID_ARGUMENT;
     }
     scene = (sceneObject *)player->playerRoot.pParent;
     if (scene->pAnim == NULL || scene->pPhysics == NULL) {
-        return JPB_BRAIN_PARTIAL_INVALID_ARGUMENT;
+        return JPB_BRAIN_RESULT_INVALID_ARGUMENT;
     }
 
     if ((player->pFlags & 0x00400000u) != 0) {
@@ -476,14 +494,14 @@ JPBBrainPartialResult jpb_BrainGroundIdleState(
         idle_motion_index = low_energy_idle_motion;
     }
     if (player->maxMotions <= idle_motion_index) {
-        return JPB_BRAIN_PARTIAL_UNSUPPORTED_STATE;
+        return JPB_BRAIN_RESULT_UNSUPPORTED_STATE;
     }
     idle_motion = &player->paMotions[idle_motion_index];
 
     if (player->currentMotion == 2) {
         if (player->runCounter > 15) {
             if (player->maxMotions <= run_stop_motion) {
-                return JPB_BRAIN_PARTIAL_UNSUPPORTED_STATE;
+                return JPB_BRAIN_RESULT_UNSUPPORTED_STATE;
             }
             if (animctrl_MotionNoLock(
                     &player->playerRoot,
@@ -491,7 +509,7 @@ JPBBrainPartialResult jpb_BrainGroundIdleState(
                 player->hitDelay = 0;
                 player->paMotions[run_stop_motion].FunctPtr = 4;
                 player->pFlags &= 0xffbfffffu;
-                return JPB_BRAIN_PARTIAL_OK;
+                return JPB_BRAIN_RESULT_OK;
             }
         }
         if (animctrl_MotionNoLock(
@@ -533,12 +551,12 @@ JPBBrainPartialResult jpb_BrainGroundIdleState(
         changed = 1;
     }
     return changed
-               ? JPB_BRAIN_PARTIAL_OK
-               : JPB_BRAIN_PARTIAL_NO_CHANGE;
+               ? JPB_BRAIN_RESULT_OK
+               : JPB_BRAIN_RESULT_NO_CHANGE;
 }
 
 /*
- * Bounded extraction of brain_ControlPlayer's directional-input handoff for
+ * Instruction-reviewed extraction of brain_ControlPlayer's directional-input handoff for
  * current Motion[2] and Motion[60] (0x1D141..0x1D15C and
  * 0x1D64F..0x1D65C). The executable raises the current animation lock to 15,
  * then enters the same energy/lock-on idle selection recovered above.
@@ -546,15 +564,15 @@ JPBBrainPartialResult jpb_BrainGroundIdleState(
  * The desired facing is deliberately absent: this special branch does not
  * consume the calculated direction after identifying either motion.
  */
-JPBBrainPartialResult jpb_BrainGroundSpecialDirectionState(
+JPBBrainResult jpb_BrainGroundSpecialDirectionState(
     playerObject *player, int energy)
 {
     if (player == NULL ||
         (player->currentMotion != 2 &&
          player->currentMotion != 0x3c)) {
         return player == NULL
-                   ? JPB_BRAIN_PARTIAL_INVALID_ARGUMENT
-                   : JPB_BRAIN_PARTIAL_UNSUPPORTED_STATE;
+                   ? JPB_BRAIN_RESULT_INVALID_ARGUMENT
+                   : JPB_BRAIN_RESULT_UNSUPPORTED_STATE;
     }
 
     animutl_SetCurrentLock(
@@ -597,7 +615,7 @@ void brain_CheckForEffects(playerObject *player)
 
 /*
  * Exact brain_ControlPlayer is implemented in brain_control.c. The separation
- * is a portable build boundary, not an inferred game procedure.
+ * is a portable build boundary, not a separate game procedure.
  */
 
 /* 0x1D8B0, 125 bytes, global, 4 named locals
@@ -820,6 +838,14 @@ int brain_LockOn(int32_t *cpad, playerObject *player)
         (uint32_t)gaButtonMap[
             OptionStruct.ControllerConfig[0]][1];
 
+    ++jpb_brain_lock_diagnostics.calls;
+    jpb_brain_lock_diagnostics.lastPadBits = (uint32_t)cpad[0];
+    jpb_brain_lock_diagnostics.lastLevel = LevelSelect;
+    jpb_brain_lock_diagnostics.lastPlayerId = player_id;
+    if (((uint32_t)cpad[0] & lock_button) != 0) {
+        ++jpb_brain_lock_diagnostics.inputButtonFrames;
+    }
+
     if (LevelSelect == 8 ||
         (player->pFlags & UINT32_C(0x8000)) != 0 ||
         (player_id <= 53 &&
@@ -829,11 +855,15 @@ int brain_LockOn(int32_t *cpad, playerObject *player)
         return 0;
     }
 
+    ++jpb_brain_lock_diagnostics.eligibleFrames;
+
     player->pFlags ^= UINT32_C(0x00400000);
     if ((player->pFlags & UINT32_C(0x00400000)) != 0) {
         objectRoot *temp =
             brainutl_gGetNearestTarget(
                 &player->playerRoot, 2);
+
+        ++jpb_brain_lock_diagnostics.targetSearches;
 
         if (temp != NULL) {
             sceneObject *target_scene =
@@ -844,6 +874,8 @@ int brain_LockOn(int32_t *cpad, playerObject *player)
             Ring *ring;
             VECTOR *pos;
             CVECTOR colour;
+
+            ++jpb_brain_lock_diagnostics.targetsFound;
 
             player->locked =
                 (playerObject *)target_scene->pPlayer;
@@ -1050,8 +1082,7 @@ int brain_TakeOff(
         motion->motionFlags |= UINT32_C(0x04000000);
         (void)animctrl_MotionNoLock(
             &player->playerRoot, motion);
-        player->pMotionCallBack =
-            jpb_TrajectoryCallbackSlot;
+        player->pMotionCallBack = funcArray[6];
         brain_SetTrajectory(
             player,
             player->airVelocity,
@@ -1090,8 +1121,7 @@ int brain_ThrowEnder(int32_t *cpad, playerObject *player)
         physics_gSnapShotPosition(
             &player->playerRoot, 0);
         brain_SetTrajectory(player, velocity, angle);
-        player->pMotionCallBack =
-            jpb_TrajectoryCallbackSlot;
+        player->pMotionCallBack = funcArray[6];
         player->fLife = 0;
         player->hitNumber = 0;
         player->hitDelay =

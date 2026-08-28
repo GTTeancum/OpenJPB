@@ -4,6 +4,7 @@
 #include "jpb/player.h"
 #include "jpb/world.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -21,6 +22,53 @@
             return 1;                                                        \
         }                                                                    \
     } while (0)
+
+static int close_float(float left, float right)
+{
+    return fabsf(left - right) < 0.0001f;
+}
+
+static int test_makecull_planes(void)
+{
+    MATRIX camera = {
+        {{1.0f, 0.0f, 0.0f},
+         {0.0f, 1.0f, 0.0f},
+         {0.0f, 0.0f, 1.0f}},
+        {0, 0, 0}
+    };
+    FVECTOR camera_position = {1.0f, 2.0f, 3.0f};
+    FVECTOR4 planes[7];
+    float diagonal = 0.707106769f;
+
+    memset(planes, 0, sizeof(planes));
+    makecull(
+        planes, &camera, &camera_position,
+        2.0f, 6.0f, 8.0f, 4.0f, 10.0f);
+
+    CHECK(close_float(planes[0].vx, 0.8f));
+    CHECK(close_float(planes[0].vy, 0.0f));
+    CHECK(close_float(planes[0].vz, 0.6f));
+    CHECK(close_float(planes[0].vw, 0.4f));
+    CHECK(close_float(planes[1].vx, -0.8f));
+    CHECK(close_float(planes[1].vz, 0.6f));
+    CHECK(close_float(planes[1].vw, 2.0f));
+    CHECK(close_float(planes[2].vy, diagonal));
+    CHECK(close_float(planes[2].vz, diagonal));
+    CHECK(close_float(planes[2].vw, 3.0f - 5.0f * diagonal));
+    CHECK(close_float(planes[3].vx, 0.0f));
+    CHECK(close_float(planes[3].vy, 0.0f));
+    CHECK(close_float(planes[3].vz, 1.0f));
+    CHECK(close_float(planes[3].vw, 0.0f));
+    CHECK(close_float(planes[4].vy, -diagonal));
+    CHECK(close_float(planes[4].vz, diagonal));
+    CHECK(close_float(planes[4].vw, 3.0f - diagonal));
+    CHECK(signbit(planes[5].vx));
+    CHECK(signbit(planes[5].vy));
+    CHECK(close_float(planes[5].vz, -1.0f));
+    CHECK(close_float(planes[5].vw, 16.0f));
+    CHECK(memcmp(&planes[6], &planes[3], sizeof(planes[3])) == 0);
+    return 0;
+}
 
 static uint16_t test_packed_vertex(void)
 {
@@ -90,6 +138,68 @@ static int test_getlibpart_float_vertices(void)
     CHECK(output[8].vx == 308.0f);
     CHECK(output[8].vy == 280.0f);
     CHECK(output[8].vz == 412.0f);
+    return 0;
+}
+
+static int test_getlibpart_long_vertices(void)
+{
+    int32_t storage[64];
+    int32_t *mapbase = storage + 4;
+    VECTOR *output = (VECTOR *)(void *)gaScratch;
+    VECTOR cubeorg = {100, 200, 300, 0};
+    int32_t cube = (int32_t)UINT32_C(0x56780000);
+    uint16_t *verts;
+
+    memset(storage, 0, sizeof(storage));
+    memset(gaScratch, 0x5a, 2048);
+    mapbase[-1] = 64;
+    mapbase[0] = 1 << 16;
+    mapbase[1] = 1 << 15;
+    verts = (uint16_t *)((uint8_t *)mapbase + 64);
+    verts[0] = test_packed_vertex();
+
+    CHECK(jon_getlibpartint32_t(&cube, &cubeorg, mapbase) == mapbase);
+    CHECK(output[0].vx == 356);
+    CHECK(output[0].vy == 200);
+    CHECK(output[0].vz == 300);
+    CHECK(output[0].pad == (int32_t)UINT32_C(0x5a5a5a5a));
+    CHECK(output[4].vy == 712);
+    CHECK(output[7].vx == 100);
+    CHECK(output[7].vy == 712);
+    CHECK(output[7].vz == 556);
+    CHECK(output[8].vx == 308);
+    CHECK(output[8].vy == 280);
+    CHECK(output[8].vz == 412);
+    CHECK(output[8].pad == (int32_t)UINT32_C(0x5a5a5a5a));
+    return 0;
+}
+
+static int test_retail_jonny_stubs(void)
+{
+    MATRIX matrix;
+    _svector svector;
+    VECTOR vector;
+    int marker;
+
+    memset(&matrix, 0, sizeof(matrix));
+    memset(&svector, 0, sizeof(svector));
+    memset(&vector, 0, sizeof(vector));
+    CHECK(jon_plumbgeneral(
+              &svector, &svector, NULL, 0, &vector) == 0);
+    CHECK(jpb_render(
+              &matrix,
+              NULL,
+              &marker,
+              0,
+              NULL,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0) == &marker);
+    spack_frustrum(&matrix, &svector, &vector);
+    spackdivver_frustrum(&matrix, &svector, &vector);
     return 0;
 }
 
@@ -377,10 +487,19 @@ static int test_block_buster_nearby_cube_scan(void)
 
 int main(void)
 {
+    if (test_makecull_planes() != 0) {
+        return 1;
+    }
     if (test_getlibpart_integer_vertices() != 0) {
         return 1;
     }
     if (test_getlibpart_float_vertices() != 0) {
+        return 1;
+    }
+    if (test_getlibpart_long_vertices() != 0) {
+        return 1;
+    }
+    if (test_retail_jonny_stubs() != 0) {
         return 1;
     }
     if (test_wank_check_triangle_height() != 0) {

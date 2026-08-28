@@ -1,0 +1,81 @@
+#ifndef JPB_D3DMATH_H
+#define JPB_D3DMATH_H
+
+#include <DirectXMath.h>
+#include <cstdint>
+#include <immintrin.h>
+
+void D3DMath_MatrixFromQuaternion(
+    DirectX::XMMATRIX &mat,
+    float x,
+    float y,
+    float z,
+    float w);
+std::int32_t D3DMath_MatrixInvert(
+    DirectX::XMMATRIX &q,
+    DirectX::XMMATRIX &a);
+void D3DMath_MatrixMultiply(
+    DirectX::XMMATRIX &q,
+    DirectX::XMMATRIX &a,
+    DirectX::XMMATRIX &b);
+void D3DMath_QuaternionFromAngles(
+    float &x,
+    float &y,
+    float &z,
+    float &w,
+    float yaw,
+    float pitch,
+    float roll);
+void D3DMath_QuaternionFromMatrix(
+    float &x,
+    float &y,
+    float &z,
+    float &w,
+    DirectX::XMMATRIX &mat);
+void D3DMath_QuaternionFromRotation(
+    float &x,
+    float &y,
+    float &z,
+    float &w,
+    __m128 &v,
+    float theta);
+void D3DMath_QuaternionMultiply(
+    float &qx,
+    float &qy,
+    float &qz,
+    float &qw,
+    float ax,
+    float ay,
+    float az,
+    float aw,
+    float bx,
+    float by,
+    float bz,
+    float bw);
+void D3DMath_QuaternionSlerp(
+    float &qx,
+    float &qy,
+    float &qz,
+    float &qw,
+    float ax,
+    float ay,
+    float az,
+    float aw,
+    float bx,
+    float by,
+    float bz,
+    float bw,
+    float alpha);
+void D3DMath_RotationFromQuaternion(
+    __m128 &v,
+    float &theta,
+    float x,
+    float y,
+    float z,
+    float w);
+std::int32_t D3DMath_VectorMatrixMultiply(
+    __m128 &destination,
+    __m128 &source,
+    DirectX::XMMATRIX &mat);
+
+#endif

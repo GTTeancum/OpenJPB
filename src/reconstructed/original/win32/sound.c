@@ -1,65 +1,81 @@
 /*
- * REVIEWED RECONSTRUCTION of
+ * COMPLETE REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\work\win32\sound.c.
  *
- * Gameplay-visible wrappers, bank ownership, the 100-entry positional-loop
- * table, and retail stubs retain their exact PDB names. SDL_mixer calls enter
- * through game-owned callbacks; the PC host binds a dependency-free WinMM
- * adapter without leaking a desktop API into this original module.
+ * Gameplay-visible wrappers, bank ownership, and the 100-entry positional-
+ * loop table retain their exact PDB names, layouts, and control flow. The
+ * SDL_mixer calls are the sole portable boundary; the PC host binds those
+ * calls to its WinMM adapter.
  *
  * Provenance:
- *   direct/decompiled - PDB module 0099, its 31 procedures, globals,
- *     signatures, parameter names, and the 43-entry bank table.
- *   assembly - exact tail calls/stubs, fallback order, loop-table layout,
+ *   direct/decompiled - PDB module 0099, all 31 procedures and globals,
+ *     exact PDB layouts, and direct retail disassembly at every procedure.
+ *   assembly - exact tail calls, bare returns, bank cascade, loop-table layout,
  *     volume arithmetic, and pause/halt behavior at RVAs 0x12A6D0..0x12BB2B.
- *   substituted - allocation, WAV loading, and mixer calls behind jpb_ hooks.
+ *   platform boundary - SDL_mixer setup, bank I/O, and channel calls only.
  */
 
 #include "jpb/sound.h"
 
 #include "jpb/camera.h"
 #include "jpb/game.h"
+#include "jpb/resources.h"
 #include "jpb/sound_bank_data.h"
 
-#include <limits.h>
 #include <math.h>
 #include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum {
-    SOUND_LOADED_BANK_COUNT = 5,
+    SOUND_LOADED_BANK_COUNT = 4,
+    SOUND_LOADED_BANK_WRITE_LIMIT = 4,
     SOUND_LOOPED_SOUND_COUNT = 100
 };
 
-/* Exact 24-byte x64 record at matched address 0x140932D00. */
-typedef struct SoundLoopedSound {
-    uint8_t active;
+/* Exact 24-byte x64 PDB record at matched address 0x140932D00. */
+typedef struct LoopedSound {
+    uint8_t isValid;
     uint8_t padding[3];
     int channel;
     VECTOR *position;
     int leftVolume;
     int rightVolume;
-} SoundLoopedSound;
+} LoopedSound;
 
 _Static_assert(
-    sizeof(SoundLoopedSound) == 24,
+    sizeof(LoopedSound) == 24,
     "loopedSounds entry must match the PDB/matched x64 layout");
+_Static_assert(sizeof(tSFXHandle) == 16, "tSFXHandle PDB layout");
+_Static_assert(sizeof(tBankHandle) == 504, "tBankHandle PDB layout");
+_Static_assert(sizeof(tAudioSFX_Bank) == 80, "tAudioSFX_Bank PDB layout");
+_Static_assert(
+    offsetof(tAudioSFX_Bank, ptrSFXNames) == 64,
+    "tAudioSFX_Bank pointer offset");
 
 int sound_Paused;
 uint8_t loopedSoundMuted;
 
-static const JPBSoundBankData
-    *loadedBanks[SOUND_LOADED_BANK_COUNT];
-static SoundLoopedSound loopedSounds[SOUND_LOOPED_SOUND_COUNT];
+/* PDB declares four slots. Retail's > 4 gate still admits latent slot 4. */
+static tBankHandle *loadedBanks[SOUND_LOADED_BANK_COUNT];
+static LoopedSound loopedSounds[SOUND_LOOPED_SOUND_COUNT];
 
 static JPBSoundPlaySfxHook jpb_sound_play_sfx_hook;
 static void *jpb_sound_play_sfx_user_data;
+static JPBSoundChunkLoadHook jpb_sound_chunk_load_hook;
+static JPBSoundChunkFreeHook jpb_sound_chunk_free_hook;
+static void *jpb_sound_chunk_user_data;
 static JPBSoundStopHook jpb_sound_stop_hook;
 static void *jpb_sound_stop_user_data;
 static JPBSoundFadeHook jpb_sound_fade_hook;
 static void *jpb_sound_fade_user_data;
 static JPBSoundBankHook jpb_sound_bank_hook;
 static void *jpb_sound_bank_user_data;
+static JPBSoundSetupHook jpb_sound_setup_hook;
+static void *jpb_sound_setup_user_data;
+static JPBSoundChannelHook jpb_sound_channel_hook;
+static void *jpb_sound_channel_user_data;
 static JPBSoundControlHook jpb_sound_control_hook;
 static void *jpb_sound_control_user_data;
 
@@ -68,6 +84,16 @@ void jpb_SoundSetPlaySfxHook(
 {
     jpb_sound_play_sfx_hook = hook;
     jpb_sound_play_sfx_user_data = user_data;
+}
+
+void jpb_SoundSetChunkHooks(
+    JPBSoundChunkLoadHook load_hook,
+    JPBSoundChunkFreeHook free_hook,
+    void *user_data)
+{
+    jpb_sound_chunk_load_hook = load_hook;
+    jpb_sound_chunk_free_hook = free_hook;
+    jpb_sound_chunk_user_data = user_data;
 }
 
 void jpb_SoundSetStopHook(
@@ -91,6 +117,20 @@ void jpb_SoundSetBankHook(
     jpb_sound_bank_user_data = user_data;
 }
 
+void jpb_SoundSetSetupHook(
+    JPBSoundSetupHook hook, void *user_data)
+{
+    jpb_sound_setup_hook = hook;
+    jpb_sound_setup_user_data = user_data;
+}
+
+void jpb_SoundSetChannelHook(
+    JPBSoundChannelHook hook, void *user_data)
+{
+    jpb_sound_channel_hook = hook;
+    jpb_sound_channel_user_data = user_data;
+}
+
 void jpb_SoundSetControlHook(
     JPBSoundControlHook hook, void *user_data)
 {
@@ -106,91 +146,52 @@ static void sound_platform_control(JPBSoundControl control)
     }
 }
 
-static int sound_ascii_lower(int value)
+static int sound_platform_setup(
+    JPBSoundSetupOperation operation,
+    int value0,
+    int value1,
+    int value2,
+    int value3)
 {
-    if (value >= 'A' && value <= 'Z') {
-        return value + ('a' - 'A');
+    if (jpb_sound_setup_hook == NULL) {
+        return operation == JPB_SOUND_SETUP_OPEN_AUDIO ? -1 : 0;
     }
-    return value;
+    return jpb_sound_setup_hook(
+        operation,
+        value0,
+        value1,
+        value2,
+        value3,
+        jpb_sound_setup_user_data);
 }
 
-static int sound_prefix_equal_case_insensitive(
-    const char *left, const char *right, size_t count)
+static void sound_platform_channel(
+    JPBSoundChannelOperation operation,
+    int channel,
+    int value0,
+    int value1)
 {
-    size_t index;
-
-    for (index = 0; index < count; ++index) {
-        unsigned char left_character = (unsigned char)left[index];
-        unsigned char right_character = (unsigned char)right[index];
-
-        if (sound_ascii_lower(left_character) !=
-            sound_ascii_lower(right_character)) {
-            return 0;
-        }
-        if (left_character == '\0' || right_character == '\0') {
-            return left_character == right_character;
-        }
+    if (jpb_sound_channel_hook != NULL) {
+        jpb_sound_channel_hook(
+            operation,
+            channel,
+            value0,
+            value1,
+            jpb_sound_channel_user_data);
     }
-    return 1;
-}
-
-static int32_t sound_trunc_float_to_i32(float value)
-{
-    if (!(value >= -2147483648.0f && value < 2147483648.0f)) {
-        return INT32_MIN;
-    }
-    return (int32_t)value;
-}
-
-static const char *sound_unprefixed_name(const char *sound)
-{
-    if (sound == NULL) {
-        return NULL;
-    }
-    if (*sound == '-') {
-        ++sound;
-    }
-    if (*sound == '!') {
-        ++sound;
-    }
-    return *sound != '\0' ? sound : NULL;
-}
-
-static int sound_name_is_looped(const char *sound)
-{
-    static const char *const loopingSounds[] = {
-        "fan_big",
-        "pistloop",
-        "elev1lp",
-        "stapstdy",
-        "tanksty1",
-        "taxiloop"
-    };
-    size_t index;
-
-    for (index = 0;
-         index < sizeof(loopingSounds) / sizeof(loopingSounds[0]);
-         ++index) {
-        if (strcmp(sound, loopingSounds[index]) == 0) {
-            return 1;
-        }
-    }
-    return 0;
 }
 
 /* 0x12A6D0, 49 bytes. */
 const char *ExtractFileNameFromPath(const char *path)
 {
+    const char *ptr = path;
     const char *filename = path;
 
-    if (path == NULL) {
-        return NULL;
-    }
-    while (*path != '\0') {
-        if (*path == '/' || *path == '\\') {
-            filename = path + 1;
+    while (*ptr != '\0') {
+        if (*ptr == '/' || *ptr == '\\') {
+            filename = ptr + 1;
         }
-        ++path;
+        ++ptr;
     }
     return filename;
 }
@@ -202,20 +203,20 @@ void add_looped_sound_to_update(
     int leftVolume,
     int rightVolume)
 {
-    size_t index;
+    int idx = -1;
+    int i;
 
-    for (index = 0; index < SOUND_LOOPED_SOUND_COUNT; ++index) {
-        SoundLoopedSound *entry = &loopedSounds[index];
-
-        if (entry->active == 0) {
-            entry->channel = channel;
-            entry->active = 1;
-            entry->position = position;
-            entry->leftVolume = leftVolume;
-            entry->rightVolume = rightVolume;
-            return;
+    for (i = 0; i < SOUND_LOOPED_SOUND_COUNT; ++i) {
+        if (!loopedSounds[i].isValid) {
+            idx = i;
+            break;
         }
     }
+    loopedSounds[idx].channel = channel;
+    loopedSounds[idx].isValid = 1;
+    loopedSounds[idx].position = position;
+    loopedSounds[idx].leftVolume = leftVolume;
+    loopedSounds[idx].rightVolume = rightVolume;
 }
 
 /* 0x12A780, 37 bytes. */
@@ -250,10 +251,6 @@ void get_sound_volume(
     int fixed_distance;
     int mixer_distance;
 
-    if (out_ds == NULL || out_leftVol == NULL ||
-        out_rightVol == NULL) {
-        return;
-    }
     if (length < 0) {
         length = 0;
     } else if (length > 1536) {
@@ -284,7 +281,8 @@ void get_sound_volume(
         int cross =
             (int)cameraFacing.vz * difference_x -
             (int)cameraFacing.vx * difference_z;
-        double pan = sin(atan2(-(double)dot, (double)cross));
+        double angle = atan2(-(double)dot, (double)cross);
+        double pan = cos(angle);
 
         *out_leftVol = (int)((pan + 1.0) * 0.5 * 255.0);
         *out_rightVol = (int)((1.0 - pan) * 0.5 * 255.0);
@@ -298,7 +296,7 @@ void mute_looped_sounds(void)
     update_looped_sounds();
 }
 
-/* 0x12A970, 3-byte retail stub. */
+/* 0x12A970, exact three-byte bare return. */
 void setCDXAvol(unsigned left, unsigned right)
 {
     (void)left;
@@ -308,28 +306,40 @@ void setCDXAvol(unsigned left, unsigned right)
 /* 0x12A980, 153 bytes. */
 void sound_FreeBank(int gabank)
 {
-    const JPBSoundBankData *bank;
+    tBankHandle *bank = loadedBanks[gabank];
+    size_t i;
 
-    if (gabank < 0 || gabank >= SOUND_LOADED_BANK_COUNT) {
-        return;
-    }
-    bank = loadedBanks[gabank];
     if (bank == NULL) {
         return;
     }
     if (jpb_sound_bank_hook != NULL) {
         (void)jpb_sound_bank_hook(
             gabank,
-            bank->directory,
-            bank->paths,
-            bank->count,
+            NULL,
+            NULL,
+            0,
             0,
             jpb_sound_bank_user_data);
     }
+    for (i = 0; i < (size_t)bank->count; ++i) {
+        tSFXHandle *sfx = bank->loadedSFX[i];
+
+        if (sfx != NULL) {
+            if (sfx->ptrChunk != NULL &&
+                jpb_sound_chunk_free_hook != NULL) {
+                jpb_sound_chunk_free_hook(
+                    sfx->ptrChunk,
+                    jpb_sound_chunk_user_data);
+            }
+            free(sfx);
+            bank->loadedSFX[i] = NULL;
+        }
+    }
+    free(bank);
     loadedBanks[gabank] = NULL;
 }
 
-/* 0x12AA20, exact six-byte retail stub. */
+/* 0x12AA20, exact six-byte constant return. */
 int sound_GetIndex(int *whichbank, char *name)
 {
     (void)whichbank;
@@ -337,7 +347,7 @@ int sound_GetIndex(int *whichbank, char *name)
     return -1;
 }
 
-/* 0x12AA30, exact three-byte retail stub. */
+/* 0x12AA30, exact three-byte constant return. */
 int sound_GetSoundIndex(int *bankID, char *name)
 {
     (void)bankID;
@@ -348,33 +358,49 @@ int sound_GetSoundIndex(int *bankID, char *name)
 /* 0x12AA40, 39 bytes. */
 char *sound_GetSoundName(int bankID, int index)
 {
-    const JPBSoundBankData *bank;
+    tBankHandle *bank = loadedBanks[bankID];
+    tSFXHandle *sound;
 
-    if (bankID < 0 || bankID >= SOUND_LOADED_BANK_COUNT ||
-        index < 0) {
+    if (bank == NULL) {
         return NULL;
     }
-    bank = loadedBanks[bankID];
-    if (bank == NULL || index >= bank->count) {
+    sound = bank->loadedSFX[index];
+    if (sound == NULL) {
         return NULL;
     }
-    return (char *)bank->paths[index];
+    return sound->chunkName;
 }
 
 /* 0x12AA70, 801 bytes. */
 void sound_Init(void)
 {
-    int bank;
+    int result = sound_platform_setup(
+        JPB_SOUND_SETUP_INIT, 0, 0, 0, 0);
+    int i;
 
-    for (bank = 0; bank < SOUND_LOADED_BANK_COUNT; ++bank) {
-        sound_FreeBank(bank);
+    printf("[SOUND] Mix Init %d\n", result);
+    result = sound_platform_setup(
+        JPB_SOUND_SETUP_OPEN_AUDIO,
+        44100,
+        0x8120,
+        2,
+        8192);
+    if (result >= 0) {
+        result = sound_platform_setup(
+            JPB_SOUND_SETUP_ALLOCATE_CHANNELS,
+            64,
+            0,
+            0,
+            0);
+        printf("[SOUND] Mix Allocate Channles %d\n", result);
+        (void)sound_LoadBank("resident/", 0);
     }
-    memset(loopedSounds, 0, sizeof(loopedSounds));
-    loopedSoundMuted = 0;
-    (void)sound_LoadBank("resident/", 0);
+    for (i = 0; i < SOUND_LOOPED_SOUND_COUNT; ++i) {
+        loopedSounds[i].isValid = 0;
+    }
 }
 
-/* 0x12ADA0, exact three-byte retail stub. */
+/* 0x12ADA0, exact three-byte constant return. */
 int32_t sound_IsPlaying(uint16_t handle)
 {
     (void)handle;
@@ -384,55 +410,93 @@ int32_t sound_IsPlaying(uint16_t handle)
 /* 0x12ADB0, 420 bytes. */
 int sound_LoadBank(char *file, int gabank)
 {
-    const char *requested;
-    const JPBSoundBankData *bank = NULL;
-    size_t length;
-    size_t index;
-
-    if (file == NULL || gabank < 0 ||
-        gabank >= SOUND_LOADED_BANK_COUNT) {
-        return -1;
-    }
-    length = strlen(file);
-    requested = sound_prefix_equal_case_insensitive(
-        "jar_jar_playable", file, length)
+    size_t fileLength = strlen(file);
+    char *bankName = _strnicmp(
+        "jar_jar_playable", file, fileLength) == 0
         ? "gungan_2"
         : file;
-    length = strlen(requested);
-    for (index = 0; index < JPB_SOUND_BANK_TABLE_COUNT; ++index) {
-        if (sound_prefix_equal_case_insensitive(
-                requested,
-                jpb_soundBankTable[index].directory,
-                length)) {
-            bank = &jpb_soundBankTable[index];
+    int bankIndex;
+    const tAudioSFX_Bank *sourceBank;
+    tBankHandle *bank;
+    size_t i;
+
+    if (gabank > SOUND_LOADED_BANK_WRITE_LIMIT || bankName == NULL) {
+        return -1;
+    }
+    for (bankIndex = 0;
+         bankIndex < AUDIO_SFX_BANK_COUNT;
+         ++bankIndex) {
+        if (_strnicmp(
+                bankName,
+                audioSFX_aSFXBanks[bankIndex].bankName,
+                strlen(bankName)) == 0) {
             break;
         }
     }
+    if (bankIndex == AUDIO_SFX_BANK_COUNT) {
+        return -1;
+    }
+    sourceBank = &audioSFX_aSFXBanks[bankIndex];
+    bank = loadedBanks[gabank];
     if (bank == NULL) {
-        return -1;
+        bank = (tBankHandle *)malloc(sizeof(*bank));
+        loadedBanks[gabank] = bank;
+        if (bank == NULL) {
+            return -1;
+        }
     }
-    if (jpb_sound_bank_hook != NULL &&
-        !jpb_sound_bank_hook(
+    if (jpb_sound_bank_hook != NULL) {
+        (void)jpb_sound_bank_hook(
             gabank,
-            bank->directory,
-            bank->paths,
-            bank->count,
+            sourceBank->bankName,
+            sourceBank->ptrSFXNames,
+            sourceBank->numSFXs,
             1,
-            jpb_sound_bank_user_data)) {
-        return -1;
+            jpb_sound_bank_user_data);
     }
-    loadedBanks[gabank] = bank;
+    for (i = 0; i < (size_t)sourceBank->numSFXs; ++i) {
+        const char *fullFilePath = resource_getPath(
+            sourceBank->ptrSFXNames[i],
+            JPB_RESOURCE_SOUND_SFX_FINAL);
+        tSFXHandle *sfx;
+
+        (void)fullFilePath;
+        if (bank == NULL) {
+            continue;
+        }
+        sfx = (tSFXHandle *)malloc(sizeof(*sfx));
+        bank->loadedSFX[i] = sfx;
+        if (sfx == NULL) {
+            return -1;
+        }
+        sfx->ptrChunk = jpb_sound_chunk_load_hook != NULL
+            ? jpb_sound_chunk_load_hook(
+                fullFilePath,
+                jpb_sound_chunk_user_data)
+            : NULL;
+        sfx->chunkName = (char *)sourceBank->ptrSFXNames[i];
+    }
+    if (bank != NULL) {
+        bank->count = sourceBank->numSFXs;
+    }
     return 0;
 }
 
 /* 0x12AF60, 73 bytes. */
 int sound_NumInBank(int bankID)
 {
-    if (bankID < 0 || bankID >= SOUND_LOADED_BANK_COUNT ||
-        loadedBanks[bankID] == NULL) {
-        return 0;
+    tBankHandle *bank = loadedBanks[bankID];
+    int count = 0;
+    int i;
+
+    if (bank != NULL) {
+        for (i = 0; i < bank->count; ++i) {
+            if (bank->loadedSFX[i] != NULL) {
+                ++count;
+            }
+        }
     }
-    return loadedBanks[bankID]->count;
+    return count;
 }
 
 /* 0x12AFB0, tail call to Mix_PauseMusic. */
@@ -441,7 +505,7 @@ void sound_Pause(void)
     sound_platform_control(JPB_SOUND_CONTROL_PAUSE_MUSIC);
 }
 
-/* 0x12AFC0, exact 131-byte bank-fallback wrapper. */
+/* 0x12AFC0, exact 131-byte bank-cascade wrapper. */
 uint16_t sound_Play(
     VECTOR *position, int bankId, char *sound, uint32_t flag)
 {
@@ -475,15 +539,13 @@ uint16_t sound_PlayController(
 uint16_t sound_PlayFV(
     FVECTOR *position, int bankId, char *sound, uint32_t flag)
 {
-    VECTOR integer_position = {
-        sound_trunc_float_to_i32(position->vx),
-        sound_trunc_float_to_i32(position->vy),
-        sound_trunc_float_to_i32(position->vz),
-        0
-    };
+    VECTOR integer_position;
 
-    return sound_Play(
-        &integer_position, bankId, sound, flag);
+    integer_position.vx = (int32_t)position->vx;
+    integer_position.vy = (int32_t)position->vy;
+    integer_position.vz = (int32_t)position->vz;
+
+    return sound_Play(&integer_position, bankId, sound, flag);
 }
 
 /* 0x12B110, calls sound_Play and then clears EAX. */
@@ -495,13 +557,13 @@ uint16_t sound_PlaySV(
     return 0;
 }
 
-/* 0x12B120, exact three-byte retail stub. */
+/* 0x12B120, exact three-byte constant return. */
 int sound_Resume(void)
 {
     return 0;
 }
 
-/* 0x12B130, exact three-byte retail stub. */
+/* 0x12B130, exact three-byte bare return. */
 void sound_SetFrequency(uint16_t handle, uint32_t frequency)
 {
     (void)handle;
@@ -518,7 +580,7 @@ void sound_SetLoopingFadeTime(
     }
 }
 
-/* 0x12B150, exact three-byte retail stub. */
+/* 0x12B150, exact three-byte bare return. */
 void sound_SetPosition(uint16_t handle, VECTOR *pos)
 {
     (void)handle;
@@ -541,21 +603,21 @@ void sound_StopSound(uint16_t handle)
             handle, jpb_sound_stop_user_data);
     }
     for (index = 0; index < SOUND_LOOPED_SOUND_COUNT; ++index) {
-        if (loopedSounds[index].active != 0 &&
+        if (loopedSounds[index].isValid != 0 &&
             loopedSounds[index].channel == (int)handle) {
-            loopedSounds[index].active = 0;
+            loopedSounds[index].isValid = 0;
         }
     }
 }
 
-/* 0x12B3C0, exact three-byte retail stub. */
+/* 0x12B3C0, exact three-byte constant return. */
 int32_t sound_UnLoadBank(_sound_Bank *bank)
 {
     (void)bank;
     return 0;
 }
 
-/* 0x12B3D0, exact three-byte retail stub. */
+/* 0x12B3D0, exact three-byte bare return. */
 void sound_UpdateAll(int deltatime)
 {
     (void)deltatime;
@@ -565,41 +627,145 @@ void sound_UpdateAll(int deltatime)
 uint16_t sound_playSfx(
     VECTOR *position, int bankId, char *sound, uint32_t flag)
 {
-    const char *name = sound_unprefixed_name(sound);
-    const char *prefix_cursor = sound;
-    uint16_t handle;
+    static const char *const loopingSounds[6] = {
+        "fan_big",
+        "pistloop",
+        "elev1lp",
+        "stapstdy",
+        "tanksty1",
+        "taxiloop"
+    };
+    char soundWithExtension[256];
+    char tempPath[256];
+    char *originalSound = sound;
+    char *name;
+    int quieten = 0;
+    int is2D;
+    uint8_t ds = 0;
+    int leftVolume = 128;
+    int rightVolume = 128;
+    tBankHandle *bank;
+    size_t i;
+    size_t j;
+    int loop = 0;
+    int result;
 
-    if (name == NULL ||
-        (sound_Paused != 0 && (flag & 8U) == 0) ||
-        jpb_sound_play_sfx_hook == NULL) {
+    sprintf(soundWithExtension, "%s.wav", sound);
+    if (sound == NULL || *sound == '\0' ||
+        (sound_Paused != 0 && (flag & 8U) == 0)) {
         return 0;
     }
-    handle = jpb_sound_play_sfx_hook(
-        position,
-        bankId,
-        sound,
-        flag,
-        jpb_sound_play_sfx_user_data);
-    if (handle != 0 && handle != UINT16_MAX && position != NULL) {
-        VECTOR listener;
-        uint8_t distance;
-        int left = 128;
-        int right = 128;
+    if (*sound == '-') {
+        ++sound;
+        quieten = 1;
+    }
+    name = *sound == '!' ? sound + 1 : sound;
 
-        if (*prefix_cursor == '-') {
-            ++prefix_cursor;
-        }
-        if (*prefix_cursor != '!' &&
-            name[0] != 'z' && name[0] != 'v' &&
-            sound_name_is_looped(name)) {
-            listener = convert_svector_to_vector(cameraLocation);
+    if (position != NULL && name[0] != 'z' && name[0] != 'v') {
+        is2D = *sound == '!';
+        if (*sound != '!') {
+            VECTOR listener = convert_svector_to_vector(cameraLocation);
+
             get_sound_volume(
-                listener, *position, &distance, &left, &right);
-            add_looped_sound_to_update(
-                (int)handle, position, left, right);
+                listener,
+                *position,
+                &ds,
+                &leftVolume,
+                &rightVolume);
+        } else {
+            leftVolume = 200;
+            rightVolume = 200;
+            ds = 0;
+        }
+    } else {
+        is2D = 1;
+        leftVolume = 200;
+        rightVolume = 200;
+        ds = 0;
+    }
+    if (name[0] == 'v') {
+        leftVolume = (leftVolume * 0x1333) >> 12;
+        if (leftVolume > 128) {
+            leftVolume = 128;
+        }
+        rightVolume = (rightVolume * 0x1333) >> 12;
+        if (rightVolume > 128) {
+            rightVolume = 128;
+        }
+    } else if (quieten != 0) {
+        leftVolume = (leftVolume * 0x333) >> 12;
+        rightVolume = (rightVolume * 0x333) >> 12;
+    }
+    if (name[0] != 'x') {
+        (void)rand();
+    }
+
+    bank = loadedBanks[bankId];
+    if (bank == NULL) {
+        return 0;
+    }
+    for (j = 0; j < (size_t)bank->count; ++j) {
+        tSFXHandle *loaded = bank->loadedSFX[j];
+
+        if (loaded != NULL && loaded->chunkName != NULL) {
+            const char *filename;
+
+            strncpy(tempPath, loaded->chunkName, sizeof(tempPath));
+            tempPath[sizeof(tempPath) - 1] = '\0';
+            filename = ExtractFileNameFromPath(tempPath);
+            if (strcmp(filename, soundWithExtension) == 0) {
+                break;
+            }
         }
     }
-    return handle;
+    if (j == (size_t)bank->count) {
+        return 0;
+    }
+    for (i = 0; i < 6; ++i) {
+        if (strcmp(name, loopingSounds[i]) == 0) {
+            loop = -1;
+            break;
+        }
+    }
+    result = jpb_sound_play_sfx_hook != NULL
+        ? (int)jpb_sound_play_sfx_hook(
+            bank->loadedSFX[j]->ptrChunk,
+            loop,
+            position,
+            bankId,
+            originalSound,
+            flag,
+            jpb_sound_play_sfx_user_data)
+        : -1;
+    if ((uint16_t)result == UINT16_MAX) {
+        return UINT16_MAX;
+    }
+    sound_platform_channel(
+        JPB_SOUND_CHANNEL_PANNING,
+        result,
+        (uint8_t)leftVolume,
+        (uint8_t)rightVolume);
+    if (!is2D) {
+        sound_platform_channel(
+            JPB_SOUND_CHANNEL_DISTANCE,
+            result,
+            ds,
+            0);
+        if (loop == -1) {
+            add_looped_sound_to_update(
+                result,
+                position,
+                leftVolume,
+                rightVolume);
+        }
+    }
+    sound_platform_channel(
+        JPB_SOUND_CHANNEL_VOLUME,
+        result,
+        (int)((float)OptionStruct.SFXVolume *
+              (is2D != 0 ? 0.92f : 1.0f)),
+        0);
+    return (uint16_t)result;
 }
 
 /* 0x12B7F0, 60 bytes. */
@@ -608,9 +774,13 @@ void stop_all_looped_sounds(void)
     size_t index;
 
     for (index = 0; index < SOUND_LOOPED_SOUND_COUNT; ++index) {
-        if (loopedSounds[index].active != 0) {
-            sound_StopSound(
-                (uint16_t)loopedSounds[index].channel);
+        if (loopedSounds[index].isValid != 0) {
+            if (jpb_sound_stop_hook != NULL) {
+                jpb_sound_stop_hook(
+                    (uint16_t)loopedSounds[index].channel,
+                    jpb_sound_stop_user_data);
+            }
+            loopedSounds[index].isValid = 0;
         }
     }
 }
@@ -629,22 +799,36 @@ void update_looped_sounds(void)
     size_t index;
 
     for (index = 0; index < SOUND_LOOPED_SOUND_COUNT; ++index) {
-        SoundLoopedSound *entry = &loopedSounds[index];
+        LoopedSound *entry = &loopedSounds[index];
 
-        if (entry->active != 0 && entry->position != NULL) {
+        if (entry->isValid != 0) {
             uint8_t distance;
+            int leftVolume;
+            int rightVolume;
 
             get_sound_volume(
                 listener,
                 *entry->position,
                 &distance,
-                &entry->leftVolume,
-                &entry->rightVolume);
+                &leftVolume,
+                &rightVolume);
+            sound_platform_channel(
+                JPB_SOUND_CHANNEL_PANNING,
+                entry->channel,
+                (uint8_t)leftVolume,
+                (uint8_t)rightVolume);
+            sound_platform_channel(
+                JPB_SOUND_CHANNEL_DISTANCE,
+                entry->channel,
+                distance,
+                0);
+            sound_platform_channel(
+                loopedSoundMuted != 0
+                    ? JPB_SOUND_CHANNEL_PAUSE
+                    : JPB_SOUND_CHANNEL_RESUME,
+                entry->channel,
+                0,
+                0);
         }
     }
-    sound_platform_control(JPB_SOUND_CONTROL_UPDATE_LOOPED);
-    sound_platform_control(
-        loopedSoundMuted != 0
-            ? JPB_SOUND_CONTROL_MUTE_LOOPED
-            : JPB_SOUND_CONTROL_UNMUTE_LOOPED);
 }

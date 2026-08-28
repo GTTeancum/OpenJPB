@@ -11,6 +11,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(_MSC_VER)
+#include <crtdbg.h>
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
 #define CHECK(condition)                                                     \
     do {                                                                     \
         if (!(condition)) {                                                  \
@@ -20,7 +27,7 @@
         }                                                                    \
     } while (0)
 
-static char test_path[] = "jpb_io_filesys_test.bin";
+static char test_path[64];
 static int jonny_clear_events_calls;
 static int jonny_initialize_uvs_calls;
 static int chunks_post_load_calls;
@@ -31,6 +38,35 @@ static int texture_load_types[JPB_RESIDENT_SPRITE_COUNT + 2];
 static uint32_t texture_load_options[JPB_RESIDENT_SPRITE_COUNT + 2];
 static int texture_load_null_path[JPB_RESIDENT_SPRITE_COUNT + 2];
 static char texture_load_names[JPB_RESIDENT_SPRITE_COUNT + 2][32];
+static int append_open_calls;
+static char append_open_name[64];
+static char append_open_mode[8];
+#if defined(_MSC_VER)
+static int invalid_parameter_calls;
+
+static void test_invalid_parameter_handler(
+    const wchar_t *expression,
+    const wchar_t *function,
+    const wchar_t *file,
+    unsigned int line,
+    uintptr_t reserved)
+{
+    (void)expression;
+    (void)function;
+    (void)file;
+    (void)line;
+    (void)reserved;
+    ++invalid_parameter_calls;
+}
+#endif
+
+static void *test_append_open_hook(const char *name, const char *mode)
+{
+    ++append_open_calls;
+    (void)snprintf(append_open_name, sizeof(append_open_name), "%s", name);
+    (void)snprintf(append_open_mode, sizeof(append_open_mode), "%s", mode);
+    return NULL;
+}
 
 static void test_clear_events_hook(void)
 {
@@ -91,7 +127,21 @@ static int test_stream_io(void)
 
     (void)remove(test_path);
     CHECK(file_WriteFile(test_path, first, 3) == 1);
-    CHECK(file_AppendFile(test_path, second, 2) == 1);
+    append_open_calls = 0;
+    append_open_name[0] = '\0';
+    append_open_mode[0] = '\0';
+    jpb_IOSetFileAppendOpenTestHook(test_append_open_hook);
+    CHECK(file_AppendFile(test_path, second, 2) == 0);
+    jpb_IOSetFileAppendOpenTestHook(NULL);
+    CHECK(append_open_calls == 1);
+    CHECK(strcmp(append_open_name, test_path) == 0);
+    CHECK(strcmp(append_open_mode, "awb") == 0);
+    CHECK(file_getFileSize(test_path) == 3);
+    {
+        char complete[] = {'J', 'P', 'B', '!', '?'};
+
+        CHECK(file_WriteFile(test_path, complete, 5) == 1);
+    }
     CHECK(file_getFileSize(test_path) == 5);
     CHECK(file_OPEN(test_path, &fd) == 1);
     CHECK(file_GETSIZE(&fd) == 5);
@@ -105,6 +155,20 @@ static int test_stream_io(void)
     fd = (uintptr_t)0x1234;
     CHECK(file_OPEN(NULL, &fd) == 0);
     CHECK(fd == (uintptr_t)0x1234);
+    CHECK(file_OPEN("jpb_missing_file.bin", &fd) == 0);
+    CHECK(fd == (uintptr_t)0x1234);
+    return 0;
+}
+
+static int test_retail_noops(void)
+{
+    char name[] = "unchanged";
+    char buffer[] = "untouched";
+
+    file_gInitialise();
+    (void)file_ReadPC(name, buffer);
+    CHECK(strcmp(name, "unchanged") == 0);
+    CHECK(strcmp(buffer, "untouched") == 0);
     return 0;
 }
 
@@ -141,7 +205,7 @@ static int test_high_level_loaders(void)
     CHECK(io_file_LoadFile(
               (unsigned char *)test_path, &output_ptr) == 5);
 
-    CHECK(memory_InitMemorySystem() == 0);
+    (void)memory_InitMemorySystem();
     pooled = io_file_LoadFile2Pool(test_path, &size, 2);
     CHECK(pooled != NULL);
     CHECK(size == 5);
@@ -694,8 +758,22 @@ static int test_effect_and_sprite_boundaries(void)
 
 int main(void)
 {
+#if defined(_MSC_VER)
+    (void)snprintf(
+        test_path, sizeof(test_path),
+        "jpb_io_filesys_test_%d.bin", _getpid());
+    (void)_CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+    (void)_CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+    _invalid_parameter_handler previous_invalid_parameter_handler =
+        _set_invalid_parameter_handler(test_invalid_parameter_handler);
+#else
+    (void)snprintf(
+        test_path, sizeof(test_path),
+        "jpb_io_filesys_test_%ld.bin", (long)getpid());
+#endif
     int result =
         test_stream_io() != 0 ||
+        test_retail_noops() != 0 ||
         test_read_modes() != 0 ||
         test_high_level_loaders() != 0 ||
         test_chunk_decoder() != 0 ||
@@ -709,6 +787,16 @@ int main(void)
         test_chunk_stream() != 0 ||
         test_effect_and_sprite_boundaries() != 0;
 
+#if defined(_MSC_VER)
+    if (invalid_parameter_calls != 0) {
+        fprintf(
+            stderr,
+            "unexpected CRT invalid-parameter calls: %d\n",
+            invalid_parameter_calls);
+        result = 1;
+    }
+    (void)_set_invalid_parameter_handler(previous_invalid_parameter_handler);
+#endif
     (void)remove(test_path);
     if (result) {
         return 1;

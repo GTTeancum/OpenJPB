@@ -8,6 +8,7 @@
 
 #include "jpb/level_world.h"
 #include "jpb/transparent_texture_database.h"
+#include "jpb/whook.h"
 
 #include "ufbx.h"
 
@@ -106,6 +107,29 @@ static JPBLevelFbxMeshPass pc_fbx_material_pass(
         : JPB_LEVEL_FBX_PASS_TRANSPARENT;
 }
 
+static int pc_fbx_material_vertex_count(
+    const ufbx_mesh *mesh,
+    const ufbx_mesh_material *material,
+    size_t *vertex_count)
+{
+    size_t count = 0;
+    size_t face_list_index;
+
+    for (face_list_index = 0;
+         face_list_index < material->face_indices.count;
+         ++face_list_index) {
+        uint32_t face_index =
+            material->face_indices.data[face_list_index];
+        ufbx_face face = mesh->faces.data[face_index];
+
+        if (face.num_indices > SIZE_MAX - count) return 0;
+        count += face.num_indices;
+    }
+    /* DrawIndexedInstanced consumes the authored stream as a triangle list. */
+    *vertex_count = count - count % 3;
+    return 1;
+}
+
 static int pc_fbx_count_scene(
     const ufbx_scene *scene,
     int level_index,
@@ -135,15 +159,19 @@ static int pc_fbx_count_scene(
              ++material_index) {
             const ufbx_mesh_material *material =
                 &mesh->materials.data[material_index];
+            size_t material_vertex_count = 0;
             ufbx_string texture;
             char texture_name[256];
             JPBLevelFbxMeshPass pass;
 
-            if (material->num_triangles == 0) {
+            if (!pc_fbx_material_vertex_count(
+                    mesh, material, &material_vertex_count)) {
+                return 0;
+            }
+            if (material_vertex_count == 0) {
                 continue;
             }
-            if (material->num_triangles >
-                (SIZE_MAX - *vertex_count) / 3) {
+            if (material_vertex_count > SIZE_MAX - *vertex_count) {
                 return 0;
             }
             texture = pc_fbx_texture_filename(material->material);
@@ -153,7 +181,7 @@ static int pc_fbx_count_scene(
             pass = pc_fbx_material_pass(texture_name, level_index);
             ++pass_batch_count[pass];
             ++*batch_count;
-            *vertex_count += material->num_triangles * 3;
+            *vertex_count += material_vertex_count;
         }
     }
     return *batch_count != 0 && *vertex_count != 0;
@@ -163,6 +191,8 @@ static int pc_fbx_write_vertex(
     const ufbx_mesh *mesh,
     uint32_t index,
     int level_index,
+    float uv_scroll_u,
+    float uv_scroll_v,
     JPBSoftwareLevelVertex *destination)
 {
     ufbx_vec3 local =
@@ -196,7 +226,233 @@ static int pc_fbx_write_vertex(
     destination->green = (float)(color.y * 255.0);
     destination->blue = (float)(color.z * 255.0);
     destination->alpha = (float)(color.w * 255.0);
+    destination->uvScrollU = uv_scroll_u;
+    destination->uvScrollV = uv_scroll_v;
     return 1;
+}
+
+/*
+ * Split portable body for PDB procedure el_chavo::InitFBXLevelData. The
+ * renderer-owned allocations differ, while scene traversal, vertex payload,
+ * pass partitioning, and draw-order metadata follow the shipped method.
+ */
+static int InitFBXLevelData(
+    ufbx_scene *scene,
+    int level_index,
+    JPBPcFbxLevel *level,
+    char *error_text,
+    size_t error_text_capacity)
+{
+    size_t batch_count;
+    size_t vertex_count;
+    size_t pass_batch_count[3];
+    size_t pass_batch_index[3] = {0, 0, 0};
+    size_t mesh_count;
+    size_t node_index;
+    size_t mesh_index = 0;
+    size_t batch_index = 0;
+    size_t vertex_index = 0;
+
+    if (scene == NULL || level == NULL ||
+        level_index < 0 || level_index >= JPB_LEVEL_COUNT) {
+        pc_fbx_error(error_text, error_text_capacity, "invalid FBX level arguments");
+        return 0;
+    }
+    memset(level, 0, sizeof(*level));
+    if (!pc_fbx_count_scene(
+            scene,
+            level_index,
+            &batch_count,
+            &vertex_count,
+            pass_batch_count,
+            &mesh_count)) {
+        pc_fbx_error(error_text, error_text_capacity, "FBX level contains no render triangles");
+        return 0;
+    }
+    level->batches = (JPBSoftwareLevelBatch *)calloc(
+        batch_count, sizeof(*level->batches));
+    level->vertices = (JPBSoftwareLevelVertex *)calloc(
+        vertex_count, sizeof(*level->vertices));
+    level->textureNames = (char (*)[256])calloc(
+        batch_count, sizeof(*level->textureNames));
+    level->meshNames = (char (*)[128])calloc(
+        batch_count, sizeof(*level->meshNames));
+    if (level->batches == NULL || level->vertices == NULL ||
+        level->textureNames == NULL || level->meshNames == NULL) {
+        pc_fbx_error(error_text, error_text_capacity, "out of memory importing FBX level");
+        jpb_PCFreeFbxLevel(level);
+        return 0;
+    }
+
+    for (node_index = 0;
+         node_index < scene->nodes.count;
+         ++node_index) {
+        const ufbx_node *node = scene->nodes.data[node_index];
+        const ufbx_mesh *mesh = node->mesh;
+        size_t material_index;
+
+        if (mesh == NULL) {
+            continue;
+        }
+        for (material_index = 0;
+             material_index < mesh->materials.count;
+             ++material_index) {
+            const ufbx_mesh_material *material =
+                &mesh->materials.data[material_index];
+            JPBSoftwareLevelBatch *batch;
+            ufbx_string texture;
+            JPBLevelFbxMeshPass pass;
+            size_t face_list_index;
+            size_t first_vertex = vertex_index;
+            size_t material_vertex_count;
+            float uv_scroll_u;
+            float uv_scroll_v;
+
+            if (!pc_fbx_material_vertex_count(
+                    mesh, material, &material_vertex_count)) {
+                pc_fbx_error(error_text, error_text_capacity, "invalid FBX material index stream");
+                jpb_PCFreeFbxLevel(level);
+                return 0;
+            }
+            if (material_vertex_count == 0) {
+                continue;
+            }
+            texture = pc_fbx_texture_filename(material->material);
+            pc_fbx_copy_basename(
+                level->textureNames[batch_index],
+                sizeof(level->textureNames[batch_index]),
+                texture.data,
+                texture.length);
+            pc_fbx_copy_string(
+                level->meshNames[batch_index],
+                sizeof(level->meshNames[batch_index]),
+                node->name);
+            pass = pc_fbx_material_pass(
+                level->textureNames[batch_index], level_index);
+            jpb_LevelFbxUvScroll(
+                level_index,
+                level->textureNames[batch_index],
+                &uv_scroll_u,
+                &uv_scroll_v);
+
+            for (face_list_index = 0;
+                 face_list_index < material->face_indices.count;
+                 ++face_list_index) {
+                uint32_t face_index =
+                    material->face_indices.data[face_list_index];
+                ufbx_face face = mesh->faces.data[face_index];
+                uint32_t corner;
+
+                for (corner = 0; corner < face.num_indices; ++corner) {
+                    if (vertex_index - first_vertex >=
+                        material_vertex_count) {
+                        break;
+                    }
+                    if (vertex_index >= vertex_count ||
+                        !pc_fbx_write_vertex(
+                            mesh,
+                            face.index_begin + corner,
+                            level_index,
+                            uv_scroll_u,
+                            uv_scroll_v,
+                            &level->vertices[vertex_index++])) {
+                        pc_fbx_error(error_text, error_text_capacity, "invalid FBX vertex data");
+                        jpb_PCFreeFbxLevel(level);
+                        return 0;
+                    }
+                }
+            }
+            batch = &level->batches[batch_index];
+            batch->vertices = &level->vertices[first_vertex];
+            batch->vertexCount = vertex_index - first_vertex;
+            batch->textureName = level->textureNames[batch_index];
+            batch->meshName = level->meshNames[batch_index];
+            batch->pass = pass;
+            if (pass == JPB_LEVEL_FBX_PASS_OPAQUE) {
+                batch->meshIndex = mesh_index;
+                batch->meshCount = mesh_count;
+            } else {
+                batch->meshIndex = pass_batch_index[pass]++;
+                batch->meshCount = pass_batch_count[pass];
+            }
+            ++batch_index;
+        }
+        ++mesh_index;
+    }
+    if (batch_index != batch_count || vertex_index != vertex_count) {
+        pc_fbx_error(error_text, error_text_capacity, "FBX triangle count changed during import");
+        jpb_PCFreeFbxLevel(level);
+        return 0;
+    }
+    level->mesh.batches = level->batches;
+    level->mesh.batchCount = batch_count;
+    level->mesh.levelIndex = level_index;
+    level->mesh.vertices = vertex_count;
+    level->mesh.triangles = vertex_count / 3;
+    pc_fbx_error(error_text, error_text_capacity, "");
+    return 1;
+}
+
+typedef struct PcFbxImportContext {
+    int levelIndex;
+    JPBPcFbxLevel *level;
+    char *errorText;
+    size_t errorTextCapacity;
+    int result;
+} PcFbxImportContext;
+
+static PcFbxImportContext pc_fbx_import_context;
+static int pc_fbx_import_active;
+
+static void pc_fbx_import_level_hook(
+    void *user_data, ufbx_scene *scene)
+{
+    PcFbxImportContext *context = (PcFbxImportContext *)user_data;
+
+    context->result = InitFBXLevelData(
+        scene,
+        context->levelIndex,
+        context->level,
+        context->errorText,
+        context->errorTextCapacity);
+}
+
+int jpb_PCBeginFbxLevelImport(
+    int level_index,
+    JPBPcFbxLevel *level,
+    char *error_text,
+    size_t error_text_capacity)
+{
+    if (pc_fbx_import_active || level == NULL ||
+        level_index < 0 || level_index >= JPB_LEVEL_COUNT) {
+        pc_fbx_error(
+            error_text, error_text_capacity,
+            "invalid FBX level import target");
+        return 0;
+    }
+    memset(&pc_fbx_import_context, 0, sizeof(pc_fbx_import_context));
+    pc_fbx_import_context.levelIndex = level_index;
+    pc_fbx_import_context.level = level;
+    pc_fbx_import_context.errorText = error_text;
+    pc_fbx_import_context.errorTextCapacity = error_text_capacity;
+    pc_fbx_import_active = 1;
+    jpb_WHookSetInitFBXLevelDataHook(
+        pc_fbx_import_level_hook, &pc_fbx_import_context);
+    return 1;
+}
+
+int jpb_PCEndFbxLevelImport(void)
+{
+    int result;
+
+    if (!pc_fbx_import_active) {
+        return 0;
+    }
+    jpb_WHookSetInitFBXLevelDataHook(NULL, NULL);
+    result = pc_fbx_import_context.result;
+    memset(&pc_fbx_import_context, 0, sizeof(pc_fbx_import_context));
+    pc_fbx_import_active = 0;
+    return result;
 }
 
 int jpb_PCLoadFbxLevel(
@@ -208,23 +464,13 @@ int jpb_PCLoadFbxLevel(
 {
     ufbx_error error;
     ufbx_load_opts load_opts;
-    ufbx_scene *scene = NULL;
-    size_t batch_count;
-    size_t vertex_count;
-    size_t pass_batch_count[3];
-    size_t pass_batch_index[3] = {0, 0, 0};
-    size_t mesh_count;
-    size_t node_index;
-    size_t mesh_index = 0;
-    size_t batch_index = 0;
-    size_t vertex_index = 0;
+    ufbx_scene *scene;
 
     if (path == NULL || level == NULL ||
         level_index < 0 || level_index >= JPB_LEVEL_COUNT) {
         pc_fbx_error(error_text, error_text_capacity, "invalid FBX level arguments");
         return 0;
     }
-    memset(level, 0, sizeof(*level));
     memset(&error, 0, sizeof(error));
     memset(&load_opts, 0, sizeof(load_opts));
     /* Exact loader_LevelLoad stores at matched-PC RVA 0xBC8F2..0xBC925. */
@@ -245,144 +491,15 @@ int jpb_PCLoadFbxLevel(
         }
         return 0;
     }
-    if (!pc_fbx_count_scene(
-            scene,
-            level_index,
-            &batch_count,
-            &vertex_count,
-            pass_batch_count,
-            &mesh_count)) {
-        pc_fbx_error(error_text, error_text_capacity, "FBX level contains no render triangles");
+
+    if (!jpb_PCBeginFbxLevelImport(
+            level_index, level, error_text, error_text_capacity)) {
         ufbx_free_scene(scene);
         return 0;
     }
-    level->batches = (JPBSoftwareLevelBatch *)calloc(
-        batch_count, sizeof(*level->batches));
-    level->vertices = (JPBSoftwareLevelVertex *)calloc(
-        vertex_count, sizeof(*level->vertices));
-    level->textureNames = (char (*)[256])calloc(
-        batch_count, sizeof(*level->textureNames));
-    level->meshNames = (char (*)[128])calloc(
-        batch_count, sizeof(*level->meshNames));
-    if (level->batches == NULL || level->vertices == NULL ||
-        level->textureNames == NULL || level->meshNames == NULL) {
-        pc_fbx_error(error_text, error_text_capacity, "out of memory importing FBX level");
-        ufbx_free_scene(scene);
-        jpb_PCFreeFbxLevel(level);
-        return 0;
-    }
-
-    for (node_index = 0;
-         node_index < scene->nodes.count;
-         ++node_index) {
-        const ufbx_node *node = scene->nodes.data[node_index];
-        const ufbx_mesh *mesh = node->mesh;
-        uint32_t *triangle_indices = NULL;
-        size_t material_index;
-
-        if (mesh == NULL) {
-            continue;
-        }
-        if (mesh->max_face_triangles != 0) {
-            triangle_indices = (uint32_t *)malloc(
-                mesh->max_face_triangles * 3 * sizeof(*triangle_indices));
-        }
-        if (triangle_indices == NULL) {
-            pc_fbx_error(error_text, error_text_capacity, "out of memory triangulating FBX level");
-            ufbx_free_scene(scene);
-            jpb_PCFreeFbxLevel(level);
-            return 0;
-        }
-        for (material_index = 0;
-             material_index < mesh->materials.count;
-             ++material_index) {
-            const ufbx_mesh_material *material =
-                &mesh->materials.data[material_index];
-            JPBSoftwareLevelBatch *batch;
-            ufbx_string texture;
-            JPBLevelFbxMeshPass pass;
-            size_t face_list_index;
-            size_t first_vertex = vertex_index;
-
-            if (material->num_triangles == 0) {
-                continue;
-            }
-            texture = pc_fbx_texture_filename(material->material);
-            pc_fbx_copy_basename(
-                level->textureNames[batch_index],
-                sizeof(level->textureNames[batch_index]),
-                texture.data,
-                texture.length);
-            pc_fbx_copy_string(
-                level->meshNames[batch_index],
-                sizeof(level->meshNames[batch_index]),
-                node->name);
-            pass = pc_fbx_material_pass(
-                level->textureNames[batch_index], level_index);
-
-            for (face_list_index = 0;
-                 face_list_index < material->face_indices.count;
-                 ++face_list_index) {
-                uint32_t face_index =
-                    material->face_indices.data[face_list_index];
-                ufbx_face face = mesh->faces.data[face_index];
-                uint32_t triangles = ufbx_triangulate_face(
-                    triangle_indices,
-                    mesh->max_face_triangles * 3,
-                    mesh,
-                    face);
-                uint32_t triangle;
-
-                for (triangle = 0; triangle < triangles; ++triangle) {
-                    uint32_t corner;
-
-                    for (corner = 0; corner < 3; ++corner) {
-                        if (vertex_index >= vertex_count ||
-                            !pc_fbx_write_vertex(
-                                mesh,
-                                triangle_indices[triangle * 3 + corner],
-                                level_index,
-                                &level->vertices[vertex_index++])) {
-                            pc_fbx_error(error_text, error_text_capacity, "invalid FBX vertex data");
-                            free(triangle_indices);
-                            ufbx_free_scene(scene);
-                            jpb_PCFreeFbxLevel(level);
-                            return 0;
-                        }
-                    }
-                }
-            }
-            batch = &level->batches[batch_index];
-            batch->vertices = &level->vertices[first_vertex];
-            batch->vertexCount = vertex_index - first_vertex;
-            batch->textureName = level->textureNames[batch_index];
-            batch->meshName = level->meshNames[batch_index];
-            batch->pass = pass;
-            if (pass == JPB_LEVEL_FBX_PASS_OPAQUE) {
-                batch->meshIndex = mesh_index;
-                batch->meshCount = mesh_count;
-            } else {
-                batch->meshIndex = pass_batch_index[pass]++;
-                batch->meshCount = pass_batch_count[pass];
-            }
-            ++batch_index;
-        }
-        free(triangle_indices);
-        ++mesh_index;
-    }
+    _InitFBXLevelData(scene);
     ufbx_free_scene(scene);
-    if (batch_index != batch_count || vertex_index != vertex_count) {
-        pc_fbx_error(error_text, error_text_capacity, "FBX triangle count changed during import");
-        jpb_PCFreeFbxLevel(level);
-        return 0;
-    }
-    level->mesh.batches = level->batches;
-    level->mesh.batchCount = batch_count;
-    level->mesh.levelIndex = level_index;
-    level->mesh.vertices = vertex_count;
-    level->mesh.triangles = vertex_count / 3;
-    pc_fbx_error(error_text, error_text_capacity, "");
-    return 1;
+    return jpb_PCEndFbxLevelImport();
 }
 
 void jpb_PCFreeFbxLevel(JPBPcFbxLevel *level)

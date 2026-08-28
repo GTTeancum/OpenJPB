@@ -56,12 +56,16 @@ static void clear_physics_player_pool(void)
 }
 
 static uint16_t capture_sound(
+    void *chunk,
+    int loops,
     VECTOR *position,
     int bank_id,
     char *sound,
     uint32_t flag,
     void *user_data)
 {
+    (void)chunk;
+    (void)loops;
     (void)flag;
     (void)user_data;
     ++sound_calls;
@@ -524,8 +528,20 @@ static int test_sprite_backed_projectile(void)
     CHECK(parent->sp_SCB->scb_vertex0.vz == 300.0f);
     CHECK(parent->sp_SCB->scb_vertex1.vz == 290.0f);
     CHECK(parent->sp_SCB->scb_vertex2.vy == 198.0f);
-    CHECK(rotation.vy == 0x400);
-    CHECK(child->sp_Rot.vy == 0x400);
+    CHECK(rotation.vz == 0x400);
+    CHECK(child->sp_Rot.vz == 0x400);
+    CHECK(child->sp_SCB->scb_vertex0.vx == 98.0f);
+    CHECK(child->sp_SCB->scb_vertex0.vy == 200.0f);
+    CHECK(child->sp_SCB->scb_vertex0.vz == 300.0f);
+    CHECK(child->sp_SCB->scb_vertex1.vx == 98.0f);
+    CHECK(child->sp_SCB->scb_vertex1.vy == 200.0f);
+    CHECK(child->sp_SCB->scb_vertex1.vz == 290.0f);
+    CHECK(child->sp_SCB->scb_vertex2.vx == 102.0f);
+    CHECK(child->sp_SCB->scb_vertex2.vy == 200.0f);
+    CHECK(child->sp_SCB->scb_vertex2.vz == 300.0f);
+    CHECK(child->sp_SCB->scb_vertex3.vx == 102.0f);
+    CHECK(child->sp_SCB->scb_vertex3.vy == 200.0f);
+    CHECK(child->sp_SCB->scb_vertex3.vz == 290.0f);
 
     sprite_RemoveProjectile(proj);
     CHECK((parent->sp_Flags & 1) != 0);
@@ -678,14 +694,22 @@ static int test_starfighter_twin_shot(void)
     types[2].speed = 32;
     bullet_InitProjectilePool();
     sound_calls = 0;
+    sound_FreeBank(0);
+    sound_FreeBank(3);
+    CHECK(sound_LoadBank("fed", 0) == 0);
+    CHECK(sound_LoadBank("theed", 3) == 0);
     jpb_SoundSetPlaySfxHook(capture_sound, NULL);
 
     srand(1);
     boss_StarFighterBlaster(&player, 0);
-    CHECK(sound_calls == 3);
+    CHECK(sound_calls == 4);
     CHECK(strcmp(sound_name, "tankfire") == 0);
 
     jpb_SoundSetPlaySfxHook(NULL, NULL);
+    sound_FreeBank(0);
+    sound_FreeBank(3);
+    CHECK(sound_LoadBank("resident", 0) == 0);
+    CHECK(sound_LoadBank("resident", 3) == 0);
     return 0;
 }
 
@@ -699,6 +723,8 @@ static int test_projectile_reflection(void)
     sceneObject target_scene;
     physicsObject owner_physics;
     physicsObject target_physics;
+    Motion target_motion;
+    Motion *target_motion_ptr = &target_motion;
     Mnode hit_node;
     Mnode saber_node;
     _Material material;
@@ -715,6 +741,7 @@ static int test_projectile_reflection(void)
     memset(&target_scene, 0, sizeof(target_scene));
     memset(&owner_physics, 0, sizeof(owner_physics));
     memset(&target_physics, 0, sizeof(target_physics));
+    memset(&target_motion, 0, sizeof(target_motion));
     memset(&hit_node, 0, sizeof(hit_node));
     memset(&saber_node, 0, sizeof(saber_node));
     memset(&material, 0, sizeof(material));
@@ -732,6 +759,7 @@ static int test_projectile_reflection(void)
     target.playerID = 0;
     target.playerRoot.objectID = 0;
     target.playerRoot.pParent = &target_scene.sceneRoot;
+    target.pMotion = &target_motion_ptr;
     target_scene.pPlayer = &target.playerRoot;
     target_scene.pPhysics = &target_physics.physicsRoot;
     target.paNodesSizes = &collision;
@@ -778,7 +806,7 @@ static int test_projectile_reflection(void)
     CHECK(proj->pj_Range == 60);
     CHECK(proj->pj_Parent != NULL);
     CHECK(proj->pj_Child != NULL);
-    CHECK(sound_calls == 2);
+    CHECK(sound_calls == 1);
     CHECK(sound_position == &target_physics.vpos);
     CHECK(sound_bank == 0);
     CHECK(strcmp(sound_name, "rico1") == 0);
@@ -871,7 +899,7 @@ static int test_jedi_weapon_callbacks(void)
     coll_gRegisterNode(player.playernum, &aim);
     effects1Handle[3] = &material;
     configure_callback_projectile_type(
-        &types[2], 3, "jedifire");
+        &types[2], 3, "jedihit");
     sound_calls = 0;
     sound_position = NULL;
     memset(sound_name, 0, sizeof(sound_name));
@@ -880,7 +908,7 @@ static int test_jedi_weapon_callbacks(void)
     CHECK(jedi_FireWeapon(NULL, &player) == 0);
     CHECK(sound_calls == 1);
     CHECK(sound_position == &muzzle.v3RotCenter);
-    CHECK(strcmp(sound_name, "jedifire") == 0);
+    CHECK(strcmp(sound_name, "jedihit") == 0);
 
     meminit();
     sprite_gInitSprites();
@@ -905,7 +933,7 @@ static int test_jedi_weapon_callbacks(void)
     coll_gRegisterNode(player.playernum, &muzzle);
     coll_gRegisterNode(player.playernum, &aim);
     configure_callback_projectile_type(
-        &types[10], 3, "flame");
+        &types[10], 3, "sabrhit1");
     sound_calls = 0;
     sound_position = NULL;
     memset(sound_name, 0, sizeof(sound_name));
@@ -914,7 +942,7 @@ static int test_jedi_weapon_callbacks(void)
     CHECK(jedi_FireWeapon(NULL, &player) == 0);
     CHECK(sound_calls == 1);
     CHECK(sound_position == &muzzle.v3RotCenter);
-    CHECK(strcmp(sound_name, "flame") == 0);
+    CHECK(strcmp(sound_name, "sabrhit1") == 0);
 
     coll_ResetCollisionSystem();
     memset(&muzzle, 0, sizeof(muzzle));
@@ -952,7 +980,7 @@ static int test_jedi_weapon_callbacks(void)
     coll_gRegisterNode(player.playernum, &muzzle);
     coll_gRegisterNode(player.playernum, &aim);
     configure_callback_projectile_type(
-        &types[16], 3, "pushshot");
+        &types[16], 3, "sabrsw01");
     sound_calls = 0;
     sound_position = NULL;
     memset(sound_name, 0, sizeof(sound_name));
@@ -961,7 +989,7 @@ static int test_jedi_weapon_callbacks(void)
     CHECK(game_gGetForce(0) == 80);
     CHECK(sound_calls == 1);
     CHECK(sound_position == &muzzle.v3RotCenter);
-    CHECK(strcmp(sound_name, "pushshot") == 0);
+    CHECK(strcmp(sound_name, "sabrsw01") == 0);
 
     meminit();
     sprite_gInitSprites();
@@ -989,7 +1017,7 @@ static int test_jedi_weapon_callbacks(void)
     coll_gRegisterNode(player.playernum, &aim);
     coll_gRegisterNode(player.playernum, &aim2);
     configure_callback_projectile_type(
-        &types[28], 3, "range3");
+        &types[28], 3, "rico2");
     sound_calls = 0;
     sound_position = NULL;
     memset(sound_name, 0, sizeof(sound_name));
@@ -998,7 +1026,7 @@ static int test_jedi_weapon_callbacks(void)
     CHECK(game_gGetForce(0) == 60);
     CHECK(sound_calls == 2);
     CHECK(sound_position == &muzzle.v3RotCenter);
-    CHECK(strcmp(sound_name, "range3") == 0);
+    CHECK(strcmp(sound_name, "rico2") == 0);
 
     meminit();
     sprite_gInitSprites();
@@ -1012,7 +1040,7 @@ static int test_jedi_weapon_callbacks(void)
     physics.vpos.vy = 260;
     physics.vpos.vz = 360;
     configure_callback_projectile_type(
-        &types[11], 3, "ringfire");
+        &types[11], 3, "rico4");
     LevelSelect = 9;
     sound_calls = 0;
     sound_position = NULL;
@@ -1022,7 +1050,7 @@ static int test_jedi_weapon_callbacks(void)
     CHECK(game_gGetForce(0) == 85);
     CHECK(sound_calls == 1);
     CHECK(sound_position == &physics.vpos);
-    CHECK(strcmp(sound_name, "ringfire") == 0);
+    CHECK(strcmp(sound_name, "rico4") == 0);
 
     meminit();
     sprite_gInitSprites();
@@ -1041,7 +1069,7 @@ static int test_jedi_weapon_callbacks(void)
     aim.v3RotCenter.vz = 380;
     coll_gRegisterNode(player.playernum, &aim);
     configure_callback_projectile_type(
-        &types[6], 3, "tossfire");
+        &types[6], 3, "bodyfal1");
     sound_calls = 0;
     sound_position = NULL;
     memset(sound_name, 0, sizeof(sound_name));
@@ -1050,7 +1078,7 @@ static int test_jedi_weapon_callbacks(void)
     CHECK(GameStruct.aCharacterData[0].Items == 1);
     CHECK(sound_calls == 1);
     CHECK(sound_position == &aim.v3RotCenter);
-    CHECK(strcmp(sound_name, "tossfire") == 0);
+    CHECK(strcmp(sound_name, "bodyfal1") == 0);
 
     GameStruct.aCharacterData[0].Energy = 0;
     physics.vpos.vx = 190;
@@ -1062,10 +1090,7 @@ static int test_jedi_weapon_callbacks(void)
 
     CHECK(force_TossCallBack(NULL, &player) == 1);
     CHECK(GameStruct.aCharacterData[0].Items == 1);
-    CHECK(sound_calls == 1);
-    CHECK(sound_position == &physics.vpos);
-    CHECK(sound_bank == 1);
-    CHECK(strcmp(sound_name, "none") == 0);
+    CHECK(sound_calls == 0);
 
     meminit();
     sprite_gInitSprites();
@@ -1154,7 +1179,7 @@ static int test_ai_fire_weapon_callback(void)
     coll_gRegisterNode(2, &target_body);
     effects1Handle[3] = &material;
     configure_callback_projectile_type(
-        &types[0x13], 3, "aifire");
+        &types[0x13], 3, "explomed");
     sound_calls = 0;
     sound_position = NULL;
     memset(sound_name, 0, sizeof(sound_name));
@@ -1164,7 +1189,7 @@ static int test_ai_fire_weapon_callback(void)
     CHECK(ai_FireWeapon(NULL, &player) == 1);
     CHECK(sound_calls == 1);
     CHECK(sound_position == &muzzle.v3RotCenter);
-    CHECK(strcmp(sound_name, "aifire") == 0);
+    CHECK(strcmp(sound_name, "explomed") == 0);
 
     model.flags = 0;
     model.eventMask = 0;
@@ -1178,6 +1203,10 @@ static int test_ai_fire_weapon_callback(void)
 
 int main(void)
 {
+    if (sound_LoadBank("resident", 0) != 0) return 1;
+    if (sound_LoadBank("theed", 1) != 0) return 1;
+    if (sound_LoadBank("resident", 2) != 0) return 1;
+    if (sound_LoadBank("resident", 3) != 0) return 1;
     if (test_terminate_sfx_string() != 0) return 1;
     if (test_allocate_and_free() != 0) return 1;
     if (test_sound_name_initialization() != 0) return 1;
@@ -1193,6 +1222,10 @@ int main(void)
     if (test_projectile_reflection() != 0) return 1;
     if (test_jedi_weapon_callbacks() != 0) return 1;
     if (test_ai_fire_weapon_callback() != 0) return 1;
+    sound_FreeBank(0);
+    sound_FreeBank(1);
+    sound_FreeBank(2);
+    sound_FreeBank(3);
     puts("bullet tests passed");
     return 0;
 }

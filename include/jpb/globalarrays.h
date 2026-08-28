@@ -16,13 +16,17 @@ enum {
     JPB_POINTER_ARRAY_ENEMY = 6
 };
 
+extern int vertexPointerCount;
+extern int normalPointerCount;
+extern int uvPointerCount;
+extern int colorPointerCount;
+extern int indexPointerCount;
+extern int aiPArrayCount;
+extern int wslEnemyPointerCount;
+
 int addPtr(void *pointer, int type);
 void *getPtr(int index, int type);
-
-/*
- * Portable registry-only reset. The reference initArrays also resets unrelated
- * rendering counters that have not yet been reconstructed.
- */
+void initArrays(void);
 void pointerRegistry_Reset(void);
 
 #ifdef __cplusplus

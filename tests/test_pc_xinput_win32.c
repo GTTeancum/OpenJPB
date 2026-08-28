@@ -114,38 +114,30 @@ static int test_directions_and_thresholds(void)
     uint32_t bits;
 
     memset(&gamepad, 0, sizeof(gamepad));
-    gamepad.thumbLX = 655;
+    gamepad.thumbLX = 4128;
     bits = jpb_PCXInputMapGamepad(
-        &gamepad, 2, 8, 1, 0, &axis_x, &axis_y);
+        &gamepad, 0, 1, 1, 0, &axis_x, &axis_y);
     CHECK(bits == 0);
     CHECK(axis_x == 0.0f && axis_y == 0.0f);
 
-    gamepad.thumbLX = 1000;
+    gamepad.thumbLX = 4129;
     bits = jpb_PCXInputMapGamepad(
-        &gamepad, 8, 2, 1, 0, &axis_x, &axis_y);
-    CHECK(bits == 0);
-    CHECK(axis_x == 0.0f && axis_y == 0.0f);
-
-    gamepad.thumbLX = 656;
-    bits = jpb_PCXInputMapGamepad(
-        &gamepad, 2, 8, 1, 0, &axis_x, &axis_y);
-    CHECK((bits & JPB_PAD_LEFT) != 0);
-    CHECK((bits & JPB_PAD_ANALOG_MOVEMENT) == 0);
-    CHECK(axis_x > 0.020f && axis_x < 0.021f);
-    CHECK(axis_y == 0.0f);
-
-    gamepad.thumbLX = 2621;
-    bits = jpb_PCXInputMapGamepad(
-        &gamepad, 2, 8, 1, 0, &axis_x, &axis_y);
+        &gamepad, 0, 1, 1, 0, &axis_x, &axis_y);
     CHECK((bits & JPB_PAD_LEFT) != 0);
     CHECK((bits & JPB_PAD_ANALOG_MOVEMENT) == 0);
 
-    gamepad.thumbLX = 2622;
+    gamepad.thumbLX = 6708;
     bits = jpb_PCXInputMapGamepad(
-        &gamepad, 2, 8, 1, 0, &axis_x, &axis_y);
+        &gamepad, 0, 1, 1, 0, &axis_x, &axis_y);
+    CHECK((bits & JPB_PAD_LEFT) != 0);
+    CHECK((bits & JPB_PAD_ANALOG_MOVEMENT) == 0);
+
+    gamepad.thumbLX = 6709;
+    bits = jpb_PCXInputMapGamepad(
+        &gamepad, 0, 1, 1, 0, &axis_x, &axis_y);
     CHECK((bits & JPB_PAD_LEFT) != 0);
     CHECK((bits & JPB_PAD_ANALOG_MOVEMENT) != 0);
-    CHECK(axis_x > 0.080f && axis_x < 0.081f);
+    CHECK(axis_x > 0.204f && axis_x < 0.205f);
     CHECK(axis_y == 0.0f);
 
     memset(&gamepad, 0, sizeof(gamepad));
@@ -171,26 +163,26 @@ static int test_directions_and_thresholds(void)
 
     /* D-pad contributions are added to the live analog values. */
     memset(&gamepad, 0, sizeof(gamepad));
-    gamepad.thumbLX = 1000;
+    gamepad.thumbLX = 6000;
     gamepad.buttons = JPB_PC_XINPUT_DPAD_RIGHT;
     bits = jpb_PCXInputMapGamepad(
-        &gamepad, 2, 8, 1, 0, &axis_x, &axis_y);
+        &gamepad, 0, 8, 1, 0, &axis_x, &axis_y);
     CHECK((bits & JPB_PAD_LEFT) != 0);
     CHECK((bits & JPB_PAD_ANALOG_MOVEMENT) == 0);
-    CHECK(axis_x > 1.030f && axis_x < 1.031f);
+    CHECK(axis_x > 1.183f && axis_x < 1.184f);
 
-    /* Percentages above 100 are clamped exactly as ReadJoystickInput. */
+    /* Table entry eight remains the canonical 106 / 127 threshold. */
     memset(&gamepad, 0, sizeof(gamepad));
     gamepad.thumbLX = 32767;
     bits = jpb_PCXInputMapGamepad(
-        &gamepad, 255, 255, 1, 0, &axis_x, &axis_y);
-    CHECK(bits == 0);
-    CHECK(axis_x == 0.0f && axis_y == 0.0f);
+        &gamepad, 8, 8, 1, 0, &axis_x, &axis_y);
+    CHECK(bits == (JPB_PAD_LEFT | JPB_PAD_ANALOG_MOVEMENT));
+    CHECK(axis_x == 1.0f && axis_y == 0.0f);
 
     /* RAND_MAX normalization preserves SDL's asymmetric negative endpoint. */
     gamepad.thumbLX = INT16_MIN;
     bits = jpb_PCXInputMapGamepad(
-        &gamepad, 255, 255, 1, 0, &axis_x, &axis_y);
+        &gamepad, 8, 8, 1, 0, &axis_x, &axis_y);
     CHECK(bits == (JPB_PAD_RIGHT | JPB_PAD_ANALOG_MOVEMENT));
     CHECK(axis_x < -1.0f && axis_x > -1.001f);
     CHECK(axis_y == 0.0f);
@@ -223,7 +215,7 @@ static int test_exact_gameplay_keyboard_layout(void)
     keyboard.comboWest = 1;
     keyboard.comboNorth = 1;
     keyboard.lockOn = 1;
-    keyboard.start = 1;
+    keyboard.escape = 1;
     bits = jpb_PCMapGameplayKeyboard(&keyboard, &axis_x, &axis_y);
     CHECK(bits ==
           (JPB_PAD_DOWN | JPB_PAD_LEFT | JPB_PAD_ZOOM_IN |
@@ -247,7 +239,7 @@ static int test_exact_gameplay_keyboard_layout(void)
     CHECK(jpb_PCMapGameplayKeyboard(&keyboard, NULL, NULL) == 0x85u);
     memset(&keyboard, 0, sizeof(keyboard));
     keyboard.block = 1;
-    keyboard.jump = 1;
+    keyboard.space = 1;
     CHECK(jpb_PCMapGameplayKeyboard(&keyboard, NULL, NULL) == 0x125u);
     return 0;
 }
@@ -262,12 +254,12 @@ static int test_exact_menu_keyboard_layout(void)
         &keyboard, 1, 0, NULL, NULL) == JPB_PAD_BLOCK);
 
     memset(&keyboard, 0, sizeof(keyboard));
-    keyboard.start = 1;
+    keyboard.escape = 1;
     CHECK(jpb_PCMapKeyboard(
         &keyboard, 1, 0, NULL, NULL) == JPB_PAD_JUMP);
 
     memset(&keyboard, 0, sizeof(keyboard));
-    keyboard.jump = 1;
+    keyboard.space = 1;
     CHECK(jpb_PCMapKeyboard(
         &keyboard, 1, 0, NULL, NULL) == JPB_PAD_START);
     CHECK(jpb_PCMapKeyboard(
@@ -371,13 +363,13 @@ static int test_sparse_physical_user_routing(void)
     CHECK(bits == JPB_PAD_COMBO_SOUTH);
     CHECK(axis_x == 0.0f && axis_y == 0.0f);
     fake_xinput.states[2].gamepad.buttons = 0;
-    fake_xinput.states[2].gamepad.thumbLX = 10000;
+    fake_xinput.states[2].gamepad.thumbLX = 12000;
     fake_xinput.states[2].gamepad.thumbLY = 0;
     CHECK(jpb_PCXInputReadUser(
         &xinput, player_one_user, 2, 8, 0, 0,
         &bits, &axis_x, &axis_y));
-    CHECK(bits == (JPB_PAD_LEFT | JPB_PAD_ANALOG_MOVEMENT));
-    CHECK(axis_x > 0.086f && axis_x < 0.087f);
+    CHECK(bits == JPB_PAD_LEFT);
+    CHECK(axis_x > 0.366f && axis_x < 0.367f);
     CHECK(axis_y == 0.0f);
     CHECK(jpb_PCXInputReadUser(
         &xinput, player_two_user, 2, 8, 0, 0,

@@ -1,5 +1,6 @@
 #include "jpb/braindmg.h"
 #include "jpb/anim.h"
+#include "jpb/collision.h"
 #include "jpb/effects.h"
 #include "jpb/game.h"
 #include "jpb/jonny.h"
@@ -13,6 +14,31 @@
 #include <string.h>
 
 static int failures;
+static uint32_t test_pose_words[3];
+
+static void init_test_animations(void)
+{
+    int index;
+
+    (anim_InitAnimations)(0);
+    for (index = 0; index < JPB_ANIMATION_CAPACITY; ++index) {
+        maAnimationData[index].depack_context.huffdataorigin =
+            test_pose_words;
+        maAnimationData[index].depack_context3.huffdataorigin =
+            test_pose_words;
+    }
+}
+
+static void init_test_templates(
+    _animTemplate *templates, size_t count)
+{
+    size_t index;
+
+    memset(templates, 0, count * sizeof(*templates));
+    for (index = 0; index < count; ++index) {
+        templates[index].Lframe = 10;
+    }
+}
 
 #define CHECK(condition) \
     do { \
@@ -154,7 +180,8 @@ static int test_player_block_reaction(void)
     memset(&physics, 0, sizeof(physics));
     memset(motions, 0, sizeof(motions));
     memset(&hit_motion, 0, sizeof(hit_motion));
-    memset(templates, 0, sizeof(templates));
+    init_test_templates(
+        templates, sizeof(templates) / sizeof(templates[0]));
     memset(&GameStruct, 0, sizeof(GameStruct));
     memset(damageTracking, 0, sizeof(damageTracking));
     memset(jediUpgrades, 0, sizeof(jediUpgrades));
@@ -185,7 +212,7 @@ static int test_player_block_reaction(void)
         templates[i].Lframe = 10;
     }
 
-    anim_InitAnimations(0);
+    init_test_animations();
     animation = &maAnimationData[0];
     animation->animRoot.pParent = &scene.sceneRoot;
     animation->depack_context.seqdata = templates;
@@ -216,7 +243,7 @@ static int test_player_block_reaction(void)
 
     /* The PDB-backed accumulated-damage threshold rejects a normal block
      * above 128, while one defense upgrade raises that boundary to 133. */
-    anim_InitAnimations(0);
+    init_test_animations();
     animation = &maAnimationData[0];
     animation->animRoot.pParent = &scene.sceneRoot;
     animation->depack_context.seqdata = templates;
@@ -245,7 +272,7 @@ static int test_player_block_reaction(void)
      * deliberately stop after the condition's fStun mutation, isolating
      * relationship ownership from animation activation.
      */
-    anim_InitAnimations(0);
+    init_test_animations();
     animation = &maAnimationData[0];
     animation->animRoot.pParent = &scene.sceneRoot;
     animation->depack_context.seqdata = templates;
@@ -275,7 +302,7 @@ static int test_player_block_reaction(void)
     motions[17].Seq = 17;
     motions[18].Seq = 18;
 
-    anim_InitAnimations(0);
+    init_test_animations();
     animation = &maAnimationData[0];
     animation->animRoot.pParent = &scene.sceneRoot;
     animation->depack_context.seqdata = templates;
@@ -318,7 +345,8 @@ static int test_forced_death_effect(void)
     memset(&physics, 0, sizeof(physics));
     memset(motions, 0, sizeof(motions));
     memset(&hit_motion, 0, sizeof(hit_motion));
-    memset(templates, 0, sizeof(templates));
+    init_test_templates(
+        templates, sizeof(templates) / sizeof(templates[0]));
     memset(&effect, 0, sizeof(effect));
     memset(&GameStruct, 0, sizeof(GameStruct));
 
@@ -343,7 +371,7 @@ static int test_forced_death_effect(void)
     }
     motions[23].fx1 = -1;
 
-    anim_InitAnimations(0);
+    init_test_animations();
     animation = &maAnimationData[0];
     animation->animRoot.pParent = &scene.sceneRoot;
     animation->depack_context.seqdata = templates;
@@ -368,6 +396,106 @@ static int test_forced_death_effect(void)
     return 0;
 }
 
+static int test_droid_death_detaches_node(void)
+{
+    static WorldData world;
+    playerObject player;
+    sceneObject scene;
+    physicsObject physics;
+    Motion motions[52];
+    Motion hit_motion;
+    Motion *current_motion = &motions[0];
+    _animTemplate templates[52];
+    animObject *animation;
+    EffectHeader effect;
+    EffectHeader *saved_effect;
+    Mnode head;
+    unsigned seed;
+    int expected_x;
+    int expected_z;
+    int i;
+
+    memset(&world, 0, sizeof(world));
+    memset(&player, 0, sizeof(player));
+    memset(&scene, 0, sizeof(scene));
+    memset(&physics, 0, sizeof(physics));
+    memset(motions, 0, sizeof(motions));
+    memset(&hit_motion, 0, sizeof(hit_motion));
+    init_test_templates(
+        templates, sizeof(templates) / sizeof(templates[0]));
+    memset(&effect, 0, sizeof(effect));
+    memset(&head, 0, sizeof(head));
+    memset(&GameStruct, 0, sizeof(GameStruct));
+
+    gpWorld = &world;
+    player.playerRoot.pParent = &scene.sceneRoot;
+    player.playerRoot.objectID = 2;
+    player.playernum = 2;
+    player.playerID = 17;
+    player.paMotions = motions;
+    player.maxMotions = 52;
+    player.oldmaxCMotions = 52;
+    player.hitMotion = &hit_motion;
+    player.pMotion = &current_motion;
+    player.hitVelocity.vx = 11;
+    player.hitVelocity.vz = 13;
+    scene.pPhysics = &physics.physicsRoot;
+    scene.pPlayer = &player.playerRoot;
+    physics.physicsRoot.pParent = &scene.sceneRoot;
+    hit_motion.fx1 = -1;
+    for (i = 0; i < 52; ++i) {
+        motions[i].Seq = (uint16_t)i;
+        motions[i].Speed = -1;
+        templates[i].Lframe = 10;
+    }
+    motions[23].fx1 = -1;
+
+    init_test_animations();
+    animation = &maAnimationData[0];
+    animation->animRoot.pParent = &scene.sceneRoot;
+    animation->depack_context.seqdata = templates;
+    scene.pAnim = &animation->animRoot;
+    coll_ResetCollisionSystem();
+    head.id = (modelNodeId)(NODE_DYNAMIC | 7);
+    head.v3RotCenter.vx = 100;
+    head.v3RotCenter.vy = 200;
+    head.v3RotCenter.vz = 300;
+    coll_gRegisterNode(player.playerRoot.objectID, &head);
+    saved_effect = paEffects[2];
+    paEffects[2] = &effect;
+
+    CHECK(braindmg_DamageControl(&player) == 0);
+    for (seed = 0; seed < 10000; ++seed) {
+        srand(seed);
+        if (rand() % 100 < 30) {
+            break;
+        }
+    }
+    CHECK(seed < 10000);
+    srand(seed);
+    (void)rand();
+    expected_x = rand() % 4 - 8;
+    expected_z = rand() % 4 - 8;
+    srand(seed);
+
+    CHECK(braindmg_DeathReaction(&player, NULL) == 1);
+    CHECK((head.flags & UINT32_C(0x04000000)) != 0);
+    CHECK(head.v3Translation2.vx == 100);
+    CHECK(head.v3Translation2.vy == 200);
+    CHECK(head.v3Translation2.vz == 300);
+    CHECK(head.v3Velocity2.vx == expected_x);
+    CHECK(head.v3Velocity2.vy == 32);
+    CHECK(head.v3Velocity2.vz == expected_z);
+    CHECK(head.time == 0);
+    CHECK(player.groundDelay == gGlobalTimer + UINT32_C(0x2800));
+    CHECK((motions[23].motionFlags & UINT32_C(0x04000000)) != 0);
+    CHECK((player.pFlags & UINT32_C(0x400)) != 0);
+
+    paEffects[2] = saved_effect;
+    coll_ResetCollisionSystem();
+    return 0;
+}
+
 int main(void)
 {
     playerObject player;
@@ -386,6 +514,7 @@ int main(void)
     CHECK(test_damage_control() == 0);
     CHECK(test_player_block_reaction() == 0);
     CHECK(test_forced_death_effect() == 0);
+    CHECK(test_droid_death_detaches_node() == 0);
 
     memset(&player, 0, sizeof(player));
     memset(&attacker, 0, sizeof(attacker));
@@ -395,7 +524,8 @@ int main(void)
     memset(&player_physics, 0, sizeof(player_physics));
     memset(&target_physics, 0, sizeof(target_physics));
     memset(motions, 0, sizeof(motions));
-    memset(templates, 0, sizeof(templates));
+    init_test_templates(
+        templates, sizeof(templates) / sizeof(templates[0]));
     memset(damageTracking, 0, sizeof(damageTracking));
 
     player.playerRoot.objectID = 0;
@@ -436,7 +566,7 @@ int main(void)
     CHECK(braindmg_FindHitReaction(
               &player, &target, 0) == -37);
 
-    anim_InitAnimations(0);
+    init_test_animations();
     animation = &maAnimationData[0];
     player_scene.pAnim = &animation->animRoot;
     player_scene.pPlayer = &player.playerRoot;
@@ -460,8 +590,7 @@ int main(void)
     player_physics.flags = 0;
     gGlobalTimer = 1000;
     mDrawingSurfaceId = 0;
-    jpb_TrajectoryCallbackSlot =
-        trajectory_callback;
+    funcArray[6] = trajectory_callback;
     CHECK(braindmg_AirHitReaction(
               &player, &target) == 1);
     CHECK(player.currentMotion == 49);

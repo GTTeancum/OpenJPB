@@ -1,5 +1,5 @@
 /*
- * GENERATED RECONSTRUCTION SHELL - no function bodies recovered here.
+ * COMPLETE REVIEWED RECONSTRUCTION
  * PDB module: 0041
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\globalarrays.obj
  * Primary source: W:\SWJediPowerBattles\work\globalarrays.cpp
@@ -9,89 +9,118 @@
  * Use inventory/function_map.tsv with ExportReconstruction.java.
  */
 
+#include "jpb/globalarrays.h"
+
+#include <algorithm>
+#include <climits>
+#include <set>
+#include <vector>
+
+int vertexPointerCount;
+int normalPointerCount;
+int uvPointerCount;
+int colorPointerCount;
+int indexPointerCount;
+int aiPArrayCount;
+int wslEnemyPointerCount;
+
 /* 0x1050, 54 bytes, local, 1 named locals
  * `dynamic initializer for 'aiPArraySet''
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\globalarrays.cpp
  */
+std::set<void *> aiPArraySet = {};
 
 /* 0x1090, 12 bytes, local, 0 named locals
  * `dynamic initializer for 'aiPArrayVec''
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\globalarrays.cpp
  */
+std::vector<void *> aiPArrayVec = {};
 
 /* 0x10A0, 54 bytes, local, 1 named locals
  * `dynamic initializer for 'colorPointerSet''
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\globalarrays.cpp
  */
+std::set<void *> colorPointerSet = {};
 
 /* 0x10E0, 12 bytes, local, 0 named locals
  * `dynamic initializer for 'colorPointerVec''
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\globalarrays.cpp
  */
+std::vector<void *> colorPointerVec = {};
 
 /* 0x10F0, 54 bytes, local, 1 named locals
  * `dynamic initializer for 'indexPointerSet''
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\globalarrays.cpp
  */
+std::set<void *> indexPointerSet = {};
 
 /* 0x1130, 12 bytes, local, 0 named locals
  * `dynamic initializer for 'indexPointerVec''
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\globalarrays.cpp
  */
+std::vector<void *> indexPointerVec = {};
 
 /* 0x1140, 54 bytes, local, 1 named locals
  * `dynamic initializer for 'normalPointerSet''
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\globalarrays.cpp
  */
+std::set<void *> normalPointerSet = {};
 
 /* 0x1180, 12 bytes, local, 0 named locals
  * `dynamic initializer for 'normalPointerVec''
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\globalarrays.cpp
  */
+std::vector<void *> normalPointerVec = {};
 
 /* 0x1190, 54 bytes, local, 1 named locals
  * `dynamic initializer for 'uvPointerSet''
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\globalarrays.cpp
  */
+std::set<void *> uvPointerSet = {};
 
 /* 0x11D0, 12 bytes, local, 0 named locals
  * `dynamic initializer for 'uvPointerVec''
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\globalarrays.cpp
  */
+std::vector<void *> uvPointerVec = {};
 
 /* 0x11E0, 54 bytes, local, 1 named locals
  * `dynamic initializer for 'vertexPointerSet''
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\globalarrays.cpp
  */
+std::set<void *> vertexPointerSet = {};
 
 /* 0x1220, 12 bytes, local, 0 named locals
  * `dynamic initializer for 'vertexPointerVec''
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\globalarrays.cpp
  */
+std::vector<void *> vertexPointerVec = {};
 
 /* 0x1230, 54 bytes, local, 1 named locals
  * `dynamic initializer for 'wslEnemyPointerSet''
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\globalarrays.cpp
  */
+std::set<void *> wslEnemyPointerSet = {};
 
 /* 0x1270, 12 bytes, local, 0 named locals
  * `dynamic initializer for 'wslEnemyPointerVec''
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\globalarrays.cpp
  */
+std::vector<void *> wslEnemyPointerVec = {};
 
 /* 0xAD4A0, 48 bytes, global, 4 named locals
  * std::_Copy_memmove<void * *,void * *>
@@ -176,18 +205,128 @@
  * PDB type: int (void*, int)
  * Source: W:\SWJediPowerBattles\work\globalarrays.cpp
  */
+extern "C" int addPtr(void *pointer, int type)
+{
+#define JPB_ADD_POINTER(pointer_set, pointer_vector)                         \
+    do                                                                      \
+    {                                                                       \
+        if ((pointer_set).find(pointer) == (pointer_set).end())             \
+        {                                                                   \
+            (pointer_set).insert(pointer);                                  \
+            (pointer_vector).push_back(pointer);                            \
+            return static_cast<int>((pointer_vector).size()) - 1;           \
+        }                                                                   \
+        return static_cast<int>(                                            \
+            std::find(                                                      \
+                (pointer_vector).begin(),                                   \
+                (pointer_vector).end(),                                     \
+                pointer) -                                                  \
+            (pointer_vector).begin());                                      \
+    } while (false)
+
+    switch (type)
+    {
+        case JPB_POINTER_ARRAY_VERTEX:
+            JPB_ADD_POINTER(vertexPointerSet, vertexPointerVec);
+        case JPB_POINTER_ARRAY_NORMAL:
+            JPB_ADD_POINTER(normalPointerSet, normalPointerVec);
+        case JPB_POINTER_ARRAY_UV:
+            JPB_ADD_POINTER(uvPointerSet, uvPointerVec);
+        case JPB_POINTER_ARRAY_COLOR:
+            JPB_ADD_POINTER(colorPointerSet, colorPointerVec);
+        case JPB_POINTER_ARRAY_INDEX:
+            JPB_ADD_POINTER(indexPointerSet, indexPointerVec);
+        case JPB_POINTER_ARRAY_AI:
+            JPB_ADD_POINTER(aiPArraySet, aiPArrayVec);
+        case JPB_POINTER_ARRAY_ENEMY:
+            JPB_ADD_POINTER(wslEnemyPointerSet, wslEnemyPointerVec);
+        default:
+            return INT_MAX;
+    }
+
+#undef JPB_ADD_POINTER
+}
 
 /* 0xAE2C0, 324 bytes, global, 9 named locals
  * getPtr
  * PDB type: void* (int, int)
  * Source: W:\SWJediPowerBattles\work\globalarrays.cpp
  */
+extern "C" void *getPtr(int index, int type)
+{
+#define JPB_GET_POINTER(pointer_vector)                                     \
+    do                                                                      \
+    {                                                                       \
+        if (static_cast<std::size_t>(index) >= (pointer_vector).size())     \
+        {                                                                   \
+            return nullptr;                                                 \
+        }                                                                   \
+        return (pointer_vector)[static_cast<std::size_t>(index)];           \
+    } while (false)
+
+    if (index < 0)
+    {
+        return nullptr;
+    }
+
+    switch (type)
+    {
+        case JPB_POINTER_ARRAY_VERTEX:
+            JPB_GET_POINTER(vertexPointerVec);
+        case JPB_POINTER_ARRAY_NORMAL:
+            JPB_GET_POINTER(normalPointerVec);
+        case JPB_POINTER_ARRAY_UV:
+            JPB_GET_POINTER(uvPointerVec);
+        case JPB_POINTER_ARRAY_COLOR:
+            JPB_GET_POINTER(colorPointerVec);
+        case JPB_POINTER_ARRAY_INDEX:
+            JPB_GET_POINTER(indexPointerVec);
+        case JPB_POINTER_ARRAY_AI:
+            JPB_GET_POINTER(aiPArrayVec);
+        case JPB_POINTER_ARRAY_ENEMY:
+            JPB_GET_POINTER(wslEnemyPointerVec);
+        default:
+            return nullptr;
+    }
+
+#undef JPB_GET_POINTER
+}
 
 /* 0xAE410, 1977 bytes, global, 58 named locals
  * initArrays
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\globalarrays.cpp
  */
+extern "C" void initArrays(void)
+{
+    vertexPointerCount = 0;
+    indexPointerCount = 0;
+    normalPointerCount = 0;
+    uvPointerCount = 0;
+    colorPointerCount = 0;
+    aiPArrayCount = 0;
+    wslEnemyPointerCount = 0;
+
+    vertexPointerSet = std::set<void *>();
+    vertexPointerVec = std::vector<void *>();
+    normalPointerSet = std::set<void *>();
+    normalPointerVec = std::vector<void *>();
+    uvPointerSet = std::set<void *>();
+    uvPointerVec = std::vector<void *>();
+    colorPointerSet = std::set<void *>();
+    colorPointerVec = std::vector<void *>();
+    indexPointerSet = std::set<void *>();
+    indexPointerVec = std::vector<void *>();
+    aiPArrayVec = std::vector<void *>();
+    aiPArraySet = std::set<void *>();
+    wslEnemyPointerSet = std::set<void *>();
+    wslEnemyPointerVec = std::vector<void *>();
+}
+
+extern "C" void pointerRegistry_Reset(void)
+{
+    initArrays();
+}
 
 /* 0x270180, 40 bytes, local, 2 named locals
  * `std::vector<void *,std::allocator<void *> >::_Emplace_reallocate<void * const &>'::`1'::catch$0

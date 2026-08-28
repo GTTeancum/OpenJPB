@@ -68,21 +68,28 @@ static void capture_debug_sphere(
 
 static void capture_bar(
     void *user_data,
-    int x,
-    int y,
-    int width,
-    int height,
-    uint32_t color)
+    _Material *texture,
+    const SCREENRECT *destination,
+    const SCREENRECT *source,
+    CVECTOR color,
+    float layer_depth)
 {
     BarTrace *trace = (BarTrace *)user_data;
     int index = trace->calls++;
 
+    (void)texture;
+    (void)source;
+    (void)layer_depth;
     if (index < 8) {
-        trace->x[index] = x;
-        trace->y[index] = y;
-        trace->width[index] = width;
-        trace->height[index] = height;
-        trace->color[index] = color;
+        trace->x[index] = destination->left;
+        trace->y[index] = destination->top;
+        trace->width[index] = destination->right - destination->left;
+        trace->height[index] = destination->bottom - destination->top;
+        trace->color[index] =
+            ((uint32_t)color.cd << 24) |
+            ((uint32_t)color.r << 16) |
+            ((uint32_t)color.g << 8) |
+            (uint32_t)color.b;
     }
 }
 
@@ -357,7 +364,7 @@ static int test_kadu_race_hud_bars(void)
     OptionStruct.ControllerConfig[1] = 0;
     zerobss_levelReset = 101;
     zerobss_ResetBoss = 1;
-    jpb_GameSetBarHook(capture_bar, &trace);
+    jpb_WHookSetDrawTextureHook(capture_bar, &trace);
 
     CHECK(ai_Kadu(NULL, &kadu) == -1);
     CHECK(trace.calls == 1);
@@ -403,7 +410,7 @@ static int test_kadu_race_hud_bars(void)
     CHECK(trace.height[3] == 6);
     CHECK(trace.color[3] == UINT32_C(0x7f1040ff));
 
-    jpb_GameSetBarHook(NULL, NULL);
+    jpb_WHookSetDrawTextureHook(NULL, NULL);
     gpWorld = NULL;
     memset(&maPhysicsData[0], 0, sizeof(maPhysicsData[0]));
     memset(&maPhysicsData[1], 0, sizeof(maPhysicsData[1]));

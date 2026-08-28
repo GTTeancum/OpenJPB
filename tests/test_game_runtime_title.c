@@ -2,10 +2,19 @@
 
 #include "jpb/game.h"
 #include "jpb/menu.h"
+#include "jpb/whook.h"
 
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+
+static void clear_test_framebuffer(void *user_data)
+{
+    JPBSoftwareFramebuffer *framebuffer =
+        (JPBSoftwareFramebuffer *)user_data;
+
+    framebuffer->pixels[0] = UINT32_C(0xff000000);
+}
 
 int main(void)
 {
@@ -25,9 +34,14 @@ int main(void)
     framebuffer.stridePixels = 1;
 
     LevelSelect = 1;
+    allText[158] = "LOADING";
+    allText[306] = "FEDERATION BATTLESHIP";
     menuVars.menuModeSP = 0;
     menuVars.menuMode[0] = 0x66;
+    jpb_WHookSetClearWindowHook(
+        clear_test_framebuffer, &framebuffer);
     result = jpb_GameRuntimeTitleFrame(&runtime, &framebuffer);
+    jpb_WHookSetClearWindowHook(NULL, NULL);
     if (result != JPB_GAME_RUNTIME_OK) {
         fprintf(
             stderr,
@@ -36,13 +50,13 @@ int main(void)
         return 1;
     }
     if (runtime.textDrawCount != 0 || runtime.screenDrawCount != 0) {
-        fputs("level-load handoff unexpectedly acquired a draw owner\n", stderr);
+        fputs("uninstalled draw hooks unexpectedly captured output\n", stderr);
         return 1;
     }
-    if (pixel != UINT32_C(0x00abcdef)) {
+    if (pixel != UINT32_C(0xff000000)) {
         fprintf(
             stderr,
-            "level-load handoff frame mutated framebuffer: %08x\n",
+            "level-load handoff did not clear framebuffer: %08x\n",
             pixel);
         return 1;
     }

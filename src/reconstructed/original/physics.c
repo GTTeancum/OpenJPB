@@ -1,10 +1,9 @@
 /*
- * PARTIAL REVIEWED RECONSTRUCTION of
+ * REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\Work\physics.c.
  *
- * The reviewed subset establishes the scene-root-to-physics boundary, actor
- * contact state, exact landing dispatch, and the original inline splash
- * effect/audio sequence.
+ * All 62 emitted procedures are present. Exact owners retain retail control
+ * flow; descriptive facades validate external test and portable-host calls.
  *
  * Provenance:
  *   direct     - names/signatures/locals, physicsObject/sceneObject layouts,
@@ -21,7 +20,7 @@
  *                exact RVAs, and the complete ProcessPhysicsObjects frame
  *                scheduler and terminal street-ending sequence, including
  *                the complete Level 10-aware physics_ResetJedi entry.
- *                Exact cached/fallback range lookup is checked at
+ *                Exact range-cache hit and cache-miss calculation is checked at
  *                0xE1830..0xE18A0. The ground query, target-position
  *                transform, physics component creator, range-cache
  *                initializer, map callback, polygon accessor, and nearest
@@ -48,6 +47,8 @@
 #include "jpb/camera.h"
 #include "jpb/collision.h"
 #include "jpb/cube.h"
+#include "jpb/console.h"
+#include "jpb/debugtext.h"
 #include "jpb/effects.h"
 #include "jpb/extracharacters.h"
 #include "jpb/flex.h"
@@ -68,66 +69,6 @@
 #include <limits.h>
 #include <math.h>
 #include <string.h>
-
-/*
- * Portable fallback for the still-bounded loader_CreateModel relocation seam.
- * Exact loaded models continue through addPtr/getPtr; immutable JPBBmdView
- * owners can resolve their original file-relative geomData offsets first.
- */
-static JPBPhysicsGeometryStreamResolver
-    physics_geometry_stream_resolver;
-static void *physics_geometry_stream_resolver_user_data;
-
-void jpb_PhysicsSetGeometryStreamResolver(
-    JPBPhysicsGeometryStreamResolver resolver,
-    void *user_data)
-{
-    physics_geometry_stream_resolver = resolver;
-    physics_geometry_stream_resolver_user_data = user_data;
-}
-
-void *jpb_PhysicsResolveGeometryStream(
-    const geomData *geometry,
-    int pointer_type)
-{
-    void *resolved = NULL;
-    int index;
-
-    if (geometry == NULL ||
-        pointer_type < JPB_POINTER_ARRAY_VERTEX ||
-        pointer_type > JPB_POINTER_ARRAY_INDEX) {
-        return NULL;
-    }
-    if (physics_geometry_stream_resolver != NULL) {
-        resolved = physics_geometry_stream_resolver(
-            geometry,
-            pointer_type,
-            physics_geometry_stream_resolver_user_data);
-        if (resolved != NULL) {
-            return resolved;
-        }
-    }
-    switch (pointer_type) {
-    case JPB_POINTER_ARRAY_VERTEX:
-        index = geometry->pVertex;
-        break;
-    case JPB_POINTER_ARRAY_NORMAL:
-        index = geometry->pNormal;
-        break;
-    case JPB_POINTER_ARRAY_UV:
-        index = geometry->pUV;
-        break;
-    case JPB_POINTER_ARRAY_COLOR:
-        index = geometry->pColor;
-        break;
-    case JPB_POINTER_ARRAY_INDEX:
-        index = geometry->pIndex;
-        break;
-    default:
-        return NULL;
-    }
-    return getPtr(index, pointer_type);
-}
 
 /* Direct globals at RVAs 0x951AA0, 0x951BA0, 0x951B90, and 0x9543E0. */
 _collidevars cvars;
@@ -575,8 +516,7 @@ static _svector *BuildNodeVertexList(_solid *s)
     SetTransformMatrix(&s->rotmatrix);
     SetGTETransLV(NULL);
     ApplyMatrixMany10Bit(
-        (int *)jpb_PhysicsResolveGeometryStream(
-            g, JPB_POINTER_ARRAY_NORMAL),
+        (int *)getPtr(g->pNormal, JPB_POINTER_ARRAY_NORMAL),
         s->normals,
         g->numFaces,
         0x13);
@@ -585,8 +525,7 @@ static _svector *BuildNodeVertexList(_solid *s)
     SetTransformMatrix(&s->rotmatrix);
     SetGTETransLV(&h->v3RotCenter);
     ApplyMatrixMany10Bit(
-        (int *)jpb_PhysicsResolveGeometryStream(
-            g, JPB_POINTER_ARRAY_VERTEX),
+        (int *)getPtr(g->pVertex, JPB_POINTER_ARRAY_VERTEX),
         s->coords,
         (int)vertex_count,
         0x16);
@@ -791,7 +730,7 @@ static int physics_try_start_streets_ending(
         return 0;
     }
     collision_timeout =
-        jpb_StreetsEndingShortCollisionTimeout != 0
+        GameStruct.difficulty != 0
             ? UINT32_C(0x0000f000)
             : UINT32_C(0x0001e000);
     if ((jpb_CubeRuntimeFlags & UINT32_C(0x00000008)) != 0 ||
@@ -890,7 +829,7 @@ int jpb_PhysicsTryStartStreetsEnding(
  * All anonymous cross-module state is exposed through documented portable
  * seams rather than decompiler placeholder names.
  */
-int jpb_PhysicsCalcMovement(physicsObject *physics)
+static void CalcMovement(physicsObject *physics)
 {
     enum {
         JPB_CALC_PLAYER_FLAG_AIRBORNE = 0x00000001,
@@ -919,30 +858,9 @@ int jpb_PhysicsCalcMovement(physicsObject *physics)
     float scale;
     int player_valid;
 
-    if (physics == NULL || physics->physicsRoot.pParent == NULL) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
-    }
     scene = (sceneObject *)physics->physicsRoot.pParent;
     player = (playerObject *)scene->pPlayer;
     model = (modelObject *)scene->pModel;
-    if (player == NULL || model == NULL || scene->pAnim == NULL) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
-    }
-    if ((physics->movemode != MOVE_NORMAL &&
-         physics->movemode != MOVE_HOVER &&
-         physics->movemode != MOVE_HOVER3D &&
-         physics->movemode != MOVE_FLY &&
-         physics->movemode != MOVE_BLOWN &&
-         physics->movemode != MOVE_COREDEATH) ||
-        (physics->currentmapinfo.poly != NULL &&
-         leveldata == NULL)) {
-        return JPB_PHYSICS_PARTIAL_UNSUPPORTED_STATE;
-    }
-    if (physics->movemode == MOVE_COREDEATH &&
-        player->playernum >= 2 &&
-        player->pEnemy == NULL) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
-    }
 
     currentgmi1 =
         physics->currentmapinfo.poly != NULL
@@ -953,37 +871,8 @@ int jpb_PhysicsCalcMovement(physicsObject *physics)
         obj_gCheckObjectFlag(
             &player->playerRoot, 0, 0x00000020u) == 0 &&
         (player->pFlags & 0x00040200u) == 0;
-    if (physics->movemode == MOVE_NORMAL &&
-        (currentgmi1 &
-         (unsigned)JPB_CALC_MAP_FLAG_MODE_TRANSITION) != 0 &&
-        physics->pos.vy - physics->airGround < 512.0f &&
-        LevelSelect == 10 &&
-        player_valid &&
-        player->playernum >= 2 &&
-        player->pEnemy == NULL) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
-    }
-    if (physics->movemode == MOVE_NORMAL &&
-        (currentgmi1 &
-         (unsigned)JPB_CALC_MAP_FLAG_MODE_TRANSITION) != 0 &&
-        physics->pos.vy - physics->airGround < 512.0f &&
-        LevelSelect == 10 &&
-        player_valid &&
-        (player->pFlags &
-         (unsigned)JPB_CALC_PLAYER_FLAG_AIRBORNE) == 0 &&
-        player->paMotions == NULL) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
-    }
-    if (physics->movemode == MOVE_NORMAL &&
-        (currentgmi1 &
-         (unsigned)JPB_CALC_MAP_FLAG_MODE_TRANSITION) != 0 &&
-        physics->pos.vy - physics->airGround < 512.0f &&
-        LevelSelect != 10 &&
-        player->paMotions == NULL) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
-    }
     if ((physics->flags & 0x00004000u) != 0) {
-        return JPB_PHYSICS_PARTIAL_ALREADY_PROCESSED;
+        return;
     }
     physics->flags |= 0x00004000u;
 
@@ -996,22 +885,9 @@ int jpb_PhysicsCalcMovement(physicsObject *physics)
         (player->pFlags & 0x00000001u) == 0) {
         s = physics->standee->solid;
         if (s != NULL) {
-            int result;
-
-            if (s->physics == NULL) {
-                physics->flags &= ~UINT32_C(0x00004000);
-                return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
-            }
             if ((s->physics->flags &
                  UINT32_C(0x00004000)) == 0) {
-                result =
-                    jpb_PhysicsCalcMovement(s->physics);
-                if (result != JPB_PHYSICS_PARTIAL_OK &&
-                    result !=
-                        JPB_PHYSICS_PARTIAL_ALREADY_PROCESSED) {
-                    physics->flags &= ~UINT32_C(0x00004000);
-                    return result;
-                }
+                CalcMovement(s->physics);
             }
         }
     }
@@ -1148,8 +1024,7 @@ int jpb_PhysicsCalcMovement(physicsObject *physics)
                     (uint32_t)JPB_CALC_PLAYER_FLAG_AIRBORNE;
                 physics->airTime = 0;
                 physics->realAirTime = 0;
-                player->pMotionCallBack =
-                    jpb_TrajectoryCallbackSlot;
+                player->pMotionCallBack = funcArray[6];
                 continue;
             }
 
@@ -1477,14 +1352,70 @@ int jpb_PhysicsCalcMovement(physicsObject *physics)
             physics->mov.vx -= movespeed;
         }
     }
-    return JPB_PHYSICS_PARTIAL_OK;
+}
+
+int jpb_PhysicsCalcMovement(physicsObject *physics)
+{
+    sceneObject *scene;
+    playerObject *player;
+    unsigned current_map_flags;
+    int player_valid;
+
+    if (physics == NULL || physics->physicsRoot.pParent == NULL) {
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
+    }
+    scene = (sceneObject *)physics->physicsRoot.pParent;
+    player = (playerObject *)scene->pPlayer;
+    if (player == NULL || scene->pModel == NULL || scene->pAnim == NULL) {
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
+    }
+    if ((physics->movemode < MOVE_NORMAL ||
+         physics->movemode > MOVE_COREDEATH) ||
+        (physics->currentmapinfo.poly != NULL && leveldata == NULL)) {
+        return JPB_PHYSICS_RESULT_UNSUPPORTED_STATE;
+    }
+    if (physics->movemode == MOVE_COREDEATH &&
+        player->playernum >= 2 && player->pEnemy == NULL) {
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
+    }
+    current_map_flags = physics->currentmapinfo.poly != NULL
+        ? physics_map_flags(physics->currentmapinfo.poly)
+        : 0;
+    player_valid =
+        player->playerRoot.objectID != -1 &&
+        obj_gCheckObjectFlag(
+            &player->playerRoot, 0, UINT32_C(0x20)) == 0 &&
+        (player->pFlags & UINT32_C(0x00040200)) == 0;
+    if (physics->movemode == MOVE_NORMAL &&
+        (current_map_flags & UINT32_C(0x00040000)) != 0 &&
+        physics->pos.vy - physics->airGround < 512.0f) {
+        if ((LevelSelect == 10 && player_valid &&
+             ((player->playernum >= 2 && player->pEnemy == NULL) ||
+              ((player->pFlags & UINT32_C(1)) == 0 &&
+               player->paMotions == NULL))) ||
+            (LevelSelect != 10 && player->paMotions == NULL)) {
+            return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
+        }
+    }
+    if ((physics->flags & UINT32_C(0x00004000)) != 0) {
+        return JPB_PHYSICS_RESULT_ALREADY_PROCESSED;
+    }
+    if (player_valid && physics->standee != NULL &&
+        (player->pFlags & UINT32_C(1)) == 0 &&
+        physics->standee->solid != NULL &&
+        physics->standee->solid->physics == NULL) {
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
+    }
+
+    CalcMovement(physics);
+    return JPB_PHYSICS_RESULT_OK;
 }
 
 int jpb_PhysicsCalcMovementNormal(physicsObject *physics)
 {
     if (physics != NULL &&
         physics->movemode != MOVE_NORMAL) {
-        return JPB_PHYSICS_PARTIAL_UNSUPPORTED_STATE;
+        return JPB_PHYSICS_RESULT_UNSUPPORTED_STATE;
     }
     return jpb_PhysicsCalcMovement(physics);
 }
@@ -1499,17 +1430,17 @@ int jpb_PhysicsMoveNoContact(physicsObject *physics)
     playerObject *player;
 
     if (physics == NULL || physics->physicsRoot.pParent == NULL) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
     }
     scene = (sceneObject *)physics->physicsRoot.pParent;
     player = (playerObject *)scene->pPlayer;
     if (player == NULL) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
     }
     if (physics->movemode != MOVE_NORMAL ||
         physics->standee != NULL ||
         physics->solid != NULL) {
-        return JPB_PHYSICS_PARTIAL_UNSUPPORTED_STATE;
+        return JPB_PHYSICS_RESULT_UNSUPPORTED_STATE;
     }
 
     physics->pos.vx += physics->mov.vx;
@@ -1522,7 +1453,7 @@ int jpb_PhysicsMoveNoContact(physicsObject *physics)
         physics->flags |= 0x00010000u;
     }
     physics->flags &= 0xffffe7ffu;
-    return JPB_PHYSICS_PARTIAL_OK;
+    return JPB_PHYSICS_RESULT_OK;
 }
 
 /*
@@ -1801,12 +1732,12 @@ int jpb_PhysicsCharBlockingState(
         testpos0 == NULL ||
         range == NULL ||
         p1->physicsRoot.pParent == NULL) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
     }
     scene1 =
         (sceneObject *)p1->physicsRoot.pParent;
     if (scene1->pPlayer == NULL) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
     }
     CharBlocking(
         player,
@@ -1817,7 +1748,7 @@ int jpb_PhysicsCharBlockingState(
         NULL,
         0.0f,
         range);
-    return JPB_PHYSICS_PARTIAL_OK;
+    return JPB_PHYSICS_RESULT_OK;
 }
 
 /*
@@ -1838,21 +1769,21 @@ int jpb_PhysicsMoveCharacterContacts(physicsObject *p0)
 
     if (p0 == NULL ||
         p0->physicsRoot.pParent == NULL) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
     }
     object_id = p0->physicsRoot.objectID;
     if ((uint32_t)object_id >= JPB_PHYSICS_CAPACITY) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
     }
     scene0 =
         (sceneObject *)p0->physicsRoot.pParent;
     player = (playerObject *)scene0->pPlayer;
     if (player == NULL) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
     }
     if ((player->pFlags &
          UINT32_C(0x44000000)) != 0) {
-        return JPB_PHYSICS_PARTIAL_OK;
+        return JPB_PHYSICS_RESULT_OK;
     }
 
     /* Validate authentic component graphs before publishing any pair state. */
@@ -1867,14 +1798,14 @@ int jpb_PhysicsMoveCharacterContacts(physicsObject *p0)
             continue;
         }
         if (p1->physicsRoot.pParent == NULL) {
-            return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
+            return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
         }
         scene1 =
             (sceneObject *)p1->physicsRoot.pParent;
         player1 = (playerObject *)scene1->pPlayer;
         if (scene1->pScene == NULL ||
             player1 == NULL) {
-            return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
+            return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
         }
     }
 
@@ -1973,7 +1904,7 @@ int jpb_PhysicsMoveCharacterContacts(physicsObject *p0)
             }
         }
     }
-    return JPB_PHYSICS_PARTIAL_OK;
+    return JPB_PHYSICS_RESULT_OK;
 }
 
 /* 0xDC5F0, 4566 bytes, local, 56 named locals
@@ -2385,7 +2316,7 @@ int jpb_PhysicsCheckCubeBlocking(
         dir == NULL ||
         dirNormal == NULL ||
         ground == NULL) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
     }
     return CheckCubeBlocking(
         player, world, dir, dirNormal, dist, ground);
@@ -2396,6 +2327,20 @@ int jpb_PhysicsCheckCubeBlocking(
  * PDB type: void (physicsObject*)
  * Source: W:\SWJediPowerBattles\Work\physics.c
  */
+void DebugPlayer(physicsObject *physics)
+{
+    sceneObject *scene;
+    int model_id;
+
+    if (gSCENE_READY == 0 || OptionStruct.AIDebug == 0) {
+        return;
+    }
+    scene = (sceneObject *)physics->physicsRoot.pParent;
+    model_id = scene->pModel->objectID;
+    if (coll_GetNode(model_id, 8) != NULL) {
+        (void)coll_GetNodeCenter(model_id, 8);
+    }
+}
 
 /* 0xDD830, 428 bytes, global, 20 named locals
  * FindBestMachineGunTarget
@@ -2510,7 +2455,7 @@ static int physics_move_arithmetic_shift_right(
 
 /*
  * Instruction-reviewed MovePlayer tail at RVAs 0xDE4B2..0xDE612. This
- * inferred decomposition keeps map-contact dispatch, moving-platform
+ * private decomposition keeps map-contact dispatch, moving-platform
  * coordinates, and landing-state publication in their original order.
  */
 static void physics_move_postprocess(
@@ -2637,11 +2582,9 @@ static int physics_move_start_fall(
 
     if ((player->playerID == 9 || player->playerID == 0x2b) &&
         LevelSelect == 10) {
-        player->pMotionCallBack =
-            jpb_MaulTrajectoryCallbackSlot;
+        player->pMotionCallBack = funcArray[48];
     } else {
-        player->pMotionCallBack =
-            jpb_TrajectoryCallbackSlot;
+        player->pMotionCallBack = funcArray[6];
     }
     brain_SetTrajectory(
         player, player->airVelocity, player->airAngle);
@@ -2803,23 +2746,23 @@ int jpb_PhysicsMovePlayer(physicsObject *physics)
     sceneObject *scene;
 
     if (physics == NULL) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
     }
     if (physics->movemode == MOVE_FLY ||
         physics->movemode == MOVE_COREDEATH) {
         MovePlayer(physics);
-        return JPB_PHYSICS_PARTIAL_OK;
+        return JPB_PHYSICS_RESULT_OK;
     }
     if (physics->physicsRoot.pParent == NULL) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
     }
     scene =
         (sceneObject *)physics->physicsRoot.pParent;
     if (scene->pPlayer == NULL) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
     }
     MovePlayer(physics);
-    return JPB_PHYSICS_PARTIAL_OK;
+    return JPB_PHYSICS_RESULT_OK;
 }
 
 /* 0xDE650, 953 bytes, global, 5 named locals
@@ -2893,18 +2836,8 @@ void ProcessPhysicsObjects(void)
     for (index = 0; index < JPB_PHYSICS_CAPACITY; ++index) {
         physicsObject *physics = &maPhysicsData[index];
 
-        if (physics_object_is_scheduled(physics) &&
-            gSCENE_READY != 0 &&
-            OptionStruct.AIDebug != 0) {
-            sceneObject *scene =
-                (sceneObject *)physics->physicsRoot.pParent;
-            playerObject *player =
-                (playerObject *)scene->pPlayer;
-            int id = player->playerRoot.objectID;
-
-            if (coll_GetNode(id, 8) != NULL) {
-                (void)coll_GetNodeCenter(id, 8);
-            }
+        if (physics_object_is_scheduled(physics)) {
+            DebugPlayer(physics);
         }
     }
 
@@ -2912,12 +2845,7 @@ void ProcessPhysicsObjects(void)
         physicsObject *physics = &maPhysicsData[index];
 
         if (physics_object_is_scheduled(physics)) {
-            /*
-             * CalcMovement is a PDB-local routine exposed under this
-             * descriptive facade while its portable extraction is reviewed.
-             * Valid scheduler records satisfy the facade's component checks.
-             */
-            (void)jpb_PhysicsCalcMovement(physics);
+            CalcMovement(physics);
         }
     }
 
@@ -3129,19 +3057,19 @@ int jpb_PhysicsUpdateSceneObject(physicsObject *physics)
 
     if (physics == NULL ||
         physics->physicsRoot.pParent == NULL) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
     }
     id = physics->physicsRoot.objectID;
     if (id < 0 || id >= JPB_PHYSICS_CAPACITY ||
         physics != &maPhysicsData[id]) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
     }
     scene =
         (sceneObject *)physics->physicsRoot.pParent;
     if (scene != &maSceneData[id] ||
         scene->pPhysics != &physics->physicsRoot ||
         scene->pPlayer == NULL) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
     }
     player = (playerObject *)scene->pPlayer;
     if ((player->pFlags & UINT32_C(0x00400000)) != 0 &&
@@ -3157,12 +3085,12 @@ int jpb_PhysicsUpdateSceneObject(physicsObject *physics)
              (target->pParent == NULL ||
               ((sceneObject *)target->pParent)
                       ->pPhysics == NULL))) {
-            return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
+            return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
         }
     }
 
     UpdateSceneObject(physics);
-    return JPB_PHYSICS_PARTIAL_OK;
+    return JPB_PHYSICS_RESULT_OK;
 }
 
 /* 0xDEBB0, 1252 bytes, local, 16 named locals
@@ -3357,7 +3285,7 @@ int jpb_PhysicsWorldBlocking(
         startpos == NULL ||
         endpos == NULL ||
         direction == NULL) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
     }
     return WorldBlocking(
         player, physics, startpos, endpos, direction, distance);
@@ -3428,17 +3356,17 @@ int jpb_PhysicsSyncDriverState(int player_index)
     physicsObject *physics;
 
     if (player_index < 0 || player_index >= 2) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
     }
     physics = &maPhysicsData[player_index];
     if ((physics->flags & UINT32_C(0x00000020)) != 0 &&
         (physics->flags & UINT32_C(0x0000001f)) >=
             JPB_PHYSICS_CAPACITY) {
-        return JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT;
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
     }
 
     checkdriving(player_index);
-    return JPB_PHYSICS_PARTIAL_OK;
+    return JPB_PHYSICS_RESULT_OK;
 }
 
 /* 0xDF4C0, 140 bytes, global, 7 named locals
@@ -3446,18 +3374,86 @@ int jpb_PhysicsSyncDriverState(int player_index)
  * PDB type: int (int, char**, int*, float*)
  * Source: W:\SWJediPowerBattles\Work\physics.c
  */
+int console_HideMeshCommand(
+    int argument_count,
+    char **string_arguments,
+    int *integer_arguments,
+    float *float_arguments)
+{
+    int first_mesh;
+    int last_mesh;
+    int mesh;
+
+    (void)float_arguments;
+    if (argument_count == 0 ||
+        (argument_count == 1 && string_arguments[0][0] == '?')) {
+        (void)console_Printf("HideMesh : hide a mesh\n");
+        return console_Printf("usage: hidemesh [n|all]\n");
+    }
+    first_mesh = integer_arguments[0];
+    last_mesh = first_mesh;
+    if (strcmp(string_arguments[0], "all") == 0) {
+        first_mesh = 0;
+        last_mesh = 999;
+    }
+    for (mesh = first_mesh; mesh <= last_mesh; ++mesh) {
+        cube_HideMesh(mesh);
+    }
+    return last_mesh;
+}
 
 /* 0xDF550, 140 bytes, global, 7 named locals
  * console_ShowMeshCommand
  * PDB type: int (int, char**, int*, float*)
  * Source: W:\SWJediPowerBattles\Work\physics.c
  */
+int console_ShowMeshCommand(
+    int argument_count,
+    char **string_arguments,
+    int *integer_arguments,
+    float *float_arguments)
+{
+    int first_mesh;
+    int last_mesh;
+    int mesh;
+
+    (void)float_arguments;
+    if (argument_count == 0 ||
+        (argument_count == 1 && string_arguments[0][0] == '?')) {
+        (void)console_Printf("ShowMesh : show a mesh\n");
+        return console_Printf("usage: showmesh [n|all]\n");
+    }
+    first_mesh = integer_arguments[0];
+    last_mesh = first_mesh;
+    if (strcmp(string_arguments[0], "all") == 0) {
+        first_mesh = 0;
+        last_mesh = 999;
+    }
+    for (mesh = first_mesh; mesh <= last_mesh; ++mesh) {
+        cube_ShowMesh(mesh);
+    }
+    return last_mesh;
+}
 
 /* 0xDF5E0, 132 bytes, global, 1 named locals
  * dumpmatrix
  * PDB type: void (MATRIX*)
  * Source: W:\SWJediPowerBattles\Work\physics.c
  */
+void dumpmatrix(MATRIX *matrix)
+{
+    float *element = &matrix->m[0][0];
+    int row;
+    int column;
+
+    (void)debug_printf("MAT:\n");
+    for (row = 0; row < 3; ++row) {
+        for (column = 0; column < 3; ++column) {
+            (void)debug_printf("%f ", (double)*element++);
+        }
+        (void)debug_printf("\n");
+    }
+}
 
 /* 0xDF670, 1168 bytes, local, 15 named locals
  * generalCollide
@@ -3482,8 +3478,8 @@ static int generalCollide(
     (void)radius;
     verts = s->coords;
     normals = s->normals;
-    index = (int16_t *)jpb_PhysicsResolveGeometryStream(
-        s->geometry, JPB_POINTER_ARRAY_INDEX);
+    index = (int16_t *)getPtr(
+        s->geometry->pIndex, JPB_POINTER_ARRAY_INDEX);
     npolys = s->geometry->numFaces;
     mvp.info.flags = 6;
     mvp.info.washack = 0;

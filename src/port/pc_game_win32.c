@@ -11,7 +11,10 @@
 #include <shellapi.h>
 
 #include "jpb/ai.h"
+#include "jpb/achievement.h"
 #include "jpb/anim.h"
+#include "jpb/bmd.h"
+#include "jpb/brain.h"
 #include "jpb/brainutl.h"
 #include "jpb/bullet.h"
 #include "jpb/camera.h"
@@ -33,6 +36,7 @@
 #include "jpb/pc_audio_win32.h"
 #include "jpb/physics.h"
 #include "jpb/player.h"
+#include "jpb/platform.h"
 #include "jpb/projection.h"
 #include "jpb/pwrup.h"
 #include "jpb/game_runtime.h"
@@ -41,9 +45,11 @@
 #include "jpb/sound.h"
 #include "jpb/sprite.h"
 #include "jpb/text.h"
+#include "jpb/utf16.h"
 #include "jpb/texture.h"
 #include "jpb/vehicle.h"
 #include "jpb/vectors.h"
+#include "jpb/whook.h"
 
 #include "pc_image_wic.h"
 #include "pc_input_mapping.h"
@@ -206,7 +212,34 @@ typedef struct PcFedNavigation {
 
 static PcFedNavigation pc_fed_navigation;
 
+typedef struct PcAchievementHarness {
+    uint8_t complete[JPB_ACHIEVEMENT_COUNT];
+} PcAchievementHarness;
+
+static int pc_complete_harness_achievement(int id, void *user_data)
+{
+    PcAchievementHarness *harness = (PcAchievementHarness *)user_data;
+
+    if (harness == NULL || id < 0 || id >= JPB_ACHIEVEMENT_COUNT) {
+        return 0;
+    }
+    harness->complete[id] = 1;
+    return 1;
+}
+
+static int pc_get_harness_achievement(int id, void *user_data)
+{
+    const PcAchievementHarness *harness =
+        (const PcAchievementHarness *)user_data;
+
+    if (harness == NULL || id < 0 || id >= JPB_ACHIEVEMENT_COUNT) {
+        return 0;
+    }
+    return harness->complete[id] != 0;
+}
+
 typedef struct PcInput {
+    HWND window;
     int headless;
     int hiddenWindow;
     int scriptedInput;
@@ -334,6 +367,8 @@ typedef struct PcInput {
     char optionsPath[MAX_PATH];
     JPBPCXInput xinput;
     uint8_t livePadCacheValid;
+    uint8_t spaceKeyDown;
+    uint8_t spaceKeyPressed;
     uint32_t livePadCacheBits[2];
     float livePadCacheX[2];
     float livePadCacheY[2];
@@ -366,6 +401,7 @@ static void pc_apply_control_scheme_overrides(const PcInput *input);
 typedef struct PcPlayerSaberDiagnostics {
     int playerModel;
     int expectsSaber;
+    int authoredChainsMatched;
     uint32_t outerColor;
     size_t outerDrawCount;
     size_t trailDrawCount;
@@ -465,10 +501,38 @@ static int pc_apply_player_saber_color_mode(
 
 static int pc_base_player_expects_saber(int player_model)
 {
-    return player_model >= obi_wan_model &&
-           player_model <= ki_adi_model &&
+    return ((player_model >= obi_wan_model &&
+             player_model <= maul_model) ||
+            player_model == maul_d_model ||
+            (player_model >= 0x50 && player_model <= 0x54)) &&
            player_model != amidala_model &&
            player_model != panaka_model;
+}
+
+static int pc_player_saber_model_supported(int player_model)
+{
+    return (player_model >= obi_wan_model &&
+            player_model <= maul_model) ||
+           player_model == maul_d_model ||
+           (player_model >= 0x50 && player_model <= 0x54);
+}
+
+static int pc_double_blade_maul(int player_model)
+{
+    return player_model == maul_p_model ||
+           player_model == maul_d_model;
+}
+
+static uint64_t pc_player_saber_color_index(int player_model)
+{
+    if (player_model == maul_model ||
+        player_model == maul_d_model) {
+        return maul_p_model;
+    }
+    if (player_model >= 0x50 && player_model < 0x59) {
+        return (uint64_t)(player_model - 0x50);
+    }
+    return (uint64_t)(uint32_t)player_model;
 }
 
 static int pc_same_glow_segment(
@@ -492,6 +556,23 @@ static int16_t pc_saber_scaled_component(
         (product + ((product >> 31) & 0xfff)) >> 12);
 }
 
+static int16_t pc_saber_low_word(int32_t value)
+{
+    return (int16_t)(uint16_t)(uint32_t)value;
+}
+
+static int16_t pc_saber_add_low(int16_t left, int16_t right)
+{
+    return (int16_t)(uint16_t)(
+        (uint16_t)left + (uint16_t)right);
+}
+
+static int16_t pc_saber_sub_low(int16_t left, int16_t right)
+{
+    return (int16_t)(uint16_t)(
+        (uint16_t)left - (uint16_t)right);
+}
+
 static int pc_player_saber_node_ids(
     int player_model,
     unsigned *base_id,
@@ -499,9 +580,8 @@ static int pc_player_saber_node_ids(
     unsigned *second_base_id,
     unsigned *second_tip_id)
 {
-    /* Diagnostic mirror of the exact matched-PC jedi_HandleSabre node
-     * selection. Keeping this in the host avoids exposing private gameplay
-     * helpers merely for a real-asset regression. */
+    /* Diagnostic mirror of the gameplay selection. Maul's pairs follow the
+     * two v_weapon -> v_coll chains authored in both shipped Maul BMDs. */
     if (base_id == NULL || tip_id == NULL ||
         second_base_id == NULL || second_tip_id == NULL ||
         !pc_base_player_expects_saber(player_model)) {
@@ -513,11 +593,11 @@ static int pc_player_saber_node_ids(
         player_model == mace_model) {
         *base_id = 0x14;
         *tip_id = 0x16;
-    } else if (player_model == maul_p_model) {
+    } else if (pc_double_blade_maul(player_model)) {
         *base_id = 0x12;
-        *tip_id = 0x13;
-        *second_base_id = 0x17;
-        *second_tip_id = 0x13;
+        *tip_id = 0x14;
+        *second_base_id = 0x13;
+        *second_tip_id = 0x17;
     } else if (player_model == adi_model) {
         *base_id = 0x13;
         *tip_id = 0x15;
@@ -540,6 +620,12 @@ static int pc_expected_player_saber_segment(
     Mnode *base;
     Mnode *tip;
     _svector direction;
+    int16_t base_x;
+    int16_t base_y;
+    int16_t base_z;
+    int16_t tip_x;
+    int16_t tip_y;
+    int16_t tip_z;
     int direction_sign;
     int inner_scale;
 
@@ -558,8 +644,8 @@ static int pc_expected_player_saber_segment(
         }
         base_id = second_base_id;
         tip_id = second_tip_id;
-        direction_sign = 1;
-        inner_scale = 0x20;
+        direction_sign = -1;
+        inner_scale = 0;
     } else {
         direction_sign = -1;
         inner_scale = 0;
@@ -569,47 +655,74 @@ static int pc_expected_player_saber_segment(
     if (base == NULL || tip == NULL) {
         return 0;
     }
+    base_x = pc_saber_low_word(base->v3RotCenter.vx);
+    base_y = pc_saber_low_word(base->v3RotCenter.vy);
+    base_z = pc_saber_low_word(base->v3RotCenter.vz);
+    tip_x = pc_saber_low_word(tip->v3RotCenter.vx);
+    tip_y = pc_saber_low_word(tip->v3RotCenter.vy);
+    tip_z = pc_saber_low_word(tip->v3RotCenter.vz);
     (void)normalize(
-        base->v3RotCenter.vx - tip->v3RotCenter.vx,
-        base->v3RotCenter.vy - tip->v3RotCenter.vy,
-        base->v3RotCenter.vz - tip->v3RotCenter.vz,
+        pc_saber_sub_low(base_x, tip_x),
+        pc_saber_sub_low(base_y, tip_y),
+        pc_saber_sub_low(base_z, tip_z),
         &direction);
     if (direction_sign > 0) {
-        expected->start.vx = (int16_t)(
-            base->v3RotCenter.vx +
-            pc_saber_scaled_component(direction.vx, 0x70));
-        expected->start.vy = (int16_t)(
-            base->v3RotCenter.vy +
-            pc_saber_scaled_component(direction.vy, 0x70));
-        expected->start.vz = (int16_t)(
-            base->v3RotCenter.vz +
-            pc_saber_scaled_component(direction.vz, 0x70));
-        expected->end.vx = (int16_t)(
-            base->v3RotCenter.vx +
+        expected->start.vx = pc_saber_add_low(
+            base_x, pc_saber_scaled_component(direction.vx, 0x70));
+        expected->start.vy = pc_saber_add_low(
+            base_y, pc_saber_scaled_component(direction.vy, 0x70));
+        expected->start.vz = pc_saber_add_low(
+            base_z, pc_saber_scaled_component(direction.vz, 0x70));
+        expected->end.vx = pc_saber_add_low(
+            base_x,
             pc_saber_scaled_component(direction.vx, inner_scale));
-        expected->end.vy = (int16_t)(
-            base->v3RotCenter.vy +
+        expected->end.vy = pc_saber_add_low(
+            base_y,
             pc_saber_scaled_component(direction.vy, inner_scale));
-        expected->end.vz = (int16_t)(
-            base->v3RotCenter.vz +
+        expected->end.vz = pc_saber_add_low(
+            base_z,
             pc_saber_scaled_component(direction.vz, inner_scale));
     } else {
-        expected->start.vx = (int16_t)(
-            base->v3RotCenter.vx -
-            pc_saber_scaled_component(direction.vx, 0x70));
-        expected->start.vy = (int16_t)(
-            base->v3RotCenter.vy -
-            pc_saber_scaled_component(direction.vy, 0x70));
-        expected->start.vz = (int16_t)(
-            base->v3RotCenter.vz -
-            pc_saber_scaled_component(direction.vz, 0x70));
-        expected->end.vx = (int16_t)base->v3RotCenter.vx;
-        expected->end.vy = (int16_t)base->v3RotCenter.vy;
-        expected->end.vz = (int16_t)base->v3RotCenter.vz;
+        expected->start.vx = pc_saber_sub_low(
+            base_x, pc_saber_scaled_component(direction.vx, 0x70));
+        expected->start.vy = pc_saber_sub_low(
+            base_y, pc_saber_scaled_component(direction.vy, 0x70));
+        expected->start.vz = pc_saber_sub_low(
+            base_z, pc_saber_scaled_component(direction.vz, 0x70));
+        expected->end.vx = base_x;
+        expected->end.vy = base_y;
+        expected->end.vz = base_z;
     }
     expected->start.pad = 0;
     expected->end.pad = 0;
     return 1;
+}
+
+static int pc_maul_saber_chains_match_authored_data(
+    const playerObject *player)
+{
+    Mnode *positive_base;
+    Mnode *positive_tip;
+    Mnode *negative_base;
+    Mnode *negative_tip;
+
+    if (player == NULL || !pc_double_blade_maul(player->playerID)) {
+        return 1;
+    }
+    positive_base = coll_GetNode(player->playernum, 0x12);
+    positive_tip = coll_GetNode(player->playernum, 0x14);
+    negative_base = coll_GetNode(player->playernum, 0x13);
+    negative_tip = coll_GetNode(player->playernum, 0x17);
+    return positive_base != NULL && positive_tip != NULL &&
+           negative_base != NULL && negative_tip != NULL &&
+           positive_base->pGeomData != NULL &&
+           positive_tip->pGeomData != NULL &&
+           negative_base->pGeomData != NULL &&
+           negative_tip->pGeomData != NULL &&
+           strcmp(positive_base->pGeomData->name, "v_weapon2") == 0 &&
+           strcmp(positive_tip->pGeomData->name, "v_coll1") == 0 &&
+           strcmp(negative_base->pGeomData->name, "v_weapon3") == 0 &&
+           strcmp(negative_tip->pGeomData->name, "v_coll4") == 0;
 }
 
 static int pc_player_saber_segment_is_attached(
@@ -646,12 +759,15 @@ static void pc_collect_player_saber_diagnostics(
     diagnostics->playerModel = player->playerID;
     diagnostics->expectsSaber = pc_base_player_expects_saber(
         diagnostics->playerModel);
-    if (diagnostics->playerModel < obi_wan_model ||
-        diagnostics->playerModel > ki_adi_model) {
+    diagnostics->authoredChainsMatched =
+        pc_maul_saber_chains_match_authored_data(player);
+    if (!pc_player_saber_model_supported(diagnostics->playerModel) ||
+        !diagnostics->expectsSaber) {
         return;
     }
     diagnostics->outerColor =
-        jedi_GetColour32((uint64_t)diagnostics->playerModel) |
+        jedi_GetColour32(pc_player_saber_color_index(
+            diagnostics->playerModel)) |
         UINT32_C(0x7f000000);
     for (outer_index = 0;
          outer_index < runtime->glowDrawCount;
@@ -724,8 +840,8 @@ static int pc_validate_player_saber(
     size_t expected_draws;
 
     if (diagnostics == NULL ||
-        diagnostics->playerModel < obi_wan_model ||
-        diagnostics->playerModel > ki_adi_model) {
+        !pc_player_saber_model_supported(
+            diagnostics->playerModel)) {
         return 0;
     }
     if (!diagnostics->expectsSaber) {
@@ -733,19 +849,16 @@ static int pc_validate_player_saber(
                diagnostics->matchedCoreDrawCount == 0 &&
                diagnostics->matchedAttachmentDrawCount == 0;
     }
-    expected_draws = diagnostics->playerModel == maul_p_model
+    expected_draws = pc_double_blade_maul(
+        diagnostics->playerModel)
         ? 2u
         : 1u;
-    if (diagnostics->matchedAttachmentDrawCount != expected_draws ||
+    if (!diagnostics->authoredChainsMatched ||
+        diagnostics->matchedAttachmentDrawCount != expected_draws ||
         diagnostics->minimumOuterWidth < 0x0e ||
         diagnostics->maximumOuterWidth > 0x13 ||
         diagnostics->maximumBladeLength < 108.0f ||
         diagnostics->maximumBladeLength > 114.0f) {
-        return 0;
-    }
-    if (diagnostics->playerModel == maul_p_model &&
-        (diagnostics->minimumBladeLength < 78.0f ||
-         diagnostics->minimumBladeLength > 82.0f)) {
         return 0;
     }
     return 1;
@@ -810,47 +923,26 @@ static void pc_request_exit(void *user_data)
     pc_running = 0;
 }
 
-static void pc_menu_sound(unsigned sound, void *user_data)
+static void pc_get_window_size(
+    int *width, int *height, void *user_data)
 {
-    static const char *const menu_sounds[11] = {
-        "",
-        "xjedscrl",
-        "xopt_sel",
-        "xjedscrl",
-        "xjedsel",
-        "xlvbrows",
-        "xlvselct",
-        "xsecret",
-        "xsavload",
-        "xlocklvl",
-        "xpointbp"
-    };
+    PcInput *input = (PcInput *)user_data;
+    RECT client;
 
-    (void)user_data;
-    (void)sound_PlayController(
-        NULL, 0, (char *)menu_sounds[sound], 8);
+    if (input->window != NULL &&
+        GetClientRect(input->window, &client) != 0) {
+        *width = client.right - client.left;
+        *height = client.bottom - client.top;
+        return;
+    }
+    *width = input->movieFramebufferWidth;
+    *height = input->movieFramebufferHeight;
 }
 
 static void pc_menu_sound_cue(const char *name, void *user_data)
 {
     (void)user_data;
     (void)sound_PlayController(NULL, 0, (char *)name, 8);
-}
-
-static void pc_queue_resolution_change(
-    unsigned resolution_index,
-    unsigned window_mode,
-    uint32_t *width,
-    uint32_t *height,
-    void *user_data)
-{
-    PcInput *input = (PcInput *)user_data;
-
-    (void)resolution_index;
-    input->resolutionChangePending = 1;
-    input->resolutionWidth = (int)*width;
-    input->resolutionHeight = (int)*height;
-    input->resolutionWindowMode = window_mode;
 }
 
 static void pc_open_url(const char *url, void *user_data)
@@ -974,7 +1066,7 @@ static void *pc_load_menu_texture(
     int image_width;
     int image_height;
 
-    (void)option;
+    (void)material_type;
     if (cache == NULL || filename == NULL ||
         width == NULL || height == NULL) {
         return NULL;
@@ -1019,7 +1111,8 @@ static void *pc_load_menu_texture(
     entry->texture.materialFlags = 0;
     entry->texture.samplerType = TEXTURESAMPLER_LINEARCLAMP;
     entry->texture.colorOverride = -1;
-    entry->texture.materialType = material_type;
+    entry->texture.materialType = (int32_t)(option & UINT32_C(0xff));
+    entry->texture.descriptorIndex = (int32_t)cache->count;
     ++cache->count;
     *width = (int16_t)image_width;
     *height = (int16_t)image_height;
@@ -1579,7 +1672,12 @@ static int pc_start_selected_gameplay(
     const char *enemy_bmd_path,
     int selected_level,
     int selected_game_mode,
-    PcInput *input)
+    PcInput *input
+#if defined(JPB_PC_HAS_UFBX)
+    , JPBPcFbxLevel *fbx_level,
+    int *fbx_level_loaded
+#endif
+    )
 {
     optionstruct selected_options = OptionStruct;
     PcPlayerAssets second_player_assets = {0};
@@ -1591,6 +1689,11 @@ static int pc_start_selected_gameplay(
     uint8_t selected_player_index[2] = {
         menuVars.pplayers[0], menuVars.pplayers[1]
     };
+#if defined(JPB_PC_HAS_UFBX)
+    char fbx_error[512] = {0};
+    int fbx_import_started = 0;
+    int fbx_import_result = 0;
+#endif
     int result;
 
     jpb_PCLogSetCheckpoint(
@@ -1669,12 +1772,18 @@ static int pc_start_selected_gameplay(
         "gameplay handoff runtime initialized level=%d model=%d",
         selected_level,
         selected_model);
+    OptionStruct = selected_options;
+    generateAllText(OptionStruct.Language);
+    menuVars.pplayers[0] = selected_player_index[0];
+    menuVars.pplayers[1] = selected_player_index[1];
     menu_setNumPlayers((unsigned)selected_players);
     menu_setPlayer(0, (unsigned)selected_model);
     if (selected_players == 2) {
         menu_setPlayer(1, (unsigned)selected_player_two);
     }
     GameStruct.versusModeFlag = (int16_t)selected_versus;
+    GameStruct.difficulty = (char)(selected_difficulty == 0 ? 0 : 1);
+    GameStruct.CurrentLevel = (char)selected_level;
     /* Runtime construction restores default options. Reapply an explicit
      * diagnostic scheme before the first controllable gameplay frame. */
     pc_apply_control_scheme_overrides(input);
@@ -1768,6 +1877,53 @@ static int pc_start_selected_gameplay(
             selected_level);
     }
 
+#if defined(JPB_PC_HAS_UFBX)
+    if (fbx_level == NULL || fbx_level_loaded == NULL) {
+        return JPB_GAME_RUNTIME_INVALID_ARGUMENT;
+    }
+    if (*fbx_level_loaded) {
+        jpb_PCFreeFbxLevel(fbx_level);
+        *fbx_level_loaded = 0;
+    }
+    fbx_import_started = jpb_PCBeginFbxLevelImport(
+        selected_level,
+        fbx_level,
+        fbx_error,
+        sizeof(fbx_error));
+    if (!fbx_import_started) {
+        fprintf(stderr, "canonical FBX import setup failed: %s\n", fbx_error);
+        return JPB_GAME_RUNTIME_LOAD_FAILED;
+    }
+#endif
+    result = jpb_GameRuntimeRunCanonicalConstructor(runtime);
+#if defined(JPB_PC_HAS_UFBX)
+    fbx_import_result = jpb_PCEndFbxLevelImport();
+#endif
+    if (result != JPB_GAME_RUNTIME_OK) {
+        jpb_PCLog(
+            "gameplay handoff failed stage=canonical-constructor status=%d "
+            "runtime_stage=%s detail=%s",
+            result,
+            jpb_GameRuntimeLastFailureStage(),
+            jpb_GameRuntimeLastFailureDetail());
+        return result;
+    }
+#if defined(JPB_PC_HAS_UFBX)
+    if (!fbx_import_result) {
+        fprintf(stderr, "canonical FBX import failed: %s\n", fbx_error);
+        jpb_PCLog(
+            "gameplay handoff failed stage=canonical-fbx-import error=%s",
+            fbx_error);
+        return JPB_GAME_RUNTIME_LOAD_FAILED;
+    }
+    *fbx_level_loaded = 1;
+    jpb_GameRuntimeSetLevelRenderMesh(runtime, &fbx_level->mesh);
+#endif
+    pc_apply_control_scheme_overrides(input);
+    jpb_PCLogSetCheckpoint(
+        "gameplay handoff canonical constructor complete level=%d",
+        selected_level);
+
     jpb_PCLogSetCheckpoint(
         "gameplay handoff publishing selected state level=%d",
         selected_level);
@@ -1781,9 +1937,8 @@ static int pc_start_selected_gameplay(
         menu_setPlayer(1, (unsigned)selected_player_two);
     }
     GameStruct.versusModeFlag = (int16_t)selected_versus;
-    (void)jpb_game_ApplyLevelDifficulty(
-        0,
-        selected_difficulty == 0 ? 0 : 1);
+    GameStruct.difficulty = (char)(selected_difficulty == 0 ? 0 : 1);
+    jpb_game_ApplyLevelDifficulty((unsigned)selected_level);
     GameStruct.CurrentLevel = (char)selected_level;
     GameStruct.gameMode = (char)selected_game_mode;
     GameStruct.inMenuFlag = 0;
@@ -1916,6 +2071,11 @@ static unsigned pc_controller_count(void *user_data)
     padExist = (uint8_t)((count >= 1 ? 1u : 0u) |
                          (count >= 2 ? 2u : 0u));
     return count;
+}
+
+static int pc_joystick_count(void *user_data)
+{
+    return (int)pc_controller_count(user_data);
 }
 
 static void pc_refresh_controller_ownership(PcInput *input)
@@ -2140,10 +2300,19 @@ enum PcLiveMenuKeyBits {
     PC_LIVE_MENU_KEY_ESCAPE = 1u << 5
 };
 
-static uint32_t pc_live_menu_key_bits(void)
+static int pc_keyboard_has_focus(const PcInput *input)
+{
+    return input != NULL && input->window != NULL &&
+           GetForegroundWindow() == input->window;
+}
+
+static uint32_t pc_live_menu_key_bits(const PcInput *input)
 {
     uint32_t bits = 0;
 
+    if (!pc_keyboard_has_focus(input)) {
+        return 0;
+    }
     if ((GetAsyncKeyState('J') & 0x8000) != 0) {
         bits |= PC_LIVE_MENU_KEY_J;
     }
@@ -2232,6 +2401,7 @@ static void pc_log_live_menu_key_edges(
 static int pc_movie_scripted_skip_requested(const PcInput *input)
 {
     uint32_t bits;
+    unsigned player;
 
     if (input == NULL || !input->scriptedInput) {
         return 0;
@@ -2239,9 +2409,30 @@ static int pc_movie_scripted_skip_requested(const PcInput *input)
     bits = input->phaseCount != 0
         ? input->headlessPhaseBits
         : input->headlessBits;
-    return (bits & (JPB_PAD_START |
-                    JPB_PAD_COMBO_SOUTH |
-                    JPB_PAD_JUMP)) != 0;
+    if ((bits & (JPB_PAD_START |
+                 JPB_PAD_COMBO_SOUTH |
+                 JPB_PAD_JUMP)) != 0) {
+        return 1;
+    }
+    if ((input->headlessPhaseKeyboardMask & UINT8_C(1)) != 0 &&
+        (input->headlessPhaseKeyboard.comboSouth ||
+         input->headlessPhaseKeyboard.space ||
+         input->headlessPhaseKeyboard.enter ||
+         input->headlessPhaseKeyboard.escape)) {
+        return 1;
+    }
+    for (player = 0; player < 2; ++player) {
+        if ((input->headlessPhaseXInputMask &
+             (uint8_t)(1u << player)) != 0 &&
+            (input->headlessPhaseGamepads[player].buttons &
+             (JPB_PC_XINPUT_A |
+              JPB_PC_XINPUT_B |
+              JPB_PC_XINPUT_START |
+              JPB_PC_XINPUT_BACK)) != 0) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static int pc_movie_xinput_skip_pressed(PcInput *input)
@@ -3463,7 +3654,15 @@ static uint32_t pc_filter_gameplay_handoff_input(
 
 static void pc_begin_input_frame(PcInput *input)
 {
+    jpb_WHookEndInputFrame();
     if (input != NULL) {
+        int space_down =
+            pc_keyboard_has_focus(input) &&
+            (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
+
+        input->spaceKeyPressed =
+            (uint8_t)(space_down && !input->spaceKeyDown);
+        input->spaceKeyDown = (uint8_t)space_down;
         input->livePadCacheValid = 0;
     }
 }
@@ -3687,41 +3886,44 @@ static uint32_t pc_read_pad_uncached(int32_t pad_index, void *user_data)
         JPBPCGameplayKeyboardState keyboard;
 
         memset(&keyboard, 0, sizeof(keyboard));
-        keyboard.moveUp =
-            (GetAsyncKeyState('W') & 0x8000) != 0 ||
-            (GetAsyncKeyState(VK_UP) & 0x8000) != 0;
-        keyboard.moveLeft =
-            (GetAsyncKeyState('A') & 0x8000) != 0 ||
-            (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0;
-        keyboard.moveDown =
-            (GetAsyncKeyState('S') & 0x8000) != 0 ||
-            (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0;
-        keyboard.moveRight =
-            (GetAsyncKeyState('D') & 0x8000) != 0 ||
-            (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0;
-        keyboard.walkModifier =
-            (GetAsyncKeyState(VK_LCONTROL) & 0x8000) != 0;
-        keyboard.zoomIn = (GetAsyncKeyState('T') & 0x8000) != 0;
-        keyboard.comboSouth = (GetAsyncKeyState('J') & 0x8000) != 0;
-        keyboard.comboWest = (GetAsyncKeyState('K') & 0x8000) != 0;
-        keyboard.comboNorth = (GetAsyncKeyState('L') & 0x8000) != 0;
-        keyboard.lockOn = (GetAsyncKeyState('H') & 0x8000) != 0;
-        keyboard.jumpBlockChord =
-            (GetAsyncKeyState('U') & 0x8000) != 0;
-        keyboard.northBlockChord =
-            (GetAsyncKeyState('I') & 0x8000) != 0;
-        keyboard.southBlockChord =
-            (GetAsyncKeyState('O') & 0x8000) != 0;
-        keyboard.westBlockChord =
-            (GetAsyncKeyState('Y') & 0x8000) != 0;
-        keyboard.block =
-            (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0 ||
-            (GetAsyncKeyState(VK_RSHIFT) & 0x8000) != 0;
-        keyboard.jump =
-            (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0 ||
-            (GetAsyncKeyState(VK_RETURN) & 0x8000) != 0;
-        keyboard.start =
-            (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+        if (pc_keyboard_has_focus(input)) {
+            keyboard.moveUp =
+                (GetAsyncKeyState('W') & 0x8000) != 0 ||
+                (GetAsyncKeyState(VK_UP) & 0x8000) != 0;
+            keyboard.moveLeft =
+                (GetAsyncKeyState('A') & 0x8000) != 0 ||
+                (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0;
+            keyboard.moveDown =
+                (GetAsyncKeyState('S') & 0x8000) != 0 ||
+                (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0;
+            keyboard.moveRight =
+                (GetAsyncKeyState('D') & 0x8000) != 0 ||
+                (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0;
+            keyboard.walkModifier =
+                (GetAsyncKeyState(VK_LCONTROL) & 0x8000) != 0;
+            keyboard.zoomIn = (GetAsyncKeyState('T') & 0x8000) != 0;
+            keyboard.comboSouth = (GetAsyncKeyState('J') & 0x8000) != 0;
+            keyboard.comboWest = (GetAsyncKeyState('K') & 0x8000) != 0;
+            keyboard.comboNorth = (GetAsyncKeyState('L') & 0x8000) != 0;
+            keyboard.lockOn = (GetAsyncKeyState('H') & 0x8000) != 0;
+            keyboard.jumpBlockChord =
+                (GetAsyncKeyState('U') & 0x8000) != 0;
+            keyboard.northBlockChord =
+                (GetAsyncKeyState('I') & 0x8000) != 0;
+            keyboard.southBlockChord =
+                (GetAsyncKeyState('O') & 0x8000) != 0;
+            keyboard.westBlockChord =
+                (GetAsyncKeyState('Y') & 0x8000) != 0;
+            keyboard.block =
+                (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0 ||
+                (GetAsyncKeyState(VK_RSHIFT) & 0x8000) != 0;
+            keyboard.space =
+                (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
+            keyboard.enter =
+                (GetAsyncKeyState(VK_RETURN) & 0x8000) != 0;
+            keyboard.escape =
+                (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+        }
         bits = jpb_PCMapKeyboard(
             &keyboard,
             GameStruct.inMenuFlag,
@@ -3794,11 +3996,14 @@ static uint32_t pc_read_pad(int32_t pad_index, void *user_data)
 
 static uint32_t pc_read_brainutl_cheat_chords(void *user_data)
 {
+    PcInput *input = (PcInput *)user_data;
     uint32_t chords = 0;
     int b;
     int down;
 
-    (void)user_data;
+    if (!pc_keyboard_has_focus(input)) {
+        return 0;
+    }
     b = (GetAsyncKeyState('B') & 0x8000) != 0;
     down = (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0;
     if (!b || !down) {
@@ -3815,6 +4020,14 @@ static uint32_t pc_read_brainutl_cheat_chords(void *user_data)
         chords |= JPB_BRAINUTL_CHEAT_SMALL_MODE;
     }
     return chords;
+}
+
+static int pc_key_pressed(int virtual_key, void *user_data)
+{
+    PcInput *input = (PcInput *)user_data;
+
+    return input != NULL && virtual_key == VK_SPACE &&
+           input->spaceKeyPressed != 0;
 }
 
 typedef struct PcKeyboardMap {
@@ -3849,7 +4062,8 @@ static const uint8_t *pc_read_keyboard_state(
 
     memset(state, 0, sizeof(state));
     *key_count = sizeof(state);
-    if (input == NULL || input->headless) {
+    if (input == NULL || input->headless ||
+        !pc_keyboard_has_focus(input)) {
         return state;
     }
 
@@ -3880,10 +4094,18 @@ static const uint8_t *pc_read_keyboard_state(
 static LRESULT CALLBACK pc_window_proc(
     HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
-    (void)wparam;
-    (void)lparam;
-
     switch (message) {
+    case WM_KEYDOWN:
+    case WM_SYSKEYDOWN:
+        jpb_WHookHandleKeyEvent((int)wparam, (int)lparam, 1);
+        break;
+    case WM_KEYUP:
+    case WM_SYSKEYUP:
+        jpb_WHookHandleKeyEvent((int)wparam, (int)lparam, 0);
+        break;
+    case WM_KILLFOCUS:
+        jpb_WHookClearKeyState();
+        break;
     case WM_CLOSE:
         DestroyWindow(window);
         return 0;
@@ -3896,6 +4118,7 @@ static LRESULT CALLBACK pc_window_proc(
     default:
         return DefWindowProcA(window, message, wparam, lparam);
     }
+    return DefWindowProcA(window, message, wparam, lparam);
 }
 
 static HWND pc_create_window(
@@ -4190,9 +4413,18 @@ static int pc_render_title_screen_draws_d3d11(
     size_t draw_count,
     JPBSoftwareFramebuffer *framebuffer)
 {
-    return jpb_PCD3D11PresenterRenderTitleScreenDraws(
+    int result = jpb_PCD3D11PresenterRenderTitleScreenDraws(
         (JPBPCD3D11Presenter *)user_data,
         draws, draw_count, framebuffer);
+
+    if (!result) {
+        jpb_PCLog(
+            "D3D11 title draw failed HRESULT=0x%08lx draws=%zu",
+            (unsigned long)jpb_PCD3D11PresenterLastError(
+                (JPBPCD3D11Presenter *)user_data),
+            draw_count);
+    }
+    return result;
 }
 
 static int pc_gameplay_composite_d3d11(
@@ -4442,32 +4674,24 @@ static int pc_screen_draw_is_enemy_radar_player_marker_960(
            draw->color.cd == 255;
 }
 
-static int pc_screen_draw_is_enemy_radar_red_marker_a_960(
+static int pc_screen_draw_is_enemy_radar_red_marker(
     const JPBGameRuntimeScreenDraw *draw)
 {
     return draw != NULL &&
            draw->texture == NULL &&
            !draw->hasSource &&
-           draw->destination.left == 492 &&
-           draw->destination.top == 136 &&
-           draw->destination.right == 494 &&
-           draw->destination.bottom == 138 &&
            draw->color.r == 255 &&
            draw->color.g == 32 &&
            draw->color.b == 32 &&
            draw->color.cd == 255;
 }
 
-static int pc_screen_draw_is_enemy_radar_green_marker_960(
+static int pc_screen_draw_is_enemy_radar_green_marker(
     const JPBGameRuntimeScreenDraw *draw)
 {
     return draw != NULL &&
            draw->texture == NULL &&
            !draw->hasSource &&
-           draw->destination.left == 476 &&
-           draw->destination.top == 103 &&
-           draw->destination.right == 478 &&
-           draw->destination.bottom == 105 &&
            draw->color.r == 32 &&
            draw->color.g == 255 &&
            draw->color.b == 32 &&
@@ -4503,38 +4727,6 @@ static int pc_screen_draw_is_enemy_radar_player_marker_1080(
            draw->color.r == 255 &&
            draw->color.g == 255 &&
            draw->color.b == 255 &&
-           draw->color.cd == 255;
-}
-
-static int pc_screen_draw_is_enemy_radar_red_marker_a_1080(
-    const JPBGameRuntimeScreenDraw *draw)
-{
-    return draw != NULL &&
-           draw->texture == NULL &&
-           !draw->hasSource &&
-           draw->destination.left == 970 &&
-           draw->destination.top == 229 &&
-           draw->destination.right == 974 &&
-           draw->destination.bottom == 234 &&
-           draw->color.r == 255 &&
-           draw->color.g == 32 &&
-           draw->color.b == 32 &&
-           draw->color.cd == 255;
-}
-
-static int pc_screen_draw_is_enemy_radar_green_marker_1080(
-    const JPBGameRuntimeScreenDraw *draw)
-{
-    return draw != NULL &&
-           draw->texture == NULL &&
-           !draw->hasSource &&
-           draw->destination.left == 954 &&
-           draw->destination.top == 196 &&
-           draw->destination.right == 958 &&
-           draw->destination.bottom == 201 &&
-           draw->color.r == 32 &&
-           draw->color.g == 255 &&
-           draw->color.b == 32 &&
            draw->color.cd == 255;
 }
 
@@ -5960,7 +6152,7 @@ static size_t pc_count_screen_polys_matching(
 
 static int pc_text_draw_matches(
     const JPBGameRuntimeTextDraw *draw,
-    const wchar_t *text,
+    const uint16_t *text,
     int x,
     int y,
     float scale,
@@ -5969,7 +6161,7 @@ static int pc_text_draw_matches(
     if (draw == NULL || text == NULL) {
         return 0;
     }
-    return wcscmp(draw->text, text) == 0 &&
+    return jpb_utf16_compare(draw->text, text) == 0 &&
            draw->compositePixels != 0 &&
            draw->x == x &&
            draw->y == y &&
@@ -5982,7 +6174,7 @@ static int pc_text_draw_matches(
 
 static int pc_text_draw_matches_mode(
     const JPBGameRuntimeTextDraw *draw,
-    const wchar_t *text,
+    const uint16_t *text,
     int mode,
     int x,
     int y,
@@ -5992,7 +6184,7 @@ static int pc_text_draw_matches_mode(
     if (draw == NULL || text == NULL) {
         return 0;
     }
-    return wcscmp(draw->text, text) == 0 &&
+    return jpb_utf16_compare(draw->text, text) == 0 &&
            draw->compositePixels != 0 &&
            draw->x == x &&
            draw->y == y &&
@@ -6005,7 +6197,7 @@ static int pc_text_draw_matches_mode(
 
 static int pc_text_draw_matches_owner(
     const JPBGameRuntimeTextDraw *draw,
-    const wchar_t *text,
+    const uint16_t *text,
     int mode,
     int x,
     int y,
@@ -6014,7 +6206,7 @@ static int pc_text_draw_matches_owner(
     if (draw == NULL || text == NULL) {
         return 0;
     }
-    return wcscmp(draw->text, text) == 0 &&
+    return jpb_utf16_compare(draw->text, text) == 0 &&
            draw->compositePixels != 0 &&
            draw->x == x &&
            draw->y == y &&
@@ -6034,7 +6226,7 @@ static int pc_text_draw_is_seven_digit_score_at(
     size_t index;
 
     if (draw == NULL ||
-        wcslen(draw->text) != 7u ||
+        jpb_utf16_length(draw->text) != 7u ||
         !pc_text_draw_matches_owner(
             draw, draw->text, 0, x, y, 3.24f)) {
         return 0;
@@ -6050,7 +6242,7 @@ static int pc_text_draw_is_seven_digit_score_at(
 
 static int pc_runtime_has_text_draw(
     const JPBGameRuntime *runtime,
-    const wchar_t *text,
+    const uint16_t *text,
     int x,
     int y,
     float scale,
@@ -6079,7 +6271,7 @@ static int pc_runtime_has_text_draw(
 
 static int pc_runtime_has_text_draw_mode(
     const JPBGameRuntime *runtime,
-    const wchar_t *text,
+    const uint16_t *text,
     int mode,
     int x,
     int y,
@@ -7034,10 +7226,10 @@ static int pc_validate_enemy_radar_hud_960(
                pc_screen_draw_is_enemy_radar_player_marker_960) == 1 &&
            pc_count_screen_draws_matching(
                runtime,
-               pc_screen_draw_is_enemy_radar_red_marker_a_960) == 1 &&
+               pc_screen_draw_is_enemy_radar_red_marker) == 6 &&
            pc_count_screen_draws_matching(
                runtime,
-               pc_screen_draw_is_enemy_radar_green_marker_960) == 1;
+               pc_screen_draw_is_enemy_radar_green_marker) == 1;
 }
 
 static int pc_validate_enemy_radar_hud_1080(
@@ -7058,10 +7250,10 @@ static int pc_validate_enemy_radar_hud_1080(
                pc_screen_draw_is_enemy_radar_player_marker_1080) == 1 &&
            pc_count_screen_draws_matching(
                runtime,
-               pc_screen_draw_is_enemy_radar_red_marker_a_1080) == 1 &&
+               pc_screen_draw_is_enemy_radar_red_marker) == 6 &&
            pc_count_screen_draws_matching(
                runtime,
-               pc_screen_draw_is_enemy_radar_green_marker_1080) == 1;
+               pc_screen_draw_is_enemy_radar_green_marker) == 1;
 }
 
 static int pc_validate_p2_core_hud_960(
@@ -7793,7 +7985,7 @@ static void pc_seed_hud_countdown_kill_validation(void)
     nextLevel = 0;
     gGlobalTimer = 100;
     zerobss_levelReset = 9011;
-    allText[427] = L"targets";
+    allText[427] = "targets";
 }
 
 static void pc_seed_hud_countdown_success_validation(void)
@@ -7805,7 +7997,7 @@ static void pc_seed_hud_countdown_success_validation(void)
     nextLevel = 0;
     memset(abGlobalBits, 0, sizeof(abGlobalBits));
     zerobss_levelReset = 9012;
-    allText[435] = L"SUCCESS";
+    allText[435] = "SUCCESS";
     level_CountDown(0, 0, 0);
     abGlobalBits[3] = UINT8_C(2);
     level_CountDown(0, 0, 0);
@@ -7821,7 +8013,7 @@ static void pc_seed_hud_countdown_fail_validation(void)
     memset(abGlobalBits, 0, sizeof(abGlobalBits));
     gGlobalTimer = 100;
     zerobss_levelReset = 9013;
-    allText[436] = L"FAILED";
+    allText[436] = "FAILED";
     level_CountDown(1, 0, 0);
     level_CountDown(1, 0, 0);
     gGlobalTimer = 100 + UINT32_C(0x3c00);
@@ -7851,9 +8043,9 @@ static void pc_seed_hud_arena_validation(void)
     GameStruct.aCharacterData[1].Score = 50;
     gaPlayerData[0].playerRoot.objectID = 0;
     gaPlayerData[1].playerRoot.objectID = 1;
-    allText[437] = L"ONE WINS";
-    allText[438] = L"TWO WINS";
-    allText[439] = L"DRAW";
+    allText[437] = "ONE WINS";
+    allText[438] = "TWO WINS";
+    allText[439] = "DRAW";
     zerobss_levelReset = 9003;
 }
 
@@ -8091,7 +8283,7 @@ static void pc_print_text_draw_trace(
              draw->text[input_index] != L'\0' &&
              output_index + 2 < sizeof(text);
              ++input_index) {
-            wchar_t ch = draw->text[input_index];
+            uint16_t ch = draw->text[input_index];
 
             if (ch == L'\n') {
                 text[output_index++] = '\\';
@@ -8344,12 +8536,17 @@ static int pc_attach_fbx_level(
         fbx_level_loaded == NULL) {
         return 0;
     }
+    level_index = jpb_LevelIndexFromPath(mesh_path);
+    if (*fbx_level_loaded &&
+        fbx_level->mesh.levelIndex == level_index) {
+        jpb_GameRuntimeSetLevelRenderMesh(runtime, &fbx_level->mesh);
+        return 1;
+    }
     if (*fbx_level_loaded) {
         jpb_PCFreeFbxLevel(fbx_level);
         memset(fbx_level, 0, sizeof(*fbx_level));
         *fbx_level_loaded = 0;
     }
-    level_index = jpb_LevelIndexFromPath(mesh_path);
     if (level_index == JPB_LEVEL_INDEX_NONE ||
         !pc_fbx_sidecar_path(
             mesh_path, fbx_path, sizeof(fbx_path)) ||
@@ -8665,12 +8862,14 @@ static int pc_parse_headless_keyboard(
             length == 5 && strncmp(cursor, "shift", length) == 0) {
             keyboard->block = 1;
         } else if (
-            (length == 5 && strncmp(cursor, "space", length) == 0) ||
-            (length == 5 && strncmp(cursor, "enter", length) == 0)) {
-            keyboard->jump = 1;
+            length == 5 && strncmp(cursor, "space", length) == 0) {
+            keyboard->space = 1;
+        } else if (
+            length == 5 && strncmp(cursor, "enter", length) == 0) {
+            keyboard->enter = 1;
         } else if (
             length == 6 && strncmp(cursor, "escape", length) == 0) {
-            keyboard->start = 1;
+            keyboard->escape = 1;
         } else if (
             length != 4 || strncmp(cursor, "none", length) != 0) {
             return 0;
@@ -9858,6 +10057,7 @@ static void pc_print_usage(const char *program)
         "[--require-fbx-level] "
         "[--spawn-position x y z] "
         "[--force-enemy-placement id] "
+        "[--validate-enemy-class-placement id] "
         "[--camera-dolly N] "
         "[--camera-diagnostics] "
         "[--camera-region-sweep path.csv] "
@@ -11448,9 +11648,23 @@ static int pc_position_for_multi_enemy_validation(
     /* A validation teleport cannot retain contact with its prior polygon. */
     runtime->physics->lastpolyhit = NULL;
     runtime->world->location = best_center->loc;
+    {
+        int camera_index = pc_camera_index_at_world_position(
+            runtime,
+            best_center->loc.vx,
+            best_center->loc.vy,
+            best_center->loc.vz);
+
+        if (camera_index < 0 || camera_index >= 256) {
+            return 0;
+        }
+        runtime->world->currentDolly = (int16_t)camera_index;
+        runtime->world->overRideDolly = 0;
+        newcameraflag = 1;
+    }
     return jpb_PhysicsUpdateSceneObject(
                runtime->physics) ==
-           JPB_PHYSICS_PARTIAL_OK;
+           JPB_PHYSICS_RESULT_OK;
 }
 
 static void pc_print_enemy_placement_diagnostics(
@@ -11488,7 +11702,7 @@ static void pc_print_enemy_placement_diagnostics(
             runtime, placement->actorNum);
         printf(
             "enemy_placement=(id=%d,actor=%d,ai=%d,actor_name=%s,owner=%d,"
-            "flags=%08x,range=%d,class=%d,status=%d,handle=%u,"
+            "flags=%08x,range=%d,deactivate=%d,class=%d,status=%d,handle=%u,"
             "loc=%d/%d/%d,angle=%d,waypoints=%d,link0=%u)\n",
             index,
             placement->actorNum,
@@ -11497,6 +11711,7 @@ static void pc_print_enemy_placement_diagnostics(
             placement->aiDf.ownerType,
             (unsigned)placement->aiDf.activeFlags,
             placement->aiDf.aRange,
+            placement->aiDf.daRange,
             class_model,
             placement->status,
             (unsigned)placement->pLastEnemy,
@@ -11534,64 +11749,68 @@ static void pc_print_enemy_placement_diagnostics(
     }
 }
 
-static int pc_position_for_uncovered_enemy_validation(
-    JPBGameRuntime *runtime)
+static int pc_position_for_enemy_placement_validation(
+    JPBGameRuntime *runtime,
+    int placement_index)
 {
-    int index;
+    wsl_BAP_PLACEMENT *placement;
+    rdVECTOR validation_position;
+    int camera_index;
+    int waypoint_index;
 
     if (runtime == NULL ||
         runtime->world == NULL ||
-        runtime->physics == NULL) {
+        runtime->physics == NULL ||
+        runtime->world->apEnemy == NULL ||
+        placement_index < 0 ||
+        placement_index >= runtime->world->nEnemy) {
         return 0;
     }
-    for (index = 0;
-         index < runtime->world->nEnemy;
-         ++index) {
-        wsl_BAP_PLACEMENT *placement =
-            runtime->world->apEnemy[index];
-
-        if (placement == NULL ||
-            placement->status != 0 ||
-            jpb_GameRuntimeEnemyClassModelId(
-                runtime, placement->actorNum) < 0 ||
-            jpb_GameRuntimeEnemyClassWasActive(
-                runtime, placement->actorNum)) {
-            continue;
-        }
-        /*
-         * Some authored classes (FED Destroyers included) are link-triggered
-         * and begin with neither activation bit set. Exercise the exact
-         * _addEnemy owner against that real placement for this validation
-         * pass; no synthetic placement or actor record is introduced.
-         */
-        if ((placement->aiDf.activeFlags &
-             UINT32_C(0x10000001)) == 0) {
-            if (_addEnemy(
-                    placement, index, -1, 1) == 0) {
-                continue;
-            }
-            placement->status = 1;
-        }
-        runtime->physics->pos.vx =
-            (float)placement->loc.vx;
-        runtime->physics->pos.vy =
-            (float)placement->loc.vy;
-        runtime->physics->pos.vz =
-            (float)placement->loc.vz;
-        runtime->physics->vpos.vx = placement->loc.vx;
-        runtime->physics->vpos.vy = placement->loc.vy;
-        runtime->physics->vpos.vz = placement->loc.vz;
-        runtime->physics->snapshotpos =
-            runtime->physics->pos;
-        runtime->physics->lastpos =
-            runtime->physics->pos;
-        runtime->physics->lastpolyhit = NULL;
-        runtime->world->location = placement->loc;
-        return jpb_PhysicsUpdateSceneObject(
-                   runtime->physics) ==
-               JPB_PHYSICS_PARTIAL_OK;
+    placement = runtime->world->apEnemy[placement_index];
+    if (placement == NULL ||
+        jpb_GameRuntimeEnemyClassModelId(
+            runtime, placement->actorNum) < 0) {
+        return 0;
     }
-    return 0;
+    validation_position = placement->loc;
+    camera_index = pc_camera_index_at_world_position(
+        runtime,
+        validation_position.vx,
+        validation_position.vy,
+        validation_position.vz);
+    /* Flying placements can begin outside any walk-camera collision record.
+     * Their authored waypoint chain still identifies the intended camera
+     * region; use the first waypoint with a real collision-owned dolly. */
+    for (waypoint_index = 0;
+         camera_index < 0 && waypoint_index < placement->nWaypnt;
+         ++waypoint_index) {
+        rdVECTOR waypoint = placement->wayPoints[waypoint_index].loc;
+        int waypoint_camera = pc_camera_index_at_world_position(
+            runtime, waypoint.vx, waypoint.vy, waypoint.vz);
+
+        if (waypoint_camera >= 0 && waypoint_camera < 256) {
+            validation_position = waypoint;
+            camera_index = waypoint_camera;
+        }
+    }
+    if (camera_index < 0 || camera_index >= 256) {
+        return 0;
+    }
+    runtime->physics->pos.vx = (float)validation_position.vx;
+    runtime->physics->pos.vy = (float)validation_position.vy;
+    runtime->physics->pos.vz = (float)validation_position.vz;
+    runtime->physics->vpos.vx = validation_position.vx;
+    runtime->physics->vpos.vy = validation_position.vy;
+    runtime->physics->vpos.vz = validation_position.vz;
+    runtime->physics->snapshotpos = runtime->physics->pos;
+    runtime->physics->lastpos = runtime->physics->pos;
+    runtime->physics->lastpolyhit = NULL;
+    runtime->world->location = validation_position;
+    runtime->world->currentDolly = (int16_t)camera_index;
+    runtime->world->overRideDolly = 0;
+    newcameraflag = 1;
+    return jpb_PhysicsUpdateSceneObject(runtime->physics) ==
+        JPB_PHYSICS_RESULT_OK;
 }
 
 static int pc_force_enemy_placement(
@@ -11643,6 +11862,23 @@ static int pc_force_enemy_placement(
         placement->actorNum,
         placement->aiNum);
     return 1;
+}
+
+static int pc_enemy_is_active(const wsl_ENEMY *target)
+{
+    const Node *node;
+
+    if (target == NULL) {
+        return 0;
+    }
+    for (node = enemyList[mCurEnemyList].head;
+         node != NULL;
+         node = node->next) {
+        if (node == &target->node) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static int pc_position_for_combat_validation(
@@ -11748,7 +11984,7 @@ static int pc_position_for_combat_validation(
     runtime->world->location.vz = runtime->physics->vpos.vz;
     return jpb_PhysicsUpdateSceneObject(
                runtime->physics) ==
-           JPB_PHYSICS_PARTIAL_OK;
+           JPB_PHYSICS_RESULT_OK;
 }
 
 int main(int argc, char **argv)
@@ -11760,6 +11996,8 @@ int main(int argc, char **argv)
     PcInput input = {0};
     PcMoviePlayback movie_playback = {0};
     JPBMenuPlatformHooks menu_hooks = {0};
+    JPBPlatformAchievementHooks achievement_hooks = {0};
+    PcAchievementHarness achievement_harness = {0};
     LARGE_INTEGER frequency;
     LARGE_INTEGER previous;
     uint32_t *pixels = NULL;
@@ -11842,6 +12080,7 @@ int main(int argc, char **argv)
     int spawn_position_explicit = 0;
     FVECTOR spawn_position = {0};
     int force_enemy_placement = -1;
+    int validate_enemy_class_placement = -1;
     int overlay_mode_override = -1;
     unsigned presentation_frame_count = 0;
     unsigned gameplay_handoff_count = 0;
@@ -11851,6 +12090,8 @@ int main(int argc, char **argv)
     size_t hardware_world_depth_pixels = 0;
     int hardware_world_depth_valid = 0;
     int exit_code;
+    int steam_services_initialized = 0;
+    int achievement_harness_installed = 0;
     playerObject *resource_second_player = NULL;
     JPBSoftwareOwnedLevelMesh jpx_hardware_level = {0};
 #if defined(JPB_PC_HAS_UFBX)
@@ -12340,6 +12581,16 @@ int main(int argc, char **argv)
                 pc_print_usage(argv[0]);
                 return 2;
             }
+        } else if (strcmp(
+                       argv[index],
+                       "--validate-enemy-class-placement") == 0 &&
+                   index + 1 < argc) {
+            validate_enemy_class_placement = atoi(argv[++index]);
+            if (validate_enemy_class_placement < 0) {
+                pc_print_usage(argv[0]);
+                return 2;
+            }
+            force_enemy_placement = validate_enemy_class_placement;
         } else if (strcmp(argv[index], "--camera-dolly") == 0 &&
                    index + 1 < argc) {
             camera_dolly_override = atoi(argv[++index]);
@@ -12690,12 +12941,9 @@ int main(int argc, char **argv)
     if (input.headless && frame_limit == 0) {
         frame_limit = 1;
     }
-    if (synthetic_input_requested &&
-        !input.headless &&
-        !input.scriptedInput) {
+    if (synthetic_input_requested && !input.scriptedInput) {
         fputs(
-            "simulated input switches require --control-harness "
-            "for interactive runs\n",
+            "simulated input switches require --control-harness\n",
             stderr);
         return 2;
     }
@@ -12866,10 +13114,11 @@ int main(int argc, char **argv)
     }
     jpb_InputSetProvider(pc_read_pad, &input);
     jpb_InputSetRumbleProvider(pc_set_rumble, &input);
+    jpb_InputSetKeyPressedProvider(pc_key_pressed, &input);
+    jpb_InputSetJoystickCountProvider(pc_joystick_count, &input);
     jpb_BrainutlSetCheatChordProvider(
         pc_read_brainutl_cheat_chords, &input);
     menu_hooks.activateItem = pc_activate_menu_item;
-    menu_hooks.menuSound = pc_menu_sound;
     menu_hooks.keyboardState = pc_read_keyboard_state;
     menu_hooks.triggerMovie = pc_trigger_movie;
     menu_hooks.saveGameData = pc_save_game_data;
@@ -12879,8 +13128,8 @@ int main(int argc, char **argv)
     menu_hooks.openUrl = pc_open_url;
     menu_hooks.requestExit = pc_request_exit;
     menu_hooks.soundCue = pc_menu_sound_cue;
-    menu_hooks.applyResolution = pc_queue_resolution_change;
     jpb_MenuSetPlatformHooks(&menu_hooks, &input);
+    jpb_WHookSetGetWindowSizeHook(pc_get_window_size, &input);
     if (!pc_apply_player_saber_color_mode(
             player_model, player_saber_color_mode)) {
         fputs(
@@ -12888,20 +13137,40 @@ int main(int argc, char **argv)
             stderr);
         jpb_InputSetProvider(NULL, NULL);
         jpb_InputSetRumbleProvider(NULL, NULL);
+        jpb_InputSetKeyPressedProvider(NULL, NULL);
+        jpb_InputSetJoystickCountProvider(NULL, NULL);
         jpb_BrainutlSetCheatChordProvider(NULL, NULL);
         jpb_MenuSetPlatformHooks(NULL, NULL);
         jpb_PCXInputShutdown(&input.xinput);
         free(pixels);
         return 2;
     }
+    if (input.scriptedInput) {
+        achievement_hooks.complete = pc_complete_harness_achievement;
+        achievement_hooks.get_complete = pc_get_harness_achievement;
+        jpb_PlatformSetAchievementHooks(
+            &achievement_hooks, &achievement_harness);
+        achievement_harness_installed = 1;
+    }
     result = jpb_GameRuntimeInitWithPlayerAssets(
         &runtime, mesh_path, cad_path, bmd_path, player_model);
     if (result != JPB_GAME_RUNTIME_OK) {
-        fprintf(stderr, "game runtime init failed: status=%d\n", result);
+        fprintf(
+            stderr,
+            "game runtime init failed: status=%d stage=%s detail=%s\n",
+            result,
+            jpb_GameRuntimeLastFailureStage(),
+            jpb_GameRuntimeLastFailureDetail());
         jpb_InputSetProvider(NULL, NULL);
         jpb_InputSetRumbleProvider(NULL, NULL);
+        jpb_InputSetKeyPressedProvider(NULL, NULL);
+        jpb_InputSetJoystickCountProvider(NULL, NULL);
         jpb_BrainutlSetCheatChordProvider(NULL, NULL);
         jpb_MenuSetPlatformHooks(NULL, NULL);
+        if (achievement_harness_installed) {
+            jpb_PlatformSetAchievementHooks(NULL, NULL);
+            achievement_harness_installed = 0;
+        }
         jpb_PCXInputShutdown(&input.xinput);
         free(pixels);
         return 4;
@@ -13389,7 +13658,7 @@ int main(int argc, char **argv)
         runtime.targetY = runtime.physics->pos.vy;
         runtime.targetZ = runtime.physics->pos.vz;
         if (jpb_PhysicsUpdateSceneObject(runtime.physics) !=
-            JPB_PHYSICS_PARTIAL_OK) {
+            JPB_PHYSICS_RESULT_OK) {
             fprintf(
                 stderr,
                 "spawn-position could not update player scene object "
@@ -13406,6 +13675,19 @@ int main(int argc, char **argv)
             spawn_position.vx,
             spawn_position.vy,
             spawn_position.vz);
+    }
+    if (validate_enemy_class_placement >= 0 &&
+        !pc_position_for_enemy_placement_validation(
+            &runtime,
+            validate_enemy_class_placement)) {
+        fprintf(
+            stderr,
+            "enemy-class placement could not establish authored camera "
+            "state id=%d\n",
+            validate_enemy_class_placement);
+        jpb_GameRuntimeShutdown(&runtime);
+        free(pixels);
+        return 4;
     }
     if (force_enemy_placement >= 0 &&
         !pc_force_enemy_placement(
@@ -13566,12 +13848,16 @@ int main(int argc, char **argv)
 
     /* menu_mainInitMenu clears GameStruct as its retail owner does. Load
      * persisted state after that boundary so Continue and saved selections
-     * are visible to the ordinary front-end definitions. */
+     * are visible to the ordinary front-end definitions. Quickload has
+     * already initialized its player by this point, so applying campaign
+     * state here would restore saved transient powerups after player refresh
+     * cleared them. Keep options, but leave quickload gameplay state fresh. */
     if (input.persistenceEnabled) {
         JPBSaveResult options_result =
             jpb_SaveOptionsReadFile(input.optionsPath);
-        JPBSaveResult game_result =
-            jpb_SaveGameReadFile(input.saveGamePath);
+        JPBSaveResult game_result = quickload_level == NULL
+            ? jpb_SaveGameReadFile(input.saveGamePath)
+            : JPB_SAVE_NOT_FOUND;
 
         input.noValidGameSave = game_result != JPB_SAVE_OK;
 
@@ -13612,6 +13898,15 @@ int main(int argc, char **argv)
      * ordinary runs continue to use the saved/menu-selected configuration. */
     pc_apply_control_scheme_overrides(&input);
 
+    if (!input.headless && !input.hiddenWindow) {
+        if (!jpb_PlatformInitializeSteamServices()) {
+            fputs("Steam platform initialization failed\n", stderr);
+            result = JPB_GAME_RUNTIME_LOAD_FAILED;
+            goto cleanup;
+        }
+        steam_services_initialized = 1;
+    }
+
     if (!input.headless && !mute) {
         audio = pc_create_current_game_audio(
             mesh_path,
@@ -13640,10 +13935,19 @@ int main(int argc, char **argv)
             pc_select_fed_traversal_input(
                 &input, &runtime, frame_count - 1);
             if (movie_playback.active) {
-                (void)pc_movie_present_frame(
-                    &movie_playback,
-                    &framebuffer,
-                    input.validateTitleMovie ? 2000 : 250);
+                if (pc_movie_skip_requested(&input, 0)) {
+                    ++input.movieSkipCount;
+                    jpb_PCLog(
+                        "movie skipped frame=%d index=%u",
+                        frame_count,
+                        input.movieLastIndex);
+                    pc_movie_playback_shutdown(&movie_playback);
+                } else {
+                    (void)pc_movie_present_frame(
+                        &movie_playback,
+                        &framebuffer,
+                        input.validateTitleMovie ? 2000 : 250);
+                }
                 pc_movie_sync_input_counts(&input);
                 result = JPB_GAME_RUNTIME_OK;
                 presented_movie_frame = 1;
@@ -13687,7 +13991,7 @@ int main(int argc, char **argv)
                     runtime.world->location.vz =
                         runtime.physics->vpos.vz;
                     if (jpb_PhysicsUpdateSceneObject(runtime.physics) !=
-                        JPB_PHYSICS_PARTIAL_OK) {
+                        JPB_PHYSICS_RESULT_OK) {
                         fputs(
                             "death-restart validation could not move the "
                             "FED player\n",
@@ -13846,7 +14150,12 @@ int main(int argc, char **argv)
                     enemy_bmd_path,
                     selected_front_end_level,
                     selected_front_end_game_mode,
-                    &input);
+                    &input
+#if defined(JPB_PC_HAS_UFBX)
+                    , &fbx_level,
+                    &fbx_level_loaded
+#endif
+                    );
                 if (result != JPB_GAME_RUNTIME_OK) {
                     break;
                 }
@@ -13898,7 +14207,12 @@ int main(int argc, char **argv)
                         NULL,
                         selected_level,
                         2,
-                        &input);
+                        &input
+#if defined(JPB_PC_HAS_UFBX)
+                        , &fbx_level,
+                        &fbx_level_loaded
+#endif
+                        );
                     if (result != JPB_GAME_RUNTIME_OK) {
                         break;
                     }
@@ -13945,7 +14259,12 @@ int main(int argc, char **argv)
                         NULL,
                         selected_level,
                         2,
-                        &input);
+                        &input
+#if defined(JPB_PC_HAS_UFBX)
+                        , &fbx_level,
+                        &fbx_level_loaded
+#endif
+                        );
                     if (result != JPB_GAME_RUNTIME_OK) {
                         break;
                     }
@@ -14001,15 +14320,6 @@ int main(int argc, char **argv)
                 break;
             }
             ++frame_count;
-            if (input.validateMultiEnemy &&
-                frame_count < frame_limit &&
-                runtime.enemyActivatedClassCount <
-                    runtime.enemyPlacedClassCount &&
-                !pc_position_for_uncovered_enemy_validation(
-                    &runtime)) {
-                result = JPB_GAME_RUNTIME_LOAD_FAILED;
-                break;
-            }
             if (input.phaseCount != 0) {
                 pc_print_headless_phase_boundary(
                     &input, &runtime, frame_count - 1);
@@ -14059,6 +14369,7 @@ int main(int argc, char **argv)
         LARGE_INTEGER loop_started = {0};
         LARGE_INTEGER fps_title_started = {0};
 
+        input.window = window;
         if (window == NULL) {
             result = JPB_GAME_RUNTIME_RENDER_FAILED;
         } else {
@@ -14128,7 +14439,7 @@ int main(int argc, char **argv)
                 pc_begin_input_frame(&input);
                 live_menu_keys = input.scriptedInput
                     ? 0
-                    : pc_live_menu_key_bits();
+                    : pc_live_menu_key_bits(&input);
                 live_menu_pressed =
                     live_menu_keys & ~previous_menu_key_bits;
 
@@ -14145,6 +14456,14 @@ int main(int argc, char **argv)
                 }
                 if (!pc_running) {
                     break;
+                }
+                if (resolutionUpdated != 0) {
+                    input.resolutionChangePending = 1;
+                    input.resolutionWidth = newWidth;
+                    input.resolutionHeight = newHeight;
+                    input.resolutionWindowMode =
+                        (unsigned)newWindowMode;
+                    resolutionUpdated = 0;
                 }
                 if (input.resolutionChangePending &&
                     !pc_apply_pending_resolution(
@@ -14509,7 +14828,12 @@ int main(int argc, char **argv)
                         enemy_bmd_path,
                         selected_front_end_level,
                         selected_front_end_game_mode,
-                        &input);
+                        &input
+#if defined(JPB_PC_HAS_UFBX)
+                        , &fbx_level,
+                        &fbx_level_loaded
+#endif
+                        );
                     if (result != JPB_GAME_RUNTIME_OK) {
                         break;
                     }
@@ -14595,7 +14919,12 @@ int main(int argc, char **argv)
                             NULL,
                             selected_level,
                             2,
-                            &input);
+                            &input
+#if defined(JPB_PC_HAS_UFBX)
+                            , &fbx_level,
+                            &fbx_level_loaded
+#endif
+                            );
                         if (result != JPB_GAME_RUNTIME_OK) {
                             break;
                         }
@@ -14667,7 +14996,12 @@ int main(int argc, char **argv)
                             NULL,
                             selected_level,
                             2,
-                            &input);
+                            &input
+#if defined(JPB_PC_HAS_UFBX)
+                            , &fbx_level,
+                            &fbx_level_loaded
+#endif
+                            );
                         if (result != JPB_GAME_RUNTIME_OK) {
                             break;
                         }
@@ -15790,7 +16124,7 @@ int main(int argc, char **argv)
             (unsigned)menuVars.pad[1],
             runtime.textDrawCount,
             runtime.textTrueTypeDrawCount,
-            runtime.textFallbackDrawCount,
+            runtime.textFailedDrawCount,
             runtime.textDrawCompositePixelCount,
             runtime.maximumTextPointSize,
             runtime.maximumTextMeasuredWidth,
@@ -15844,15 +16178,16 @@ int main(int argc, char **argv)
     }
     if (result == JPB_GAME_RUNTIME_OK &&
         input.validatePlayerSaber &&
-        (!input.headless ||
+        ((!input.headless && !input.hiddenWindow) ||
          runtime.glowDrawDroppedCount != 0 ||
          !pc_validate_player_saber(&saber_diagnostics))) {
         fprintf(
             stderr,
-            "headless character-owned saber validation failed "
+            "%s character-owned saber validation failed "
             "(model=%d expected=%d color=%08x outer=%zu trail=%zu "
             "core=%zu attached=%zu unmatched=%zu "
             "width=%d..%d length=%.1f..%.1f dropped=%zu)\n",
+            input.headless ? "headless" : "hidden-window",
             saber_diagnostics.playerModel,
             saber_diagnostics.expectsSaber,
             (unsigned)saber_diagnostics.outerColor,
@@ -15869,16 +16204,18 @@ int main(int argc, char **argv)
         result = JPB_GAME_RUNTIME_RENDER_FAILED;
     }
     if (result == JPB_GAME_RUNTIME_OK &&
-        input.validatePlayerSaber && input.headless &&
+        input.validatePlayerSaber &&
+        (input.headless || input.hiddenWindow) &&
         runtime.secondPlayerState != NULL &&
         (runtime.glowDrawDroppedCount != 0 ||
          !pc_validate_player_saber(&second_saber_diagnostics))) {
         fprintf(
             stderr,
-            "headless second-player character-owned saber validation failed "
+            "%s second-player character-owned saber validation failed "
             "(model=%d expected=%d color=%08x outer=%zu trail=%zu "
             "core=%zu attached=%zu unmatched=%zu "
             "width=%d..%d length=%.1f..%.1f dropped=%zu)\n",
+            input.headless ? "headless" : "hidden-window",
             second_saber_diagnostics.playerModel,
             second_saber_diagnostics.expectsSaber,
             (unsigned)second_saber_diagnostics.outerColor,
@@ -15895,14 +16232,16 @@ int main(int argc, char **argv)
         result = JPB_GAME_RUNTIME_RENDER_FAILED;
     }
     if (result == JPB_GAME_RUNTIME_OK &&
-        input.validatePlayerSaber && input.headless &&
+        input.validatePlayerSaber &&
+        (input.headless || input.hiddenWindow) &&
         saber_action_diagnostics.actionFrames != 0 &&
         saber_action_diagnostics.invalidActionFrames != 0) {
         fprintf(
             stderr,
-            "headless action-window saber validation failed "
+            "%s action-window saber validation failed "
             "(model=%d expected=%d frames=%zu valid=%zu invalid=%zu "
             "attached=%zu trails=%zu width=%d..%d length=%.1f..%.1f)\n",
+            input.headless ? "headless" : "hidden-window",
             saber_action_diagnostics.playerModel,
             saber_action_diagnostics.expectsSaber,
             saber_action_diagnostics.actionFrames,
@@ -15917,15 +16256,17 @@ int main(int argc, char **argv)
         result = JPB_GAME_RUNTIME_RENDER_FAILED;
     }
     if (result == JPB_GAME_RUNTIME_OK &&
-        input.validatePlayerSaber && input.headless &&
+        input.validatePlayerSaber &&
+        (input.headless || input.hiddenWindow) &&
         runtime.secondPlayerState != NULL &&
         second_saber_action_diagnostics.actionFrames != 0 &&
         second_saber_action_diagnostics.invalidActionFrames != 0) {
         fprintf(
             stderr,
-            "headless second-player action-window saber validation failed "
+            "%s second-player action-window saber validation failed "
             "(model=%d expected=%d frames=%zu valid=%zu invalid=%zu "
             "attached=%zu trails=%zu width=%d..%d length=%.1f..%.1f)\n",
+            input.headless ? "headless" : "hidden-window",
             second_saber_action_diagnostics.playerModel,
             second_saber_action_diagnostics.expectsSaber,
             second_saber_action_diagnostics.actionFrames,
@@ -16161,17 +16502,15 @@ int main(int argc, char **argv)
     }
     if (result == JPB_GAME_RUNTIME_OK &&
         input.headless && enemy_cad_path != NULL &&
-        quickload_level == NULL) {
+        quickload_level == NULL &&
+        validate_enemy_class_placement < 0) {
         int enemy_state_invalid =
             runtime.enemy == NULL ||
             runtime.enemyPlayer == NULL ||
             runtime.enemy->pPlayer != runtime.enemyPlayer ||
             (!input.validateCombat &&
-             enemyList[mCurEnemyList].head !=
-                 &runtime.enemy->node) ||
+             !pc_enemy_is_active(runtime.enemy)) ||
             runtime.enemy->pPlace == NULL ||
-            runtime.enemy->pPlace->actorNum !=
-                runtime.enemy->actorNum ||
             runtime.enemy->pPlace->status != 1 ||
             runtime.enemy->pPlace->pLastEnemy ==
                 UINT32_MAX ||
@@ -16179,12 +16518,10 @@ int main(int argc, char **argv)
                 (int)runtime.enemy->pPlace->pLastEnemy,
                 JPB_POINTER_ARRAY_ENEMY) !=
                 runtime.enemy ||
-            runtime.enemy->enemyID !=
-                runtime.enemy->enemyNum ||
             runtime.enemyPlayer->playerID !=
                 jpb_GameRuntimeEnemyClassModelId(
                     &runtime,
-                    runtime.enemy->actorNum) ||
+                    runtime.enemy->pPlace->actorNum) ||
             runtime.enemyMainCallbackFrameCount == 0 ||
             runtime.enemyAuthoredOpcodeFrameCount == 0 ||
             runtime.enemyOpcodeBoundaryFrameCount != 0 ||
@@ -16192,7 +16529,7 @@ int main(int argc, char **argv)
             runtime.enemyAiStorageSize <
                 sizeof(aiData) ||
             ai_GetAIHandle(
-                runtime.enemy->actorNum,
+                runtime.enemy->pPlace->actorNum,
                 runtime.enemyAiLevel) !=
                 runtime.enemyPlayer->paiMemory ||
             runtime.enemyPlayer->target != runtime.player ||
@@ -16219,7 +16556,7 @@ int main(int argc, char **argv)
                 "(main=%d authored_ai=%u ai_boundary=%u/0x%03x "
                 "kungfu=%d ai=%d ai_size=%zu ai_level=%d "
                 "ai_registered=%d actors=%zu/%zu/%zu "
-                "owner=%d head=%d place=%d ptr=%d ids=%d/%d "
+                "owner=%d listed=%d place=%d ptr=%d ids=%d/%d "
                 "model=%d/%d target=%d/%d "
                 "pose=%d/%d/%d root=%d keyframe=%d submit=%d)\n",
                 runtime.enemyMainCallbackFrameCount != 0,
@@ -16235,8 +16572,9 @@ int main(int argc, char **argv)
                 (int)runtime.enemyAiLevel,
                 runtime.enemyPlayer != NULL &&
                     runtime.enemy != NULL &&
+                    runtime.enemy->pPlace != NULL &&
                     ai_GetAIHandle(
-                        runtime.enemy->actorNum,
+                        runtime.enemy->pPlace->actorNum,
                         runtime.enemyAiLevel) ==
                         runtime.enemyPlayer->paiMemory,
                 runtime.enemyActorCount,
@@ -16246,12 +16584,9 @@ int main(int argc, char **argv)
                     runtime.enemy->pPlayer ==
                         runtime.enemyPlayer,
                 runtime.enemy != NULL &&
-                    enemyList[mCurEnemyList].head ==
-                        &runtime.enemy->node,
+                    pc_enemy_is_active(runtime.enemy),
                 runtime.enemy != NULL &&
                     runtime.enemy->pPlace != NULL &&
-                    runtime.enemy->pPlace->actorNum ==
-                        runtime.enemy->actorNum &&
                     runtime.enemy->pPlace->status == 1,
                 runtime.enemy != NULL &&
                     runtime.enemy->pPlace != NULL &&
@@ -16271,10 +16606,11 @@ int main(int argc, char **argv)
                 runtime.enemyPlayer != NULL
                     ? runtime.enemyPlayer->playerID
                     : -1,
-                runtime.enemy != NULL
+                runtime.enemy != NULL &&
+                    runtime.enemy->pPlace != NULL
                     ? jpb_GameRuntimeEnemyClassModelId(
                           &runtime,
-                          runtime.enemy->actorNum)
+                          runtime.enemy->pPlace->actorNum)
                     : -1,
                 runtime.enemyPlayer != NULL &&
                     runtime.player->target ==
@@ -16304,14 +16640,12 @@ int main(int argc, char **argv)
          runtime.enemyPlacedClassCount >
              runtime.enemyLoadedClassCount ||
          runtime.enemyActiveClassPeakCount < 2 ||
-         runtime.enemyActivatedClassCount !=
-             runtime.enemyPlacedClassCount ||
-         runtime.enemyRenderedClassCount !=
-             runtime.enemyPlacedClassCount)) {
+         runtime.enemyActivatedClassCount < 2 ||
+         runtime.enemyRenderedClassCount < 2)) {
         fprintf(
             stderr,
             "headless multi-enemy validation did not retain authored "
-            "actors from every exact loader-table class "
+            "co-resident actors from multiple loader-table classes "
             "(actors=%zu/%zu/%zu "
             "classes=%zu/%zu/%zu/%zu/%zu/%zu)\n",
             runtime.enemyActorCount,
@@ -16324,6 +16658,51 @@ int main(int argc, char **argv)
             runtime.enemyActivatedClassCount,
             runtime.enemyRenderedClassCount);
         result = JPB_GAME_RUNTIME_RENDER_FAILED;
+    }
+    if (result == JPB_GAME_RUNTIME_OK &&
+        validate_enemy_class_placement >= 0) {
+        wsl_BAP_PLACEMENT *placement =
+            runtime.world != NULL &&
+            runtime.world->apEnemy != NULL &&
+            validate_enemy_class_placement < runtime.world->nEnemy
+                ? runtime.world->apEnemy[
+                      validate_enemy_class_placement]
+                : NULL;
+        int actor_num = placement != NULL
+            ? placement->actorNum
+            : -1;
+
+        if (!input.headless || placement == NULL ||
+            jpb_GameRuntimeEnemyClassModelId(
+                &runtime, actor_num) < 0 ||
+            !jpb_GameRuntimeEnemyClassWasActive(
+                &runtime, actor_num) ||
+            !jpb_GameRuntimeEnemyClassWasRendered(
+                &runtime, actor_num)) {
+            fprintf(
+                stderr,
+                "headless enemy-class placement validation failed "
+                "(placement=%d actor=%d model=%d active=%d rendered=%d "
+                "actors=%zu/%zu/%zu classes=%zu/%zu/%zu/%zu/%zu/%zu)\n",
+                validate_enemy_class_placement,
+                actor_num,
+                jpb_GameRuntimeEnemyClassModelId(
+                    &runtime, actor_num),
+                jpb_GameRuntimeEnemyClassWasActive(
+                    &runtime, actor_num),
+                jpb_GameRuntimeEnemyClassWasRendered(
+                    &runtime, actor_num),
+                runtime.enemyActorCount,
+                runtime.enemyActorPeakCount,
+                runtime.enemySpawnCount,
+                runtime.enemyLoadedClassCount,
+                runtime.enemyPlacedClassCount,
+                runtime.enemyActiveClassCount,
+                runtime.enemyActiveClassPeakCount,
+                runtime.enemyActivatedClassCount,
+                runtime.enemyRenderedClassCount);
+            result = JPB_GAME_RUNTIME_RENDER_FAILED;
+        }
     }
     if (result == JPB_GAME_RUNTIME_OK &&
         input.validateRadar &&
@@ -16351,10 +16730,10 @@ int main(int argc, char **argv)
                 pc_screen_draw_is_enemy_radar_player_marker_960),
             pc_count_screen_draws_matching(
                 &runtime,
-                pc_screen_draw_is_enemy_radar_red_marker_a_960),
+                pc_screen_draw_is_enemy_radar_red_marker),
             pc_count_screen_draws_matching(
                 &runtime,
-                pc_screen_draw_is_enemy_radar_green_marker_960),
+                pc_screen_draw_is_enemy_radar_green_marker),
             pc_count_enemy_radar_draws(&runtime),
             runtime.screenDrawDroppedCount,
             runtime.screenDrawCompositePixelCount,
@@ -16388,10 +16767,10 @@ int main(int argc, char **argv)
                 pc_screen_draw_is_enemy_radar_player_marker_1080),
             pc_count_screen_draws_matching(
                 &runtime,
-                pc_screen_draw_is_enemy_radar_red_marker_a_1080),
+                pc_screen_draw_is_enemy_radar_red_marker),
             pc_count_screen_draws_matching(
                 &runtime,
-                pc_screen_draw_is_enemy_radar_green_marker_1080),
+                pc_screen_draw_is_enemy_radar_green_marker),
             pc_count_enemy_radar_draws(&runtime),
             runtime.screenDrawDroppedCount,
             runtime.screenDrawCompositePixelCount,
@@ -18009,6 +18388,45 @@ int main(int argc, char **argv)
         runtime.inactivePlayer != NULL
             ? (unsigned)runtime.inactivePlayer->pFlags
             : 0u);
+    if (runtime.inactivePlayer != NULL &&
+        runtime.inactivePlayerScene != NULL &&
+        runtime.inactivePlayerPhysics != NULL) {
+        objectRoot *nearest = brainutl_gGetNearestTarget(
+            &runtime.player->playerRoot, 2);
+        modelObject *second_model =
+            (modelObject *)runtime.inactivePlayerScene->pModel;
+
+        printf(
+            "control_targets=(nearest=%d,p1_physics=%d/%08x,"
+            "p2_physics=%d/%08x,p2_model=%08x,p2_energy=%d,"
+            "range=%d)\n",
+            nearest != NULL ? nearest->objectID : -1,
+            runtime.physics->physicsRoot.objectID,
+            (unsigned)runtime.physics->physicsRoot.flags,
+            runtime.inactivePlayerPhysics->physicsRoot.objectID,
+            (unsigned)runtime.inactivePlayerPhysics->physicsRoot.flags,
+            second_model != NULL ? (unsigned)second_model->flags : 0u,
+            game_gGetEnergy(runtime.inactivePlayer->playernum),
+            physics_gGetRange(
+                &runtime.player->playerRoot,
+                &runtime.inactivePlayer->playerRoot));
+    }
+    {
+        JPBBrainLockDiagnostics lock_diagnostics;
+
+        jpb_BrainGetLockDiagnostics(&lock_diagnostics);
+        printf(
+            "control_lock_path=(calls=%u,input=%u,eligible=%u,"
+            "searches=%u,found=%u,last=%08x/%d/%d)\n",
+            (unsigned)lock_diagnostics.calls,
+            (unsigned)lock_diagnostics.inputButtonFrames,
+            (unsigned)lock_diagnostics.eligibleFrames,
+            (unsigned)lock_diagnostics.targetSearches,
+            (unsigned)lock_diagnostics.targetsFound,
+            (unsigned)lock_diagnostics.lastPadBits,
+            (int)lock_diagnostics.lastLevel,
+            (int)lock_diagnostics.lastPlayerId);
+    }
     {
         JPBEnemyVehicleDiagnostics vehicle_diagnostics = {0};
 
@@ -18239,6 +18657,11 @@ int main(int argc, char **argv)
         (unsigned)runtime.player->groundDelay,
         (unsigned)gGlobalTimer);
     printf(
+        "player_collision=(radius=%d,height=%d,maxledge=%d)\n",
+        (int)runtime.physics->radius,
+        (int)runtime.physics->height,
+        (int)runtime.physics->maxledge);
+    printf(
         "player_framing=(samples=%u,onscreen=%u,offscreen=%u,"
         "transitions=%u,final=%u,world=%d/%d/%d,"
         "screen=%d/%d,clipped=%d/%d,alpha=%d)\n",
@@ -18255,6 +18678,27 @@ int main(int argc, char **argv)
         (int)runtime.playerOffscreenClippedX,
         (int)runtime.playerOffscreenClippedY,
         (int)runtime.playerOffscreenAlpha);
+    printf(
+        "control_contract=(game_flags=%08x,orbit=%.3f,"
+        "p1_source=%s,p2_source=%s,"
+        "p1=pressed:%u,held:%u,releases:%u,bits:%08x/%08x/%08x;"
+        "p2=pressed:%u,held:%u,releases:%u,bits:%08x/%08x/%08x)\n",
+        (unsigned)GameStruct.GameState,
+        runtime.orbitDistance,
+        player1InputType == 0 ? "keyboard" : "xinput",
+        player2InputType == 0 ? "keyboard" : "xinput",
+        (unsigned)runtime.controlPressedFrameCount[0],
+        (unsigned)runtime.controlHeldFrameCount[0],
+        (unsigned)runtime.controlReleaseEventCount[0],
+        (unsigned)runtime.controlObservedPressedBits[0],
+        (unsigned)runtime.controlObservedHeldBits[0],
+        (unsigned)runtime.controlObservedReleasedBits[0],
+        (unsigned)runtime.controlPressedFrameCount[1],
+        (unsigned)runtime.controlHeldFrameCount[1],
+        (unsigned)runtime.controlReleaseEventCount[1],
+        (unsigned)runtime.controlObservedPressedBits[1],
+        (unsigned)runtime.controlObservedHeldBits[1],
+        (unsigned)runtime.controlObservedReleasedBits[1]);
     printf(
         "control_edges=(p1=pressed_frames:%u,held_frames:%u,"
         "release_events:%u,pressed_bits:%08x,held_bits:%08x,"
@@ -18376,7 +18820,7 @@ int main(int argc, char **argv)
         (unsigned)runtime.playerVisibleFrameCount,
         runtime.textDrawCount,
         runtime.textTrueTypeDrawCount,
-        runtime.textFallbackDrawCount,
+        runtime.textFailedDrawCount,
         runtime.textDrawCompositePixelCount,
         runtime.maximumTextPointSize,
         runtime.maximumTextMeasuredWidth,
@@ -18715,17 +19159,18 @@ int main(int argc, char **argv)
     pc_print_sprite_display_trace(&runtime);
     pc_print_psx_texture_draw_trace(&runtime);
 cleanup:
+    if (achievement_harness_installed) {
+        jpb_PlatformSetAchievementHooks(NULL, NULL);
+        achievement_harness_installed = 0;
+    }
+    if (steam_services_initialized) {
+        jpb_PlatformShutdownSteamServices();
+        steam_services_initialized = 0;
+    }
     pc_retail_replay_close(&input);
     if (input_trail_file != NULL) {
         fclose(input_trail_file);
         input_trail_file = NULL;
-    }
-    if (jpb_sprite_list_recovery_count != 0) {
-        fprintf(
-            stderr,
-            "sprite list selector recoveries=%u last=%d\n",
-            (unsigned)jpb_sprite_list_recovery_count,
-            (int)jpb_sprite_last_invalid_selector);
     }
     if (result == JPB_GAME_RUNTIME_OK &&
         input.persistenceEnabled) {
@@ -18753,8 +19198,11 @@ cleanup:
 #endif
     jpb_InputSetProvider(NULL, NULL);
     jpb_InputSetRumbleProvider(NULL, NULL);
+    jpb_InputSetKeyPressedProvider(NULL, NULL);
+    jpb_InputSetJoystickCountProvider(NULL, NULL);
     jpb_BrainutlSetCheatChordProvider(NULL, NULL);
     jpb_MenuSetPlatformHooks(NULL, NULL);
+    jpb_WHookSetGetWindowSizeHook(NULL, NULL);
     jpb_PCXInputShutdown(&input.xinput);
     free(title_pixels);
     free(pixels);

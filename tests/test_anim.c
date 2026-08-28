@@ -42,12 +42,16 @@ static int anim_sound_last_bank;
 static char anim_sound_last_name[9];
 
 static uint16_t anim_sound_play_hook(
+    void *chunk,
+    int loops,
     VECTOR *position,
     int bank,
     char *sound,
     uint32_t flags,
     void *user_data)
 {
+    (void)chunk;
+    (void)loops;
     (void)position;
     (void)flags;
     (void)user_data;
@@ -126,7 +130,7 @@ static int test_animation_pool(void)
     CHECK(maAnimationData[10].animRoot.objectID == -1);
 
     before = maAnimationData[0];
-    anim_InitAnimations(-1);
+    anim_InitAnimations(JPB_ANIMATION_CAPACITY);
     CHECK(memcmp(&maAnimationData[0], &before, sizeof(before)) == 0);
 
     anim_InitAnimations(0);
@@ -449,6 +453,7 @@ static int test_sequence_end_transition(void)
     looping.Seq = 0;
     looping.motionFlags = UINT32_C(0x80000000);
     looping.Speed = JPB_FIXED_ONE;
+    looping.cutout = 2;
     strike.Seq = 1;
     strike.Speed = JPB_FIXED_ONE;
 
@@ -463,6 +468,13 @@ static int test_sequence_end_transition(void)
     CHECK(animation->animFrameIndex ==
           templates[0].Fframe * JPB_FIXED_ONE);
     CHECK(animation->pMotion == &looping);
+
+    animation->animFrameIndex =
+        (templates[0].Lframe - looping.cutout) * JPB_FIXED_ONE;
+    CHECK(jpb_AnimAdvanceQueuedMotionAtEnd(
+              animation) == JPB_ANIM_PARTIAL_OK);
+    CHECK(animation->animFrameIndex ==
+          (templates[0].Fframe - looping.cutout) * JPB_FIXED_ONE);
 
     CHECK(anim_AddNextAnimSeq(
               animation, &strike, 0) == 0);
@@ -572,6 +584,7 @@ static int test_motion_lock_wrappers(void)
     animObject *animation;
     _animTemplate templates[2];
     Motion motion;
+    uint32_t pose_words[3] = {0};
 
     anim_InitAnimations(0);
     animation = &maAnimationData[0];
@@ -580,6 +593,8 @@ static int test_motion_lock_wrappers(void)
     scene.pAnim = &animation->animRoot;
     scene.pPlayer = &player.playerRoot;
     animation->depack_context.seqdata = templates;
+    animation->depack_context.huffdataorigin = pose_words;
+    animation->depack_context.numparts = 0;
     player.maxMotions = 2;
     memset(templates, 0, sizeof(templates));
     memset(&motion, 0, sizeof(motion));
@@ -630,6 +645,7 @@ static int test_motion_combo_chain_wrapper(void)
     animObject *animation;
     _animTemplate templates[2];
     Motion motion;
+    uint32_t pose_words[3] = {0};
 
     anim_InitAnimations(0);
     animation = &maAnimationData[0];
@@ -638,6 +654,8 @@ static int test_motion_combo_chain_wrapper(void)
     scene.pAnim = &animation->animRoot;
     scene.pPlayer = &player.playerRoot;
     animation->depack_context.seqdata = templates;
+    animation->depack_context.huffdataorigin = pose_words;
+    animation->depack_context.numparts = 0;
     player.maxMotions = 2;
     memset(templates, 0, sizeof(templates));
     memset(&motion, 0, sizeof(motion));
@@ -669,6 +687,8 @@ static int test_motion_combo_chain_wrapper(void)
     animation->animRoot.pParent = &scene.sceneRoot;
     scene.pAnim = &animation->animRoot;
     animation->depack_context.seqdata = templates;
+    animation->depack_context.huffdataorigin = pose_words;
+    animation->depack_context.numparts = 0;
     CHECK(animctrl_MotionComboChain(
               &player.playerRoot,
               &motion,
@@ -692,6 +712,7 @@ static int test_ai_throw_callback(void)
     animObject *target_animation;
     _animTemplate templates[2];
     Motion motions[2];
+    uint32_t pose_words[3] = {0};
 
     memset(templates, 0, sizeof(templates));
     memset(motions, 0, sizeof(motions));
@@ -724,14 +745,18 @@ static int test_ai_throw_callback(void)
     scene.pPlayer = &player.playerRoot;
     animation->animRoot.pParent = &scene.sceneRoot;
     animation->depack_context.seqdata = templates;
+    animation->depack_context.huffdataorigin = pose_words;
     animation->depack_context3.seqdata = templates;
+    animation->depack_context3.huffdataorigin = pose_words;
     animation->pMotion = &motions[0];
     target_scene.pAnim = &target_animation->animRoot;
     target_scene.pPlayer = &target.playerRoot;
     target_animation->animRoot.pParent =
         &target_scene.sceneRoot;
     target_animation->depack_context.seqdata = templates;
+    target_animation->depack_context.huffdataorigin = pose_words;
     target_animation->depack_context3.seqdata = templates;
+    target_animation->depack_context3.huffdataorigin = pose_words;
 
     motions[0].Seq = 0;
     motions[0].Lock = 1;
@@ -878,6 +903,10 @@ static int test_animation_control_utilities(void)
     CHECK(animation.animFrameRate == -500);
     animutl_gSetCurrentFrameIndex(&player.playerRoot, 3);
     CHECK(animation.animFrameIndex == 13 * JPB_FIXED_ONE);
+    templates[1].Fframe = INT16_MAX;
+    animutl_gSetCurrentFrameIndex(&player.playerRoot, INT32_MAX);
+    CHECK(animation.animFrameIndex == INT32_C(0x07ffe000));
+    templates[1].Fframe = 10;
 
     list_InitList(&animation.animFreeList);
     list_InitList(&animation.animList);
@@ -915,15 +944,16 @@ static int test_animation_sound_scheduler(void)
     sequence.Lframe = 10;
     motion.Seq = 0;
     motion.Speed = JPB_FIXED_ONE;
-    motion.FunctPtr = -1;
-    memcpy(motion.snd[0], "swing", 5);
-    memcpy(motion.snd[1], "step", 4);
+    motion.FunctPtr = 0;
+    memcpy(motion.snd[0], "sabrsw01", 8);
+    memcpy(motion.snd[1], "jedihit", 7);
     motion.sndDelay[1] = 2;
     LevelSelect = 1;
     gGlobalTimer = 1000;
     anim_sound_play_calls = 0;
     anim_sound_last_bank = -1;
     memset(anim_sound_last_name, 0, sizeof(anim_sound_last_name));
+    CHECK(sound_LoadBank("resident", 1) == 0);
     jpb_SoundSetPlaySfxHook(anim_sound_play_hook, NULL);
 
     CHECK(anim_AddNextAnimSeq(animation, &motion, 0) == 0);
@@ -931,17 +961,17 @@ static int test_animation_sound_scheduler(void)
           JPB_ANIM_PARTIAL_OK);
     CHECK(anim_sound_play_calls == 1);
     CHECK(anim_sound_last_bank == 1);
-    CHECK(strcmp(anim_sound_last_name, "swing") == 0);
+    CHECK(strcmp(anim_sound_last_name, "sabrsw01") == 0);
     CHECK(animation->loopHandle[0] == 71);
     CHECK(animation->soundTimer[1] == 2024);
 
-    gGlobalTimer = 2023;
+    gGlobalTimer = 1011;
     jpb_AnimHandleSoundState(animation);
     CHECK(anim_sound_play_calls == 1);
-    gGlobalTimer = 2024;
+    gGlobalTimer = 1012;
     jpb_AnimHandleSoundState(animation);
     CHECK(anim_sound_play_calls == 2);
-    CHECK(strcmp(anim_sound_last_name, "step") == 0);
+    CHECK(strcmp(anim_sound_last_name, "jedihit") == 0);
     CHECK(animation->soundTimer[1] == 0);
 
     memcpy(motion.snd[0], "taxiaway", 8);
@@ -950,6 +980,7 @@ static int test_animation_sound_scheduler(void)
     CHECK(shouldReplayAnimSound(0, animation) == 1);
 
     jpb_SoundSetPlaySfxHook(NULL, NULL);
+    sound_FreeBank(1);
     LevelSelect = saved_level;
     gGlobalTimer = saved_timer;
     return 0;
@@ -1017,6 +1048,7 @@ static int test_animation_console_command(void)
     animObject *animation;
     _animTemplate templates[4];
     Motion motions[4];
+    uint32_t pose_words[3] = {0};
     char *play_arguments[] = {"PLAY", "1", "2"};
     int play_values[] = {0, 1, 2};
     char *fx_arguments[] = {"fx", "0", "0"};
@@ -1034,17 +1066,19 @@ static int test_animation_console_command(void)
     animation->animRoot.objectID = 0;
     animation->animRoot.pParent = &scene.sceneRoot;
     animation->depack_context.seqdata = templates;
+    animation->depack_context.huffdataorigin = pose_words;
+    animation->depack_context.numparts = 0;
     player.paMotions = motions;
     player.maxMotions = 3;
     player.oldmaxCMotions = 3;
     motions[1].Seq = 1;
     motions[1].Lock = 2;
     motions[1].Speed = JPB_FIXED_ONE;
-    motions[1].FunctPtr = -1;
+    motions[1].FunctPtr = 0;
     motions[2].Seq = 2;
     motions[2].Lock = 2;
     motions[2].Speed = JPB_FIXED_ONE;
-    motions[2].FunctPtr = -1;
+    motions[2].FunctPtr = 0;
     templates[1].Lframe = 8;
     templates[2].Lframe = 8;
     world.player0 = &player;
@@ -1072,22 +1106,29 @@ static int test_animation_console_command(void)
 
 int main(void)
 {
-    CHECK(test_motion_layout() == 0);
-    CHECK(test_animation_pool() == 0);
-    CHECK(test_freeze_window() == 0);
-    CHECK(test_animation_queue() == 0);
-    CHECK(test_motion_physics_handoff() == 0);
-    CHECK(test_queued_motion_state_activation() == 0);
-    CHECK(test_sequence_end_transition() == 0);
-    CHECK(test_sequence_end_motion_recovery() == 0);
-    CHECK(test_motion_chain_wrapper() == 0);
-    CHECK(test_motion_lock_wrappers() == 0);
-    CHECK(test_motion_combo_chain_wrapper() == 0);
-    CHECK(test_ai_throw_callback() == 0);
-    CHECK(test_animation_control_utilities() == 0);
-    CHECK(test_animation_sound_scheduler() == 0);
-    CHECK(test_global_animation_scheduler() == 0);
-    CHECK(test_animation_console_command() == 0);
+#define RUN_TEST(test) \
+    do { \
+        puts(#test); \
+        fflush(stdout); \
+        CHECK(test() == 0); \
+    } while (0)
+    RUN_TEST(test_motion_layout);
+    RUN_TEST(test_animation_pool);
+    RUN_TEST(test_freeze_window);
+    RUN_TEST(test_animation_queue);
+    RUN_TEST(test_motion_physics_handoff);
+    RUN_TEST(test_queued_motion_state_activation);
+    RUN_TEST(test_sequence_end_transition);
+    RUN_TEST(test_sequence_end_motion_recovery);
+    RUN_TEST(test_motion_chain_wrapper);
+    RUN_TEST(test_motion_lock_wrappers);
+    RUN_TEST(test_motion_combo_chain_wrapper);
+    RUN_TEST(test_ai_throw_callback);
+    RUN_TEST(test_animation_control_utilities);
+    RUN_TEST(test_animation_sound_scheduler);
+    RUN_TEST(test_global_animation_scheduler);
+    RUN_TEST(test_animation_console_command);
+#undef RUN_TEST
     puts("animation tests passed");
     return 0;
 }

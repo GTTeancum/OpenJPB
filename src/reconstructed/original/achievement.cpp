@@ -1,5 +1,6 @@
 /*
- * PARTIALLY REVIEWED RECONSTRUCTION.
+ * REVIEWED RECONSTRUCTION of
+ * W:\SWJediPowerBattles\work\achievement.cpp.
  *
  * Provenance:
  *   direct     - function names, signatures, source location, and local names
@@ -35,6 +36,20 @@ int achievements[JPB_ACHIEVEMENT_COUNT];
  * PDB type: void (int)
  * Source: W:\SWJediPowerBattles\work\achievement.cpp
  */
+void achievement_checkForPlatinum(int id)
+{
+    int i;
+
+    if (id == 1) {
+        return;
+    }
+    for (i = 2; i < 44; ++i) {
+        if (platform_getCompleteAchievement(i) != 1) {
+            return;
+        }
+    }
+    (void)platform_completeAchievement(1);
+}
 void achievement_complete(int id)
 {
     int i;
@@ -56,6 +71,9 @@ void achievement_complete(int id)
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\achievement.cpp
  */
+void achievement_destroy(void)
+{
+}
 
 /* 0x159C0, 5 bytes, global, 1 named locals
  * achievement_getcomplete
@@ -68,6 +86,10 @@ void achievement_complete(int id)
  * PDB type: int (int)
  * Source: W:\SWJediPowerBattles\work\achievement.cpp
  */
+int achievement_getcomplete(int id)
+{
+    return platform_getCompleteAchievement(id);
+}
 int achievement_getcount(int id)
 {
     return achievements[id];

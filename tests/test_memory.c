@@ -1,4 +1,5 @@
 #include "jpb/memory.h"
+#include "jpb/alloc.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -24,7 +25,8 @@ static int test_custom_pool_and_flush(void)
     void *allocation;
 
     reset_descriptors();
-    CHECK(memory_InitMemoryPool(storage, 1, 0) == 0);
+    CHECK((uint32_t)memory_InitMemoryPool(storage, 1, 0) ==
+          (uint32_t)(uintptr_t)maMemoryBanks);
     CHECK(maMemoryBanks[0].pMemPool == storage);
     CHECK(maMemoryBanks[0].memSize == 1024);
     CHECK(maMemoryBanks[0].memFree == 1024);
@@ -54,10 +56,16 @@ static int test_default_system_and_any_pool(void)
     void *first;
     void *second;
     void *any;
+    int init_result;
     int index;
 
     reset_descriptors();
-    CHECK(memory_InitMemorySystem() == 0);
+    init_result = memory_InitMemorySystem();
+    CHECK((uint32_t)init_result == (uint32_t)(uintptr_t)mem_heapend);
+    CHECK(maMemoryBanks[0].pMemPool == mem_pool_0);
+    CHECK(maMemoryBanks[1].pMemPool == mem_pool_1);
+    CHECK(maMemoryBanks[2].pMemPool == mem_pool_2);
+    CHECK(maMemoryBanks[3].pMemPool == mem_pool_3a);
     for (index = 0; index < MEMORY_POOL_COUNT; ++index) {
         CHECK(maMemoryBanks[index].pMemPool != NULL);
         CHECK(maMemoryBanks[index].memSize == sizes[index]);

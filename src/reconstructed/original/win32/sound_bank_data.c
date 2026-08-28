@@ -6,7 +6,7 @@
 
 #include "jpb/sound_bank_data.h"
 
-static const char *const sound_paths_1404d2320[43] = {
+static char *sound_paths_1404d2320[43] = {
     "theed/bd_land.wav",
     "theed/flamed.wav",
     "theed/vhmhit.wav",
@@ -52,7 +52,7 @@ static const char *const sound_paths_1404d2320[43] = {
     "theed/vhmhelp1.wav",
 };
 
-static const char *const sound_paths_1404d2480[40] = {
+static char *sound_paths_1404d2480[40] = {
     "tato/trap.wav",
     "tato/jawa6.wav",
     "tato/wormlung.wav",
@@ -95,7 +95,7 @@ static const char *const sound_paths_1404d2480[40] = {
     "tato/vanhypey.wav",
 };
 
-static const char *const sound_paths_1404d25c0[33] = {
+static char *sound_paths_1404d25c0[33] = {
     "streets/bd_land.wav",
     "streets/vbdthere.wav",
     "streets/staphit.wav",
@@ -131,7 +131,7 @@ static const char *const sound_paths_1404d25c0[33] = {
     "streets/dstdie1.wav",
 };
 
-static const char *const sound_paths_1404d26d0[14] = {
+static char *sound_paths_1404d26d0[14] = {
     "ruins/gungstaf.wav",
     "ruins/nuna.wav",
     "ruins/vbnend.wav",
@@ -148,7 +148,7 @@ static const char *const sound_paths_1404d26d0[14] = {
     "ruins/plantatk.wav",
 };
 
-static const char *const sound_paths_1404d2740[41] = {
+static char *sound_paths_1404d2740[41] = {
     "resident/sabrhit7.wav",
     "resident/sabrsw06.wav",
     "resident/xjedscrl.wav",
@@ -192,7 +192,7 @@ static const char *const sound_paths_1404d2740[41] = {
     "resident/ricoext.wav",
 };
 
-static const char *const sound_paths_1404d2890[12] = {
+static char *sound_paths_1404d2890[12] = {
     "qui_gon/vjdie.wav",
     "qui_gon/vbjhit.wav",
     "qui_gon/vmjhit.wav",
@@ -207,7 +207,7 @@ static const char *const sound_paths_1404d2890[12] = {
     "qui_gon/vthisway.wav",
 };
 
-static const char *const sound_paths_1404d28f0[12] = {
+static char *sound_paths_1404d28f0[12] = {
     "plo/vjdie.wav",
     "plo/vbjhit.wav",
     "plo/vmjhit.wav",
@@ -222,7 +222,7 @@ static const char *const sound_paths_1404d28f0[12] = {
     "plo/vthisway.wav",
 };
 
-static const char *const sound_paths_1404d2950[8] = {
+static char *sound_paths_1404d2950[8] = {
     "panaka/vjdie.wav",
     "panaka/vbjhit.wav",
     "panaka/vmjhit.wav",
@@ -233,7 +233,7 @@ static const char *const sound_paths_1404d2950[8] = {
     "panaka/prob2fir.wav",
 };
 
-static const char *const sound_paths_1404d2990[37] = {
+static char *sound_paths_1404d2990[37] = {
     "palace/bd_land.wav",
     "palace/vbdthere.wav",
     "palace/staphit.wav",
@@ -273,7 +273,7 @@ static const char *const sound_paths_1404d2990[37] = {
     "palace/vhmhelp1.wav",
 };
 
-static const char *const sound_paths_1404d2ac0[10] = {
+static char *sound_paths_1404d2ac0[10] = {
     "obi_wan/vjdie.wav",
     "obi_wan/vbjhit.wav",
     "obi_wan/vmjhit.wav",
@@ -286,7 +286,7 @@ static const char *const sound_paths_1404d2ac0[10] = {
     "obi_wan/vthisway.wav",
 };
 
-static const char *const sound_paths_1404d2b10[58] = {
+static char *sound_paths_1404d2b10[58] = {
     "mini4/trap.wav",
     "mini4/vt1hit2.wav",
     "mini4/vt3hit2.wav",
@@ -347,7 +347,7 @@ static const char *const sound_paths_1404d2b10[58] = {
     "mini4/xtimerbp.wav",
 };
 
-static const char *const sound_paths_1404d2ce0[9] = {
+static char *sound_paths_1404d2ce0[9] = {
     "mini3/vjjdie.wav",
     "mini3/vjjargh2.wav",
     "mini3/vjjhit2.wav",
@@ -359,7 +359,7 @@ static const char *const sound_paths_1404d2ce0[9] = {
     "mini3/xtimerbp.wav",
 };
 
-static const char *const sound_paths_1404d2d30[32] = {
+static char *sound_paths_1404d2d30[32] = {
     "mini2/nuna.wav",
     "mini2/vbdthere.wav",
     "mini2/flamed.wav",
@@ -394,7 +394,7 @@ static const char *const sound_paths_1404d2d30[32] = {
     "mini2/peko.wav",
 };
 
-static const char *const sound_paths_1404d2e30[15] = {
+static char *sound_paths_1404d2e30[15] = {
     "mini1/vbdhit2.wav",
     "mini1/vpthelp2.wav",
     "mini1/vbdhit3.wav",
@@ -412,7 +412,7 @@ static const char *const sound_paths_1404d2e30[15] = {
     "mini1/vptthax.wav",
 };
 
-static const char *const sound_paths_1404d2eb0[39] = {
+static char *sound_paths_1404d2eb0[39] = {
     "maul/vmlpause.wav",
     "maul/vbjhit.wav",
     "maul/vmjhit.wav",
@@ -454,7 +454,7 @@ static const char *const sound_paths_1404d2eb0[39] = {
     "marsh/wormwlk1.wav",
 };
 
-static const char *const sound_paths_1404d2f20[39] = {
+static char *sound_paths_1404d2f20[39] = {
     "marsh/nuna.wav",
     "marsh/wormlung.wav",
     "marsh/vbdthere.wav",
@@ -496,7 +496,7 @@ static const char *const sound_paths_1404d2f20[39] = {
     "marsh/peko.wav",
 };
 
-static const char *const sound_paths_1404d3060[12] = {
+static char *sound_paths_1404d3060[12] = {
     "mace/sbrthrw.wav",
     "mace/vjdie.wav",
     "mace/vbjhit.wav",
@@ -511,7 +511,7 @@ static const char *const sound_paths_1404d3060[12] = {
     "mace/vthisway.wav",
 };
 
-static const char *const sound_paths_1404d30c0[34] = {
+static char *sound_paths_1404d30c0[34] = {
     "hangar/windclif.wav",
     "hangar/trap.wav",
     "hangar/bd_land.wav",
@@ -548,7 +548,7 @@ static const char *const sound_paths_1404d30c0[34] = {
     "hangar/vptthax.wav",
 };
 
-static const char *const sound_paths_1404d31d0[8] = {
+static char *sound_paths_1404d31d0[8] = {
     "gungan_2/gungstaf.wav",
     "gungan_2/vggdie.wav",
     "gungan_2/vgghalt.wav",
@@ -559,7 +559,7 @@ static const char *const sound_paths_1404d31d0[8] = {
     "gungan_2/vggatk1.wav",
 };
 
-static const char *const sound_paths_1404d3210[8] = {
+static char *sound_paths_1404d3210[8] = {
     "gungan_1/gungstaf.wav",
     "gungan_1/vggdie.wav",
     "gungan_1/vgghalt.wav",
@@ -570,7 +570,7 @@ static const char *const sound_paths_1404d3210[8] = {
     "gungan_1/vggatk1.wav",
 };
 
-static const char *const sound_paths_1404d3250[40] = {
+static char *sound_paths_1404d3250[40] = {
     "fed/dfgetht.wav",
     "fed/dfdie.wav",
     "fed/bd_land.wav",
@@ -613,7 +613,7 @@ static const char *const sound_paths_1404d3250[40] = {
     "fed/pistloop.wav",
 };
 
-static const char *const sound_paths_1404d3390[11] = {
+static char *sound_paths_1404d3390[11] = {
     "destroyu/dstunfld.wav",
     "destroyu/drdhit2.wav",
     "destroyu/dstkick.wav",
@@ -627,7 +627,7 @@ static const char *const sound_paths_1404d3390[11] = {
     "destroyu/dstdie1.wav",
 };
 
-static const char *const sound_paths_1404d33f0[11] = {
+static char *sound_paths_1404d33f0[11] = {
     "destroye/dstunfld.wav",
     "destroye/drdhit2.wav",
     "destroye/dstkick.wav",
@@ -641,7 +641,7 @@ static const char *const sound_paths_1404d33f0[11] = {
     "destroye/dstdie1.wav",
 };
 
-static const char *const sound_paths_1404d3450[18] = {
+static char *sound_paths_1404d3450[18] = {
     "council/vydmaul.wav",
     "council/vydtempt.wav",
     "council/vydchose.wav",
@@ -662,7 +662,7 @@ static const char *const sound_paths_1404d3450[18] = {
     "council/vydadi.wav",
 };
 
-static const char *const sound_paths_1404d34e0[48] = {
+static char *sound_paths_1404d34e0[48] = {
     "corus1/vt4hit3.wav",
     "corus1/taxiariv.wav",
     "corus1/vt4hit2.wav",
@@ -713,7 +713,7 @@ static const char *const sound_paths_1404d34e0[48] = {
     "corus1/taxiaway.wav",
 };
 
-static const char *const sound_paths_1404d3660[39] = {
+static char *sound_paths_1404d3660[39] = {
     "core/beam_on.wav",
     "core/bd_land.wav",
     "core/vmlpause.wav",
@@ -755,7 +755,7 @@ static const char *const sound_paths_1404d3660[39] = {
     "core/vmlatk1.wav",
 };
 
-static const char *const sound_paths_1404d3798[7] = {
+static char *sound_paths_1404d3798[7] = {
     "amidala/vjdie.wav",
     "amidala/vbjhit.wav",
     "amidala/vmjhit.wav",
@@ -765,7 +765,7 @@ static const char *const sound_paths_1404d3798[7] = {
     "amidala/thugstab.wav",
 };
 
-static const char *const sound_paths_1404d37d0[11] = {
+static char *sound_paths_1404d37d0[11] = {
     "adi/vjdie.wav",
     "adi/vbjhit.wav",
     "adi/vmjhit.wav",
@@ -779,7 +779,7 @@ static const char *const sound_paths_1404d37d0[11] = {
     "adi/wowjedi1.wav",
 };
 
-static const char *const sound_paths_1404d3828[7] = {
+static char *sound_paths_1404d3828[7] = {
     "tato/probmove.wav",
     "tato/probfire.wav",
     "theed/barnlasr.wav",
@@ -789,7 +789,7 @@ static const char *const sound_paths_1404d3828[7] = {
     "mini4/xtimerbp.wav",
 };
 
-const JPBSoundBankData jpb_soundBankTable[JPB_SOUND_BANK_TABLE_COUNT] = {
+tAudioSFX_Bank audioSFX_aSFXBanks[AUDIO_SFX_BANK_COUNT] = {
     {"resident/", sound_paths_1404d2740, 41},
     {"marsh/", sound_paths_1404d2f20, 39},
     {"theed/", sound_paths_1404d2320, 43},
@@ -834,5 +834,3 @@ const JPBSoundBankData jpb_soundBankTable[JPB_SOUND_BANK_TABLE_COUNT] = {
     {"tusken_s/", sound_paths_1404d2480, 40},
     {"training_level/", sound_paths_1404d3828, 7},
 };
-
-

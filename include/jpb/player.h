@@ -152,19 +152,6 @@ typedef void (*JPBPlayerTileHook)(
 extern JPBPlayerCallback
     funcArray[JPB_PLAYER_CALLBACK_CAPACITY];
 
-/*
- * Inferred name for the callback-table slot at matched-PC RVA 0x10EFBB0.
- * game_InitGameSystems initializes it to exact brainutil_PlotTrajectory;
- * keeping the slot explicit also preserves the original extension boundary.
- */
-extern JPBPlayerCallback jpb_TrajectoryCallbackSlot;
-/*
- * Inferred name for the companion callback-table slot at matched-PC RVA
- * 0x10EFD00. game_InitGameSystems initializes it to the exact PDB procedure
- * brainutil_PlotMaulTrajectory.
- */
-extern JPBPlayerCallback jpb_MaulTrajectoryCallbackSlot;
-
 typedef struct CollisionData {
     int16_t radius1;
     int8_t id;
@@ -252,6 +239,7 @@ extern playerObject gaPlayerData[JPB_PLAYER_CAPACITY];
 int ch_blipad(uint16_t button);
 int ch_pad(uint16_t button);
 void ch_padadmin(void);
+void player_ControllerDump(void);
 int ch_unblipad(uint16_t button);
 /* Exact PDB global at matched-PC RVA 0x10DEBA0. */
 extern ProjType *projType;

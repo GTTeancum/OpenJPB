@@ -402,9 +402,10 @@ PDB/function-map HUD owner audit:
   transparency `200`, and RGB `0x80/0x80/0x80`.
 - `game_DrawBigNum(7, 100, 50)` draws the leading zero texture `0xb5` at
   x `100` and the `7` texture `0xbc` at x `118`.
-- `test_psx_texture_hud_leaf_contract` now drives
-  `jpb_PsxDrawTextureLayer` without the PSX hook installed, proving the
-  renderer-facing leaf math: destination x/y are scaled by
+- `test_psx_texture_hud_leaf_contract` drives the executable-matched
+  `psxDrawTexture`, `psxDrawTextureDepth`, `psxDrawTexture2`, and
+  `psxDrawTexture2Depth` procedures directly, proving the renderer-facing
+  leaf math: destination x/y are scaled by
   `gPSXDrawScaleX/Y`, destination width/height by `gPSXDrawScaleW/H`,
   source rects are `fontSpec` cells multiplied by four, `frontRGBoff`
   saturates RGB at `255`, and transparency `0x8400` / `0x8100` maps to

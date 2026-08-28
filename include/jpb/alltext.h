@@ -18,12 +18,14 @@ extern const char *DEFAULT_BOLD_FS_FILENAME;
 
 enum {
     JPB_ALL_TEXT_LANGUAGE_COUNT = 7,
-    JPB_ALL_TEXT_ENTRY_COUNT = 498
+    JPB_ALL_TEXT_ENTRY_COUNT = 498,
+    JPB_ALL_TEXT_SHARED_COUNT = 127,
+    JPB_ALL_TEXT_LANGUAGE_TAIL_COUNT = 371,
+    JPB_ALL_TEXT_STORAGE_COUNT = 2725
 };
 
-/* Source-normalized form of exact PDB global allTextEverything. */
-extern const char *const allTextEverything
-    [JPB_ALL_TEXT_LANGUAGE_COUNT][JPB_ALL_TEXT_ENTRY_COUNT];
+/* Exact PDB aggregate; its pointers target UTF-8 bytes despite the PDB type. */
+extern const char *allTextEverything[JPB_ALL_TEXT_STORAGE_COUNT];
 
 void generateAllText(int language);
 char *getDefaultFontFile(int fontStyle);

@@ -1,14 +1,15 @@
 /*
- * Reviewed reconstruction of W:\SWJediPowerBattles\Work\list.c.
+ * COMPLETE REVIEWED RECONSTRUCTION of
+ * W:\SWJediPowerBattles\Work\list.c.
  *
  * Provenance:
  *   direct     - names, signatures, type layouts, RVAs, and code extents from
  *                the exact game.pdb / game.exe pair.
- *   decompiled - control flow checked against Ghidra output and the x64
- *                instructions at RVAs 0xBBBB0 through 0xBBCF2.
+ *   assembly   - all eight bodies checked instruction-by-instruction at RVAs
+ *                0xBBBB0 through 0xBBCF2.
  *
  * The deliberately unusual behaviors (list_InitList returning NULL,
- * list_RemoveNode refusing the tail, and list_RemoveTail being a stub) match
+ * list_RemoveNode refusing the tail, and list_RemoveTail returning NULL) match
  * the reference machine code and are covered by tests.
  */
 

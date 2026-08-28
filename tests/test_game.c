@@ -1,21 +1,34 @@
 #include "jpb/game.h"
+#include "jpb/achievement.h"
 #include "jpb/ai.h"
 #include "jpb/alloc.h"
+#include "jpb/anim.h"
 #include "jpb/boss.h"
 #include "jpb/brain.h"
 #include "jpb/brainutl.h"
 #include "jpb/camera.h"
 #include "jpb/combo.h"
+#include "jpb/console.h"
 #include "jpb/debugtext.h"
 #include "jpb/force.h"
 #include "jpb/extracharacters.h"
+#include "jpb/globalarrays.h"
 #include "jpb/jedi.h"
+#include "jpb/jonny.h"
 #include "jpb/level.h"
+#include "jpb/input.h"
 #include "jpb/menu.h"
+#include "jpb/memory.h"
+#include "jpb/physics.h"
 #include "jpb/player.h"
+#include "jpb/platform.h"
+#include "jpb/resources.h"
 #include "jpb/savegame.h"
 #include "jpb/sprite.h"
 #include "jpb/text.h"
+#include "jpb/textutil.h"
+#include "jpb/texture.h"
+#include "jpb/utf16.h"
 #include "jpb/vehicle.h"
 #include "jpb/whook.h"
 #include "jpb/world.h"
@@ -49,6 +62,306 @@ static void reset_game_state(void)
     memset(gaPlayerData, 0, sizeof(gaPlayerData));
     gGlobalTimer = 0;
     LevelSelect = 0;
+}
+
+typedef struct AchievementCallTrace {
+    int complete_calls;
+    int complete_ids[8];
+    int query_calls;
+} AchievementCallTrace;
+
+static int capture_achievement_complete(int id, void *user_data)
+{
+    AchievementCallTrace *trace = (AchievementCallTrace *)user_data;
+
+    if (trace->complete_calls < 8) {
+        trace->complete_ids[trace->complete_calls] = id;
+    }
+    ++trace->complete_calls;
+    return 1;
+}
+
+static int capture_achievement_query(int id, void *user_data)
+{
+    AchievementCallTrace *trace = (AchievementCallTrace *)user_data;
+
+    (void)id;
+    ++trace->query_calls;
+    return 0;
+}
+
+static int test_complete_achievement_routes(void)
+{
+    const JPBPlatformAchievementHooks hooks = {
+        capture_achievement_complete,
+        capture_achievement_query
+    };
+    AchievementCallTrace trace;
+    WorldData world;
+    WorldData *saved_world = gpWorld;
+
+    reset_game_state();
+    memset(&trace, 0, sizeof(trace));
+    memset(&world, 0, sizeof(world));
+    world.player0 = &gaPlayerData[0];
+    gaPlayerData[0].playernum = 0;
+    gaPlayerData[0].playerID = obi_wan_model;
+    gpWorld = &world;
+    jpb_PlatformSetAchievementHooks(&hooks, &trace);
+
+    GameStruct.CurrentLevel = 11;
+    game_checkCompleteAchievements();
+    CHECK(trace.complete_calls == 1);
+    CHECK(trace.complete_ids[0] == 17);
+    CHECK(trace.query_calls == 1);
+
+    memset(&trace, 0, sizeof(trace));
+    GameStruct.CurrentLevel = 1;
+    GameStruct.aCharacterData[0].Score = 23999;
+    game_checkCompleteAchievements();
+    CHECK(trace.complete_calls == 1);
+    CHECK(trace.complete_ids[0] == 7);
+
+    memset(&trace, 0, sizeof(trace));
+    GameStruct.aCharacterData[0].Score = 24000;
+    game_checkCompleteAchievements();
+    CHECK(trace.complete_calls == 2);
+    CHECK(trace.complete_ids[0] == 7);
+    CHECK(trace.complete_ids[1] == 21);
+
+    jpb_PlatformSetAchievementHooks(NULL, NULL);
+    gpWorld = saved_world;
+    return 0;
+}
+
+static int test_game_console_variables_and_input_clear(void)
+{
+    playerObject third_player;
+    char *arguments[2] = {"dimscreen", "128"};
+    int integer_arguments[2] = {0, 128};
+    float float_arguments[2] = {0.0f, 128.0f};
+    int player;
+    int held;
+
+    memset(gaPlayerData, 0xa5, sizeof(gaPlayerData));
+    third_player = gaPlayerData[2];
+    ForceClearPlayerCPad();
+    for (player = 0; player < 2; ++player) {
+        for (held = 0; held < JPB_PLAYER_HELD_SLOTS; ++held) {
+            CHECK(gaPlayerData[player].bheld[held] == 0);
+        }
+        CHECK(gaPlayerData[player].chainSlack == 0);
+        CHECK(gaPlayerData[player].playerPad.oldbits0 == 0);
+        CHECK(gaPlayerData[player].playerPad.oldbits1 == 0);
+        CHECK(gaPlayerData[player].hitMask == 0);
+        CHECK(gaPlayerData[player].playerPad.mask0 == UINT32_C(0xa5a5a5a5));
+        CHECK(gaPlayerData[player].playerPad.cpad[0] == UINT32_C(0xa5a5a5a5));
+        CHECK(gaPlayerData[player].chainSlackEnd == (int16_t)0xa5a5);
+    }
+    CHECK(memcmp(&gaPlayerData[2], &third_player, sizeof(third_player)) == 0);
+
+    CHECK(strcmp(modVarNames[0], "nada_mod") == 0);
+    CHECK(strcmp(modVarNames[21], "STEREO") == 0);
+    CHECK(strcmp(modVarNames[73], "ressize") == 0);
+    CHECK(modVarNames[74] == NULL);
+    CHECK(findvar("players") == 1);
+    CHECK(findvar("stereo") == 21);
+    CHECK(findvar("ReSsIzE") == 73);
+    CHECK(findvar("missing") == -1);
+
+    GameStruct.AIDamage = -3;
+    CHECK(getvar(31) == -3);
+    dimScreen = 200;
+    CHECK(getvar(65) == 200);
+    GameStruct.versusModeFlag = -2;
+    CHECK(getvar(67) == -2);
+    GameStruct.Counter = -12345;
+    CHECK(getvar(61) == -12345);
+    CHECK(getvar(0) == 0);
+
+    GameStruct.NumPlayers = 0;
+    setvar(1, 3);
+    CHECK(GameStruct.NumPlayers == 2);
+    setvar(1, -1);
+    CHECK(GameStruct.NumPlayers == 1);
+    setvar(65, 300);
+    CHECK(dimScreen == 255);
+    setvar(67, 1);
+    CHECK(GameStruct.versusModeFlag == 1);
+    setvar(61, 7);
+    CHECK(GameStruct.Counter == 7);
+
+    dimScreen = 0;
+    CHECK(console_SetCommand(
+              2, arguments, integer_arguments, float_arguments) >= 0);
+    CHECK(dimScreen == 128);
+    CHECK(console_IncCommand(
+              1, arguments, integer_arguments, float_arguments) >= 0);
+    CHECK(dimScreen == 129);
+    CHECK(console_DecCommand(
+              1, arguments, integer_arguments, float_arguments) >= 0);
+    CHECK(dimScreen == 128);
+    CHECK(console_ToggleCommand(
+              1, arguments, integer_arguments, float_arguments) >= 0);
+    CHECK(dimScreen == 0);
+    CHECK(console_ToggleCommand(
+              1, arguments, integer_arguments, float_arguments) >= 0);
+    CHECK(dimScreen == 255);
+
+    checkResetAbort();
+    continueGameGameInit();
+    reset_game_state();
+    return 0;
+}
+
+static int test_next_level_transition(void)
+{
+    reset_game_state();
+    OptionStruct.Music = 0;
+    GameStruct.Mode = 5;
+    LevelSelect = 4;
+    nextLevel = 1;
+    game_checkNextLevel();
+    CHECK(nextLevel == 0);
+    CHECK(GameStruct.Mode == 5);
+    CHECK(LevelSelect == 4);
+
+    GameStruct.Mode = 6;
+    LevelSelect = 5;
+    nextLevel = 1;
+    game_checkNextLevel();
+    CHECK(nextLevel == 0);
+    CHECK(GameStruct.Mode == 5);
+    CHECK(LevelSelect == 6);
+
+    GameStruct.Mode = 6;
+    LevelSelect = 6;
+    nextLevel = 1;
+    GameStruct.aCharacterData[0].Score = 1234;
+    GameStruct.aCharacterData[1].Score = 5678;
+    reStartScore[0] = 0;
+    reStartScore[1] = 0;
+    game_checkNextLevel();
+    CHECK(nextLevel == 0);
+    CHECK(GameStruct.Mode == 5);
+    CHECK(LevelSelect == 15);
+    CHECK(reStartScore[0] == 1234);
+    CHECK(reStartScore[1] == 5678);
+
+    GameStruct.Mode = 6;
+    LevelSelect = 15;
+    nextLevel = 1;
+    game_checkNextLevel();
+    CHECK(nextLevel == 0);
+    CHECK(GameStruct.Mode == 5);
+    CHECK(LevelSelect == 7);
+    return 0;
+}
+
+static int test_player_position_command_paths(void)
+{
+    const FVECTOR original0 = {11.0f, 22.0f, 33.0f};
+    const FVECTOR original1 = {55.0f, 66.0f, 77.0f};
+    char *help[] = {"?"};
+    char *missing[] = {"jpb_game_test_missing_position_file"};
+    int row;
+
+    maPhysicsData[0].pos = original0;
+    maPhysicsData[1].pos = original1;
+    LoadPlayerPos(missing[0]);
+    CHECK(memcmp(&maPhysicsData[0].pos, &original0, sizeof(original0)) == 0);
+    CHECK(memcmp(&maPhysicsData[1].pos, &original1, sizeof(original1)) == 0);
+
+    row = jpb_ConsoleBufferRow();
+    CHECK(console_LoadPlayerPosCommand(1, help, NULL, NULL) == 0);
+    CHECK(strcmp(jpb_ConsoleBufferLine((size_t)row),
+                 "savepos: Load player positions") == 0);
+    CHECK(strcmp(jpb_ConsoleBufferLine((size_t)((uint8_t)(row + 1))),
+                 "usage: loadpos filename") == 0);
+
+    row = jpb_ConsoleBufferRow();
+    CHECK(console_SavePlayerPosCommand(1, help, NULL, NULL) == 0);
+    CHECK(strcmp(jpb_ConsoleBufferLine((size_t)row),
+                 "savepos: Save player positions") == 0);
+    CHECK(strcmp(jpb_ConsoleBufferLine((size_t)((uint8_t)(row + 1))),
+                 "usage: savepos filename (.wpp will be appended)") == 0);
+    return 0;
+}
+
+static int test_resolution_settings_owners(void)
+{
+    optionstruct options;
+
+    memset(&OptionStruct, 0, sizeof(OptionStruct));
+    memset(&options, 0, sizeof(options));
+    g_resolutions[0].width = 1920;
+    g_resolutions[0].height = 1080;
+    resolutionUpdated = 0;
+    InitGameResolution();
+    CHECK(OptionStruct.ResolutionChanged == 0);
+    CHECK(OptionStruct.ScreenWidth == 1920);
+    CHECK(OptionStruct.ScreenHeight == 1080);
+    CHECK(resolutionUpdated == 1);
+    CHECK(newWidth == 1920);
+    CHECK(newHeight == 1080);
+    CHECK(newWindowMode == 0);
+
+    options.Music = 1;
+    options.Stereo = 1;
+    options.musicVolume = 37;
+    options.SFXVolume = 49;
+    options.ControllerConfig[0] = 2;
+    options.ControllerConfig[1] = 3;
+    options.WalkLimit[0] = 4;
+    options.WalkLimit[1] = 5;
+    options.RunLimit[0] = 6;
+    options.RunLimit[1] = 7;
+    options.ShockFlag[0] = 8;
+    options.ShockFlag[1] = 9;
+    options.overlayMode = 0;
+    options.Language = 0;
+    options.ResolutionChanged = 1;
+    options.ScreenWidth = 1280;
+    options.ScreenHeight = 720;
+    options.WindowMode = 2;
+    options.PadAudioEnabled = 1;
+    options.EULAaccepted = UINT32_C(0x12345678);
+    LoadSettingsData(options);
+    CHECK(OptionStruct.Music == 1);
+    CHECK(OptionStruct.Stereo == 1);
+    CHECK(OptionStruct.musicVolume == 37);
+    CHECK(OptionStruct.SFXVolume == 49);
+    CHECK(OptionStruct.ControllerConfig[0] == 2);
+    CHECK(OptionStruct.ControllerConfig[1] == 3);
+    CHECK(OptionStruct.WalkLimit[0] == 4);
+    CHECK(OptionStruct.WalkLimit[1] == 5);
+    CHECK(OptionStruct.RunLimit[0] == 6);
+    CHECK(OptionStruct.RunLimit[1] == 7);
+    CHECK(OptionStruct.ShockFlag[0] == 8);
+    CHECK(OptionStruct.ShockFlag[1] == 9);
+    CHECK(OptionStruct.EULAaccepted == UINT32_C(0x12345678));
+    CHECK(lastUsedInputType == 2);
+    CHECK(OptionStruct.ResolutionChanged == 1);
+    CHECK(OptionStruct.ScreenWidth == 1280);
+    CHECK(OptionStruct.ScreenHeight == 720);
+    CHECK(newWidth == 1280);
+    CHECK(newHeight == 720);
+    CHECK(newWindowMode == 2);
+
+    options.overlayMode = 1;
+    options.ResolutionChanged = 1;
+    options.ScreenWidth = 2560;
+    options.ScreenHeight = 1440;
+    options.WindowMode = 1;
+    LoadSettingsData(options);
+    CHECK(lastUsedInputType == 0);
+    CHECK(OptionStruct.ResolutionChanged == 0);
+    CHECK(OptionStruct.ScreenWidth == 1920);
+    CHECK(OptionStruct.ScreenHeight == 1080);
+    CHECK(newWidth == 1920);
+    CHECK(newHeight == 1080);
+    CHECK(newWindowMode == 1);
+    return 0;
 }
 
 static int test_process_status_death_routes(void)
@@ -114,9 +427,32 @@ static int test_process_status_death_routes(void)
     return 0;
 }
 
+static int test_run_stage_clears_level_exit(void)
+{
+    reset_game_state();
+    OptionStruct.Music = 0;
+    GameStruct.CurrentLevel = 1;
+    GameStruct.GameState = UINT32_C(0x80);
+    GameStruct.StageExit = 0;
+    GameStruct.LevelExit = 1;
+    GameStruct.mNumContinues = 7;
+    GameStruct.ContinuesUsed = 4;
+
+    game_runStage();
+
+    CHECK(GameStruct.StageExit == 0);
+    CHECK(GameStruct.LevelExit == 0);
+    CHECK(GameStruct.gameMode == 9);
+    CHECK(GameStruct.mNumContinues == 7);
+    CHECK(GameStruct.ContinuesUsed == 0);
+    CHECK(GameStruct.Continuing == 0);
+    CHECK((GameStruct.GameState & UINT32_C(2)) != 0);
+    return 0;
+}
+
 typedef struct OverlayTrace {
     int textCalls;
-    wchar_t text[16][32];
+    uint16_t text[16][32];
     int textTint[16];
     int textAlpha[16];
     int textMode[16];
@@ -125,6 +461,8 @@ typedef struct OverlayTrace {
     float textScale[16];
     float textScaleAdjustment[16];
     int textFontStyle[16];
+    int textDepthEnabled[16];
+    float textDepth[16];
     int textureCalls;
     unsigned textures[2];
 } OverlayTrace;
@@ -136,60 +474,37 @@ typedef struct TextureRectTrace {
     SCREENRECT sources[16];
     int hasSource[16];
     CVECTOR colors[16];
+    float layerDepths[16];
 } TextureRectTrace;
 
-typedef struct BarTrace {
+typedef struct LevelTextureTrace {
     int calls;
-    int x[8];
-    int y[8];
-    int width[8];
-    int height[8];
-    uint32_t color[8];
-} BarTrace;
+    unsigned option;
+    int materialType;
+    char filename[JPB_RESOURCE_PATH_CAPACITY];
+} LevelTextureTrace;
 
-typedef struct BigNumberTrace {
-    int calls;
-    unsigned texture[16];
-    float x[16];
-    float y[16];
-    float width[16];
-    float height[16];
-    unsigned transparency[16];
-    int red[16];
-    int green[16];
-    int blue[16];
-} BigNumberTrace;
-
-static int capture_big_number_texture(
+static void *capture_level_texture_load(
     void *user_data,
-    unsigned texture,
-    float x,
-    float y,
-    float width,
-    float height,
-    unsigned transparency,
-    int red,
-    int green,
-    int blue)
+    const char *filename,
+    unsigned option,
+    int material_type,
+    int16_t *width,
+    int16_t *height)
 {
-    BigNumberTrace *trace = (BigNumberTrace *)user_data;
-    int index = trace->calls++;
+    LevelTextureTrace *trace = (LevelTextureTrace *)user_data;
 
-    if (index < 16) {
-        trace->texture[index] = texture;
-        trace->x[index] = x;
-        trace->y[index] = y;
-        trace->width[index] = width;
-        trace->height[index] = height;
-        trace->transparency[index] = transparency;
-        trace->red[index] = red;
-        trace->green[index] = green;
-        trace->blue[index] = blue;
-    }
-    return 4;
+    ++trace->calls;
+    trace->option = option;
+    trace->materialType = material_type;
+    (void)snprintf(
+        trace->filename, sizeof(trace->filename), "%s", filename);
+    *width = 64;
+    *height = 64;
+    return trace;
 }
 
-static int capture_overlay_text(
+static void capture_overlay_text(
     void *user_data,
     int tint,
     int alpha,
@@ -199,12 +514,17 @@ static int capture_overlay_text(
     float scale,
     float scale_adjustment,
     int font_style,
-    const wchar_t *text)
+    int depth_enabled,
+    float depth,
+    const uint16_t *text)
 {
     OverlayTrace *trace = (OverlayTrace *)user_data;
     int index = trace->textCalls++;
+    size_t text_length = jpb_utf16_length(text);
 
     (void)tint;
+    (void)depth_enabled;
+    (void)depth;
     if (index < 16) {
         trace->textTint[index] = tint;
         trace->textAlpha[index] = alpha;
@@ -214,10 +534,54 @@ static int capture_overlay_text(
         trace->textScale[index] = scale;
         trace->textScaleAdjustment[index] = scale_adjustment;
         trace->textFontStyle[index] = font_style;
-        (void)wcsncpy(trace->text[index], text, 31);
-        trace->text[index][31] = L'\0';
+        trace->textDepthEnabled[index] = depth_enabled;
+        trace->textDepth[index] = depth;
+        if (text_length > 31) {
+            text_length = 31;
+        }
+        jpb_utf16_copy(trace->text[index], text, text_length);
+        trace->text[index][text_length] = 0;
     }
-    return (int)wcslen(text);
+}
+
+static _TTF_Font *load_unit_metric_font(
+    void *user_data, const char *path, int point_size)
+{
+    (void)path;
+    (void)point_size;
+    return (_TTF_Font *)user_data;
+}
+
+static int set_unit_metric_font_size(
+    _TTF_Font *font, int point_size)
+{
+    (void)font;
+    (void)point_size;
+    return 0;
+}
+
+static int get_unit_glyph_metrics(
+    _TTF_Font *font,
+    unsigned short glyph,
+    int *minimum_x,
+    int *maximum_x,
+    int *minimum_y,
+    int *maximum_y,
+    int *advance)
+{
+    (void)font;
+    (void)glyph;
+    *minimum_x = 0;
+    *maximum_x = 1;
+    *minimum_y = 0;
+    *maximum_y = 1;
+    *advance = 1;
+    return 0;
+}
+
+static const char *get_unit_metric_error(void)
+{
+    return "unit metric error";
 }
 
 static int capture_psx_texture(
@@ -260,7 +624,6 @@ static void capture_texture_rect(
     int index = trace->calls++;
 
     (void)source;
-    (void)layer_depth;
     if (index < 16) {
         trace->materials[index] = texture;
         trace->destinations[index] = *destination;
@@ -272,26 +635,7 @@ static void capture_texture_rect(
             trace->hasSource[index] = 0;
         }
         trace->colors[index] = color;
-    }
-}
-
-static void capture_bar(
-    void *user_data,
-    int x,
-    int y,
-    int width,
-    int height,
-    uint32_t color)
-{
-    BarTrace *trace = (BarTrace *)user_data;
-    int index = trace->calls++;
-
-    if (index < 8) {
-        trace->x[index] = x;
-        trace->y[index] = y;
-        trace->width[index] = width;
-        trace->height[index] = height;
-        trace->color[index] = color;
+        trace->layerDepths[index] = layer_depth;
     }
 }
 
@@ -401,7 +745,7 @@ static int find_texture_rect(
 
 static int find_overlay_text(
     const OverlayTrace *trace,
-    const wchar_t *text,
+    const uint16_t *text,
     int mode,
     int x,
     int y,
@@ -410,7 +754,7 @@ static int find_overlay_text(
     int i;
 
     for (i = 0; i < trace->textCalls && i < 16; ++i) {
-        if (wcscmp(trace->text[i], text) == 0 &&
+        if (jpb_utf16_compare(trace->text[i], text) == 0 &&
             trace->textMode[i] == mode &&
             trace->textX[i] == x &&
             trace->textY[i] == y &&
@@ -677,8 +1021,15 @@ static int test_new_game_initialization(void)
     for (index = 0; index < sizeof(abGlobalBits); ++index) {
         CHECK(abGlobalBits[index] == 0);
     }
-    for (index = 0; index < sizeof(jediUpgrades); ++index) {
+    for (index = 0;
+         index < sizeof(SaveGameStruct.jediUpgrades);
+         ++index) {
         CHECK(((uint8_t *)jediUpgrades)[index] == 0);
+    }
+    for (index = sizeof(SaveGameStruct.jediUpgrades);
+         index < sizeof(jediUpgrades);
+         ++index) {
+        CHECK(((uint8_t *)jediUpgrades)[index] == UINT8_C(0xa5));
     }
 
     CHECK(GameStruct.Continuing == 0);
@@ -730,7 +1081,8 @@ static int test_level_difficulty_tables(void)
 {
     reset_game_state();
 
-    CHECK(jpb_game_ApplyLevelDifficulty(0, 1) == 1);
+    GameStruct.difficulty = 1;
+    jpb_game_ApplyLevelDifficulty(0);
     CHECK(GameStruct.AIDamage == 8);
     CHECK(GameStruct.JediDamage == 8);
     CHECK(GameStruct.HTHRate == 8);
@@ -738,7 +1090,8 @@ static int test_level_difficulty_tables(void)
     CHECK(GameStruct.BlockRate == 8);
     CHECK(GameStruct.difficulty == 1);
 
-    CHECK(jpb_game_ApplyLevelDifficulty(1, 0) == 1);
+    GameStruct.difficulty = 0;
+    jpb_game_ApplyLevelDifficulty(1);
     CHECK(GameStruct.AIDamage == 4);
     CHECK(GameStruct.JediDamage == 11);
     CHECK(GameStruct.HTHRate == 13);
@@ -746,20 +1099,22 @@ static int test_level_difficulty_tables(void)
     CHECK(GameStruct.BlockRate == 10);
     CHECK(GameStruct.difficulty == 0);
 
-    CHECK(jpb_game_ApplyLevelDifficulty(15, 1) == 1);
+    GameStruct.difficulty = 1;
+    jpb_game_ApplyLevelDifficulty(15);
     CHECK(GameStruct.AIDamage == 7);
     CHECK(GameStruct.JediDamage == 9);
     CHECK(GameStruct.HTHRate == 9);
     CHECK(GameStruct.RangedRate == 11);
     CHECK(GameStruct.BlockRate == 7);
 
-    CHECK(jpb_game_ApplyLevelDifficulty(16, 1) == 1);
+    jpb_game_ApplyLevelDifficulty(16);
     CHECK(GameStruct.AIDamage == 8);
     CHECK(GameStruct.JediDamage == 8);
 
-    GameStruct.AIDamage = 42;
-    CHECK(jpb_game_ApplyLevelDifficulty(0, 2) == 0);
-    CHECK(GameStruct.AIDamage == 42);
+    CHECK((abGlobalBits[2] & UINT8_C(2)) == 0);
+    GameStruct.difficulty = 0;
+    jpb_game_ApplyLevelDifficulty(0);
+    CHECK((abGlobalBits[2] & UINT8_C(2)) != 0);
     return 0;
 }
 
@@ -813,13 +1168,18 @@ static int test_overlay_owner_chain(void)
     CHECK(charStuff[7] == 45);
     CHECK(charStuff[8] == 48);
     CHECK(charStuff[9] == 46);
-    jpb_TextSetPsxTextureHook(
-        capture_psx_texture, &trace);
+    fontSpec[0xb9].clut = 1;
+    fontSpec[0xb7].clut = 2;
+    menuTextures[1] = &score_material;
+    menuTextures[2] = &rescue_material;
+    jpb_WHookSetDrawTextureHook(
+        capture_texture_rect, &texture_trace);
     game_DrawBigNum(42, 10, 20);
-    CHECK(trace.textureCalls == 2);
-    CHECK(trace.textures[0] == 0xb9);
-    CHECK(trace.textures[1] == 0xb7);
-    jpb_TextSetPsxTextureHook(NULL, NULL);
+    CHECK(texture_trace.calls == 2);
+    CHECK(texture_trace.materials[0] == &score_material);
+    CHECK(texture_trace.materials[1] == &rescue_material);
+    jpb_WHookSetDrawTextureHook(NULL, NULL);
+    memset(&texture_trace, 0, sizeof(texture_trace));
 
     meminit();
     sprite_gInitSprites();
@@ -878,8 +1238,8 @@ static int test_overlay_owner_chain(void)
     game_DisplayOverlay();
 
     CHECK(trace.textCalls == 2);
-    CHECK(wcscmp(trace.text[0], L"0000042") == 0);
-    CHECK(wcscmp(trace.text[1], L"3") == 0);
+    CHECK(jpb_utf16_compare(trace.text[0], L"0000042") == 0);
+    CHECK(jpb_utf16_compare(trace.text[1], L"3") == 0);
     CHECK(trace.textX[0] == 212);
     CHECK(trace.textY[0] == 60);
     CHECK_FLOAT_CLOSE(trace.textScale[0], 3.24f, 0.0001f);
@@ -947,7 +1307,7 @@ static int test_overlay_owner_chain(void)
     jpb_WHookSetDrawTextureHook(capture_texture_rect, &texture_trace);
     game_DrawScore(0);
     CHECK(trace.textCalls == 1);
-    CHECK(wcscmp(trace.text[0], L"0000042") == 0);
+    CHECK(jpb_utf16_compare(trace.text[0], L"0000042") == 0);
     CHECK(trace.textX[0] == 106);
     CHECK(trace.textY[0] == 30);
     CHECK_FLOAT_CLOSE(trace.textScale[0], 3.24f, 0.0001f);
@@ -999,7 +1359,7 @@ static int test_overlay_owner_chain(void)
     memset(&texture_trace, 0, sizeof(texture_trace));
     game_DrawItems(0);
     CHECK(trace.textCalls == 1);
-    CHECK(wcscmp(trace.text[0], L"3") == 0);
+    CHECK(jpb_utf16_compare(trace.text[0], L"3") == 0);
     CHECK(trace.textX[0] == 94);
     CHECK(trace.textY[0] == 484);
     CHECK_FLOAT_CLOSE(trace.textScale[0], 1.8f, 0.0001f);
@@ -1109,7 +1469,7 @@ static int test_overlay_owner_chain(void)
     game_gSetForce(1, 100);
     game_DrawScore(1);
     CHECK(trace.textCalls == 1);
-    CHECK(wcscmp(trace.text[0], L"0009001") == 0);
+    CHECK(jpb_utf16_compare(trace.text[0], L"0009001") == 0);
     CHECK(trace.textX[0] == 708);
     CHECK(trace.textY[0] == 30);
     CHECK_FLOAT_CLOSE(trace.textScale[0], 3.24f, 0.0001f);
@@ -1161,7 +1521,7 @@ static int test_overlay_owner_chain(void)
     memset(&texture_trace, 0, sizeof(texture_trace));
     game_DrawItems(1);
     CHECK(trace.textCalls == 1);
-    CHECK(wcscmp(trace.text[0], L"4") == 0);
+    CHECK(jpb_utf16_compare(trace.text[0], L"4") == 0);
     CHECK(trace.textX[0] == 914);
     CHECK(trace.textY[0] == 484);
     CHECK_FLOAT_CLOSE(trace.textScale[0], 1.8f, 0.0001f);
@@ -1306,11 +1666,11 @@ static int test_overlay_owner_chain(void)
     jpb_WHookSetDrawTextureHook(capture_texture_rect, &texture_trace);
     game_DisplayOverlay();
     CHECK(trace.textCalls == 4);
-    CHECK(wcscmp(trace.text[2], L"0009001") == 0);
+    CHECK(jpb_utf16_compare(trace.text[2], L"0009001") == 0);
     CHECK(trace.textX[2] == 136);
     CHECK(trace.textY[2] == 60);
     CHECK_FLOAT_CLOSE(trace.textScale[2], 3.24f, 0.0001f);
-    CHECK(wcscmp(trace.text[3], L"4") == 0);
+    CHECK(jpb_utf16_compare(trace.text[3], L"4") == 0);
     CHECK(trace.textX[3] == 548);
     CHECK(trace.textY[3] == 368);
     CHECK_FLOAT_CLOSE(trace.textScale[3], 1.8f, 0.0001f);
@@ -1351,12 +1711,12 @@ static int test_overlay_owner_chain(void)
     jpb_WHookSetDrawTextureHook(capture_texture_rect, &texture_trace);
     game_DisplayOverlay();
     CHECK(trace.textCalls == 2);
-    CHECK(wcscmp(trace.text[0], L"0000042") == 0);
+    CHECK(jpb_utf16_compare(trace.text[0], L"0000042") == 0);
     CHECK(trace.textX[0] == 48);
     CHECK(trace.textY[0] == 62);
     CHECK(trace.textMode[0] == 0);
     CHECK_FLOAT_CLOSE(trace.textScale[0], 3.24f, 0.0001f);
-    CHECK(wcscmp(trace.text[1], L"3") == 0);
+    CHECK(jpb_utf16_compare(trace.text[1], L"3") == 0);
     CHECK(trace.textX[1] == 188);
     CHECK(trace.textY[1] == 368);
     CHECK(trace.textMode[1] == 0);
@@ -1377,12 +1737,12 @@ static int test_overlay_owner_chain(void)
     jpb_WHookSetDrawTextureHook(capture_texture_rect, &texture_trace);
     game_DisplayOverlay();
     CHECK(trace.textCalls == 2);
-    CHECK(wcscmp(trace.text[0], L"0000042") == 0);
+    CHECK(jpb_utf16_compare(trace.text[0], L"0000042") == 0);
     CHECK(trace.textX[0] == 24);
     CHECK(trace.textY[0] == 31);
     CHECK(trace.textMode[0] == 0);
     CHECK_FLOAT_CLOSE(trace.textScale[0], 3.24f, 0.0001f);
-    CHECK(wcscmp(trace.text[1], L"3") == 0);
+    CHECK(jpb_utf16_compare(trace.text[1], L"3") == 0);
     CHECK(trace.textX[1] == 94);
     CHECK(trace.textY[1] == 484);
     CHECK(trace.textMode[1] == 0);
@@ -1419,7 +1779,7 @@ static int test_overlay_owner_chain(void)
     jpb_TextSetDrawHook(capture_overlay_text, &trace);
     game_DisplayOverlay();
     CHECK(trace.textCalls == 4);
-    CHECK(wcscmp(trace.text[2], L"0009001") == 0);
+    CHECK(jpb_utf16_compare(trace.text[2], L"0009001") == 0);
     CHECK(trace.textX[2] == 592);
     CHECK(trace.textY[2] == 62);
     CHECK(trace.textMode[2] == 1);
@@ -1434,7 +1794,7 @@ static int test_overlay_owner_chain(void)
     jpb_TextSetDrawHook(capture_overlay_text, &trace);
     game_DisplayOverlay();
     CHECK(trace.textCalls == 3);
-    CHECK(wcscmp(trace.text[2], L"7") == 0);
+    CHECK(jpb_utf16_compare(trace.text[2], L"7") == 0);
     CHECK(trace.textX[2] == 368);
     CHECK(trace.textY[2] == 368);
     CHECK_FLOAT_CLOSE(trace.textScale[2], 1.8f, 0.0001f);
@@ -1470,7 +1830,7 @@ static int test_overlay_owner_chain(void)
     jpb_WHookSetDrawTextureHook(NULL, NULL);
     game_DisplayOverlay();
     CHECK(trace.textCalls == 3);
-    CHECK(wcscmp(trace.text[2], L"5") == 0);
+    CHECK(jpb_utf16_compare(trace.text[2], L"5") == 0);
     CHECK(trace.textX[2] == 368);
     CHECK(trace.textY[2] == 368);
     CHECK_FLOAT_CLOSE(trace.textScale[2], 1.8f, 0.0001f);
@@ -1507,7 +1867,7 @@ static int test_overlay_owner_chain(void)
     jpb_TextSetDrawHook(capture_overlay_text, &trace);
     game_DisplayOverlay();
     CHECK(trace.textCalls == 2);
-    CHECK(wcscmp(trace.text[1], L"7") == 0);
+    CHECK(jpb_utf16_compare(trace.text[1], L"7") == 0);
     CHECK(trace.textX[1] == 368);
     CHECK(trace.textY[1] == 368);
     CHECK(trace.textMode[1] == 0);
@@ -1525,7 +1885,7 @@ static int test_overlay_owner_chain(void)
     jpb_TextSetDrawHook(capture_overlay_text, &trace);
     game_DisplayOverlay();
     CHECK(trace.textCalls == 2);
-    CHECK(wcscmp(trace.text[1], L"11") == 0);
+    CHECK(jpb_utf16_compare(trace.text[1], L"11") == 0);
     CHECK(trace.textX[1] == 377);
     CHECK(trace.textY[1] == 371);
     CHECK_FLOAT_CLOSE(trace.textScale[1], 1.5f, 0.0001f);
@@ -1705,11 +2065,9 @@ static int test_overlay_hud_gate_boundaries(void)
 static int test_life_tile_2d_owner(void)
 {
     TextureRectTrace texture_trace;
-    BarTrace bar_trace;
 
     reset_game_state();
     memset(&texture_trace, 0, sizeof(texture_trace));
-    memset(&bar_trace, 0, sizeof(bar_trace));
     OptionStruct.ScreenWidth = 640;
     OptionStruct.ScreenHeight = 480;
     scaleAdjustment = 1.0f;
@@ -1782,91 +2140,105 @@ static int test_life_tile_2d_owner(void)
               0xff,
               88) == 1);
 
-    jpb_WHookSetDrawTextureHook(NULL, NULL);
-    jpb_GameSetBarHook(capture_bar, &bar_trace);
     _AddBar(11, 22, 33, 44, INT32_C(0x00123456));
-    CHECK(bar_trace.calls == 1);
-    CHECK(bar_trace.x[0] == 11);
-    CHECK(bar_trace.y[0] == 22);
-    CHECK(bar_trace.width[0] == 33);
-    CHECK(bar_trace.height[0] == 44);
-    CHECK(bar_trace.color[0] == UINT32_C(0x7f123456));
-    jpb_GameSetBarHook(NULL, NULL);
+    CHECK(find_texture_rect(
+              &texture_trace,
+              NULL,
+              11,
+              22,
+              44,
+              66,
+              0x12,
+              0x34,
+              0x56,
+              0x7f) == 1);
+    jpb_WHookSetDrawTextureHook(NULL, NULL);
     return 0;
 }
 
 static int test_menu_big_numbers_and_mini4(void)
 {
-    BigNumberTrace trace;
+    TextureRectTrace trace;
+    _Material digit_materials[11] = {{0}};
+    int index;
 
     reset_game_state();
     memset(&trace, 0, sizeof(trace));
-    jpb_TextSetPsxTextureHook(
-        capture_big_number_texture, &trace);
+    memset(fontSpec, 0, sizeof(fontSpec));
+    memset(menuTextures, 0, sizeof(menuTextures));
+    for (index = 0; index < 11; ++index) {
+        fontSpec[0xb5 + index].clut = (uint16_t)(index + 1);
+        fontSpec[0xb5 + index].w = 4;
+        fontSpec[0xb5 + index].h = 5;
+        menuTextures[index + 1] = &digit_materials[index];
+    }
+    gPSXDrawScaleX = 1.0f;
+    gPSXDrawScaleY = 1.0f;
+    gPSXDrawScaleW = 1.0f;
+    gPSXDrawScaleH = 1.0f;
+    scaleAdjustmentMM = 1.0f;
+    frontRGBoff = 0;
+    frontZ = 0.0f;
+    jpb_WHookSetDrawTextureHook(capture_texture_rect, &trace);
 
     CHECK(menu_drawBigNum(7, 10, 20, 1, 2, 3) == 5);
     CHECK(trace.calls == 1);
-    CHECK(trace.texture[0] == 0xbc);
-    CHECK(trace.x[0] == 10.0f);
-    CHECK(trace.y[0] == 20.0f);
-    CHECK(trace.width[0] == 0.0f);
-    CHECK(trace.height[0] == 0.0f);
-    CHECK(trace.transparency[0] == 0xff);
-    CHECK(trace.red[0] == 1);
-    CHECK(trace.green[0] == 2);
-    CHECK(trace.blue[0] == 3);
+    CHECK(trace.materials[0] == &digit_materials[7]);
+    CHECK(trace.destinations[0].left == 10);
+    CHECK(trace.destinations[0].top == 20);
+    CHECK(trace.destinations[0].right == 14);
+    CHECK(trace.destinations[0].bottom == 25);
+    CHECK(trace.colors[0].cd == 0xff);
+    CHECK(trace.colors[0].r == 1);
+    CHECK(trace.colors[0].g == 2);
+    CHECK(trace.colors[0].b == 3);
 
     memset(&trace, 0, sizeof(trace));
     game_DrawBigNum(42, 10, 20);
     CHECK(trace.calls == 2);
-    CHECK(trace.texture[0] == 0xb9);
-    CHECK(trace.texture[1] == 0xb7);
-    CHECK(trace.x[0] == 10.0f);
-    CHECK(trace.y[0] == 20.0f);
-    CHECK(trace.x[1] == 28.0f);
-    CHECK(trace.y[1] == 20.0f);
-    CHECK(trace.width[0] == 16.0f);
-    CHECK(trace.height[0] == 14.0f);
-    CHECK(trace.width[1] == 16.0f);
-    CHECK(trace.height[1] == 14.0f);
-    CHECK(trace.transparency[0] == 200);
-    CHECK(trace.transparency[1] == 200);
-    CHECK(trace.red[0] == 0x80);
-    CHECK(trace.green[0] == 0x80);
-    CHECK(trace.blue[0] == 0x80);
+    CHECK(trace.materials[0] == &digit_materials[4]);
+    CHECK(trace.materials[1] == &digit_materials[2]);
+    CHECK(trace.destinations[0].left == 10);
+    CHECK(trace.destinations[0].top == 20);
+    CHECK(trace.destinations[0].right == 26);
+    CHECK(trace.destinations[0].bottom == 34);
+    CHECK(trace.destinations[1].left == 28);
+    CHECK(trace.destinations[1].top == 20);
+    CHECK(trace.destinations[1].right == 44);
+    CHECK(trace.destinations[1].bottom == 34);
+    CHECK(trace.colors[0].cd == 200);
+    CHECK(trace.colors[1].cd == 200);
+    CHECK(trace.colors[0].r == 0x80);
+    CHECK(trace.colors[0].g == 0x80);
+    CHECK(trace.colors[0].b == 0x80);
 
     memset(&trace, 0, sizeof(trace));
     game_DrawBigNum(7, 100, 50);
     CHECK(trace.calls == 2);
-    CHECK(trace.texture[0] == 0xb5);
-    CHECK(trace.texture[1] == 0xbc);
-    CHECK(trace.x[0] == 100.0f);
-    CHECK(trace.x[1] == 118.0f);
+    CHECK(trace.materials[0] == &digit_materials[0]);
+    CHECK(trace.materials[1] == &digit_materials[7]);
+    CHECK(trace.destinations[0].left == 100);
+    CHECK(trace.destinations[1].left == 118);
 
     memset(&trace, 0, sizeof(trace));
     menu_drawBigNums(42, 4, 100, 50, 9, 8, 7);
     CHECK(trace.calls == 4);
-    CHECK(trace.texture[0] == 0xb5);
-    CHECK(trace.texture[1] == 0xb5);
-    CHECK(trace.texture[2] == 0xb9);
-    CHECK(trace.texture[3] == 0xb7);
-    CHECK(trace.x[0] == 100.0f);
-    CHECK(trace.y[0] == 50.0f);
-    CHECK(trace.x[1] == 105.0f);
-    CHECK(trace.y[1] == 50.0f);
-    CHECK(trace.x[2] == 110.0f);
-    CHECK(trace.y[2] == 50.0f);
-    CHECK(trace.x[3] == 115.0f);
-    CHECK(trace.y[3] == 50.0f);
-    CHECK(trace.width[0] == 0.0f);
-    CHECK(trace.height[0] == 0.0f);
-    CHECK(trace.transparency[0] == 0xff);
-    CHECK(trace.transparency[1] == 0xff);
-    CHECK(trace.transparency[2] == 0xff);
-    CHECK(trace.transparency[3] == 0xff);
-    CHECK(trace.red[0] == 9);
-    CHECK(trace.green[0] == 8);
-    CHECK(trace.blue[0] == 7);
+    CHECK(trace.materials[0] == &digit_materials[0]);
+    CHECK(trace.materials[1] == &digit_materials[0]);
+    CHECK(trace.materials[2] == &digit_materials[4]);
+    CHECK(trace.materials[3] == &digit_materials[2]);
+    CHECK(trace.destinations[0].left == 100);
+    CHECK(trace.destinations[0].top == 50);
+    CHECK(trace.destinations[1].left == 105);
+    CHECK(trace.destinations[2].left == 110);
+    CHECK(trace.destinations[3].left == 115);
+    CHECK(trace.colors[0].cd == 0xff);
+    CHECK(trace.colors[1].cd == 0xff);
+    CHECK(trace.colors[2].cd == 0xff);
+    CHECK(trace.colors[3].cd == 0xff);
+    CHECK(trace.colors[0].r == 9);
+    CHECK(trace.colors[0].g == 8);
+    CHECK(trace.colors[0].b == 7);
 
     memset(&trace, 0, sizeof(trace));
     zerobss_levelReset = 73;
@@ -1877,23 +2249,19 @@ static int test_menu_big_numbers_and_mini4(void)
     CHECK(gDeathCount == 0);
     CHECK(gPilotDeathCount == 0);
     CHECK(trace.calls == 3);
-    CHECK(trace.texture[0] == 0xb6);
-    CHECK(trace.texture[1] == 0xb5);
-    CHECK(trace.texture[2] == 0xb5);
-    CHECK(trace.x[0] == 240.0f);
-    CHECK(trace.y[0] == 184.0f);
-    CHECK(trace.x[1] == 245.0f);
-    CHECK(trace.y[1] == 184.0f);
-    CHECK(trace.x[2] == 250.0f);
-    CHECK(trace.y[2] == 184.0f);
-    CHECK(trace.width[0] == 0.0f);
-    CHECK(trace.height[0] == 0.0f);
-    CHECK(trace.transparency[0] == 0xff);
-    CHECK(trace.transparency[1] == 0xff);
-    CHECK(trace.transparency[2] == 0xff);
-    CHECK(trace.red[0] == 0x80);
-    CHECK(trace.green[0] == 0x80);
-    CHECK(trace.blue[0] == 0x80);
+    CHECK(trace.materials[0] == &digit_materials[1]);
+    CHECK(trace.materials[1] == &digit_materials[0]);
+    CHECK(trace.materials[2] == &digit_materials[0]);
+    CHECK(trace.destinations[0].left == 240);
+    CHECK(trace.destinations[0].top == 184);
+    CHECK(trace.destinations[1].left == 245);
+    CHECK(trace.destinations[2].left == 250);
+    CHECK(trace.colors[0].cd == 0xff);
+    CHECK(trace.colors[1].cd == 0xff);
+    CHECK(trace.colors[2].cd == 0xff);
+    CHECK(trace.colors[0].r == 0x80);
+    CHECK(trace.colors[0].g == 0x80);
+    CHECK(trace.colors[0].b == 0x80);
 
     memset(&trace, 0, sizeof(trace));
     OptionStruct.ScreenWidth = 960;
@@ -1904,21 +2272,17 @@ static int test_menu_big_numbers_and_mini4(void)
     gPilotDeathCount = 11;
     level_Mini4();
     CHECK(trace.calls == 3);
-    CHECK(trace.texture[0] == 0xb6);
-    CHECK(trace.texture[1] == 0xb5);
-    CHECK(trace.texture[2] == 0xb5);
-    CHECK(trace.x[0] == 240.0f);
-    CHECK(trace.y[0] == 184.0f);
-    CHECK(trace.x[1] == 245.0f);
-    CHECK(trace.y[1] == 184.0f);
-    CHECK(trace.x[2] == 250.0f);
-    CHECK(trace.y[2] == 184.0f);
-    CHECK(trace.width[0] == 0.0f);
-    CHECK(trace.height[0] == 0.0f);
-    CHECK(trace.transparency[0] == 0xff);
-    CHECK(trace.red[0] == 0x80);
-    CHECK(trace.green[0] == 0x80);
-    CHECK(trace.blue[0] == 0x80);
+    CHECK(trace.materials[0] == &digit_materials[1]);
+    CHECK(trace.materials[1] == &digit_materials[0]);
+    CHECK(trace.materials[2] == &digit_materials[0]);
+    CHECK(trace.destinations[0].left == 240);
+    CHECK(trace.destinations[0].top == 184);
+    CHECK(trace.destinations[1].left == 245);
+    CHECK(trace.destinations[2].left == 250);
+    CHECK(trace.colors[0].cd == 0xff);
+    CHECK(trace.colors[0].r == 0x80);
+    CHECK(trace.colors[0].g == 0x80);
+    CHECK(trace.colors[0].b == 0x80);
     OptionStruct.ScreenWidth = 640;
     OptionStruct.ScreenHeight = 480;
     scaleAdjustment = 1.0f;
@@ -1939,7 +2303,9 @@ static int test_menu_big_numbers_and_mini4(void)
     CHECK(zerobss_levelReset == 91);
     CHECK(gDeathCount == 40);
 
-    jpb_TextSetPsxTextureHook(NULL, NULL);
+    jpb_WHookSetDrawTextureHook(NULL, NULL);
+    gPSXDrawScaleW = 3.75f;
+    gPSXDrawScaleH = 4.5f;
     return 0;
 }
 
@@ -1947,6 +2313,8 @@ static int test_psx_texture_hud_leaf_contract(void)
 {
     TextureRectTrace trace;
     _Material digit_material = {0};
+    CVECTOR saved_color;
+    int saved_surface;
     int width;
 
     reset_game_state();
@@ -1969,7 +2337,7 @@ static int test_psx_texture_hud_leaf_contract(void)
     frontRGBoff = 10;
     jpb_WHookSetDrawTextureHook(capture_texture_rect, &trace);
 
-    width = jpb_PsxDrawTextureLayer(
+    width = psxDrawTextureDepth(
         0xb5,
         6.0f,
         8.0f,
@@ -1999,7 +2367,7 @@ static int test_psx_texture_hud_leaf_contract(void)
 
     memset(&trace, 0, sizeof(trace));
     frontRGBoff = 32;
-    width = jpb_PsxDrawTextureLayer(
+    width = psxDrawTextureDepth(
         0xb5,
         1.0f,
         2.0f,
@@ -2021,6 +2389,125 @@ static int test_psx_texture_hud_leaf_contract(void)
     CHECK(trace.colors[0].b == 255);
     CHECK(trace.colors[0].cd == 0x7f);
 
+    memset(&trace, 0, sizeof(trace));
+    saved_color = Colors[4];
+    Colors[4] = (CVECTOR){21, 31, 41, 255};
+    frontRGBoff = 0;
+    width = psxDrawTexture2Depth(
+        0xb5, 2.0f, 3.0f, 1.0f, 1.0f,
+        0x8000u, 4, 0.44f);
+    CHECK(width == 4);
+    CHECK(trace.calls == 1);
+    CHECK(trace.colors[0].r == 21);
+    CHECK(trace.colors[0].g == 31);
+    CHECK(trace.colors[0].b == 41);
+    CHECK(trace.colors[0].cd == 255);
+    CHECK(trace.layerDepths[0] == 0.44f);
+
+    memset(&trace, 0, sizeof(trace));
+    frontZ = 0.25f;
+    width = psxDrawTexture2(
+        0xb5, 2.0f, 3.0f, 1.0f, 1.0f,
+        0x8400u, 4);
+    CHECK(width == 4);
+    CHECK(trace.calls == 1);
+    CHECK(trace.colors[0].r == 21);
+    CHECK(trace.colors[0].g == 31);
+    CHECK(trace.colors[0].b == 41);
+    CHECK(trace.colors[0].cd == 0x3f);
+    CHECK(trace.layerDepths[0] > 0.2509f);
+    CHECK(trace.layerDepths[0] < 0.2511f);
+    Colors[4] = saved_color;
+
+    memset(&trace, 0, sizeof(trace));
+    saved_surface = mDrawingSurfaceId;
+    mDrawingSurfaceId = 1;
+    frontZ = 0.125f;
+    width = psxDrawTextureClip(
+        0xb5u | 0x8000u | 0x2000u,
+        6, 8, 3, 4, 5, 10, 20, 30,
+        7, 9, 2, 2);
+    CHECK(width == 3);
+    CHECK(trace.calls == 1);
+    CHECK(trace.destinations[0].left == 14);
+    CHECK(trace.destinations[0].top == 27);
+    CHECK(trace.destinations[0].right == 22);
+    CHECK(trace.destinations[0].bottom == 37);
+    CHECK(trace.sources[0].left == 44);
+    CHECK(trace.sources[0].right == 28);
+    CHECK(trace.colors[0].cd == 200);
+    CHECK(trace.layerDepths[0] > 0.1259f);
+    CHECK(trace.layerDepths[0] < 0.1261f);
+
+    memset(&trace, 0, sizeof(trace));
+    width = psxDrawTextureClipDepth(
+        0xb5, 6, 8, 3, 4, 0x8100u, 10, 20, 30,
+        7, 9, 2, 2, 0.77f);
+    CHECK(width == 3);
+    CHECK(trace.calls == 1);
+    CHECK(trace.destinations[0].left == 14);
+    CHECK(trace.destinations[0].top == 27);
+    CHECK(trace.destinations[0].right == 22);
+    CHECK(trace.destinations[0].bottom == 37);
+    CHECK(trace.sources[0].left == 28);
+    CHECK(trace.sources[0].right == 44);
+    CHECK(trace.colors[0].cd == 0x7f);
+    CHECK(trace.layerDepths[0] == 0.77f);
+    CHECK(frontZ > 0.1259f);
+    CHECK(frontZ < 0.1261f);
+
+    memset(&trace, 0, sizeof(trace));
+    mDrawingSurfaceId = 0;
+    (void)psxDrawTextureClip(
+        0xb5, 0, 100, 3, 4, 0x8000u, 10, 20, 30,
+        0, 20, 2, 2);
+    CHECK(trace.calls == 1);
+    CHECK(trace.destinations[0].top == 300);
+    CHECK(trace.destinations[0].bottom == 310);
+    mDrawingSurfaceId = saved_surface;
+
+    memset(&trace, 0, sizeof(trace));
+    frontRGBoff = 10;
+    frontZ = 0.5f;
+    width = psxDrawTexture(
+        0xb5u | 0x8000u | 0x2000u,
+        6.0f,
+        8.0f,
+        0.0f,
+        0.0f,
+        5,
+        240,
+        7,
+        8);
+    CHECK(width == 8);
+    CHECK(trace.calls == 1);
+    CHECK(trace.materials[0] == &digit_material);
+    CHECK(trace.destinations[0].left == 12);
+    CHECK(trace.destinations[0].top == 24);
+    CHECK(trace.destinations[0].right == 20);
+    CHECK(trace.destinations[0].bottom == 36);
+    CHECK(trace.sources[0].left == 44);
+    CHECK(trace.sources[0].top == 44);
+    CHECK(trace.sources[0].right == 28);
+    CHECK(trace.sources[0].bottom == 64);
+    CHECK(trace.colors[0].r == 250);
+    CHECK(trace.colors[0].g == 17);
+    CHECK(trace.colors[0].b == 18);
+    CHECK(trace.colors[0].cd == 200);
+    CHECK(trace.layerDepths[0] > 0.5009f);
+    CHECK(trace.layerDepths[0] < 0.5011f);
+    CHECK(frontZ == trace.layerDepths[0]);
+
+    memset(&trace, 0, sizeof(trace));
+    menuTextures[3] = NULL;
+    (void)psxDrawTexture(
+        0xb5, 0.0f, 0.0f, 1.0f, 1.0f,
+        0x8400u, 1, 2, 3);
+    CHECK(trace.calls == 1);
+    CHECK(trace.materials[0] == NULL);
+    CHECK(trace.colors[0].cd == 0x3f);
+    menuTextures[3] = &digit_material;
+
     jpb_WHookSetDrawTextureHook(NULL, NULL);
     frontRGBoff = 0;
     gPSXDrawScaleX = 1.0f;
@@ -2034,12 +2521,21 @@ static int test_psx_texture_hud_leaf_contract(void)
 static int test_sdl_text_hud_leaf_contract(void)
 {
     OverlayTrace trace;
+    int font_token;
     int result;
 
     reset_game_state();
     memset(&trace, 0, sizeof(trace));
     scaleAdjustment = 1.125f;
     scaleAdjustmentMM = 0.5f;
+    jpb_TextSetFontLoadHook(
+        load_unit_metric_font, &font_token);
+    jpb_TextUtilSetFontMetricsHooks(
+        set_unit_metric_font_size,
+        get_unit_glyph_metrics,
+        get_unit_metric_error);
+    ClearGlyphCache();
+    jpb_TextResetFontCache();
     jpb_TextSetDrawHook(capture_overlay_text, &trace);
 
     result = SDLTextWriteScale(
@@ -2050,11 +2546,11 @@ static int test_sdl_text_hud_leaf_contract(void)
         67,
         3.24f,
         2,
-        L"%07d",
+        "%07d",
         42);
     CHECK(result == 7);
     CHECK(trace.textCalls == 1);
-    CHECK(wcscmp(trace.text[0], L"0000042") == 0);
+    CHECK(jpb_utf16_compare(trace.text[0], L"0000042") == 0);
     CHECK(trace.textTint[0] == 11);
     CHECK(trace.textAlpha[0] == 130);
     CHECK(trace.textMode[0] == 2);
@@ -2063,6 +2559,7 @@ static int test_sdl_text_hud_leaf_contract(void)
     CHECK_FLOAT_CLOSE(trace.textScale[0], 3.24f, 0.0001f);
     CHECK_FLOAT_CLOSE(trace.textScaleAdjustment[0], 1.125f, 0.0001f);
     CHECK(trace.textFontStyle[0] == 2);
+    CHECK(trace.textDepthEnabled[0] == 0);
 
     memset(&trace, 0, sizeof(trace));
     result = SDLTextWriteScaleMM(
@@ -2073,11 +2570,11 @@ static int test_sdl_text_hud_leaf_contract(void)
         390,
         2.5f,
         2,
-        L"%ls",
-        L"Select Level");
+        "%s",
+        "Select Level");
     CHECK(result == 12);
     CHECK(trace.textCalls == 1);
-    CHECK(wcscmp(trace.text[0], L"Select Level") == 0);
+    CHECK(jpb_utf16_compare(trace.text[0], L"Select Level") == 0);
     CHECK(trace.textAlpha[0] == 190);
     CHECK(trace.textX[0] == 604);
     CHECK(trace.textY[0] == 390);
@@ -2088,7 +2585,33 @@ static int test_sdl_text_hud_leaf_contract(void)
         0.0001f);
     CHECK(trace.textFontStyle[0] == 2);
 
+    memset(&trace, 0, sizeof(trace));
+    result = SDLTextWriteScaleMMDepth(
+        15,
+        200,
+        1,
+        320,
+        240,
+        1.5f,
+        0,
+        0.95f,
+        "%s",
+        "Caf\xc3\xa9");
+    CHECK(result == 4);
+    CHECK(trace.textCalls == 1);
+    CHECK(trace.text[0][0] == (uint16_t)'C');
+    CHECK(trace.text[0][1] == (uint16_t)'a');
+    CHECK(trace.text[0][2] == (uint16_t)'f');
+    CHECK(trace.text[0][3] == UINT16_C(0x00e9));
+    CHECK(trace.text[0][4] == 0);
+    CHECK(trace.textDepthEnabled[0] == 1);
+    CHECK_FLOAT_CLOSE(trace.textDepth[0], 0.95f, 0.0001f);
+
     jpb_TextSetDrawHook(NULL, NULL);
+    jpb_TextSetFontLoadHook(NULL, NULL);
+    jpb_TextUtilSetFontMetricsHooks(NULL, NULL, NULL);
+    ClearGlyphCache();
+    jpb_TextResetFontCache();
     scaleAdjustment = 1.0f;
     scaleAdjustmentMM = 1.0f;
     return 0;
@@ -2114,7 +2637,7 @@ static int test_draw_text_hud_bridge_contract(void)
         42);
     CHECK(result == 0);
     CHECK(trace.textCalls == 1);
-    CHECK(wcscmp(trace.text[0], L"score 0000042") == 0);
+    CHECK(jpb_utf16_compare(trace.text[0], L"score 0000042") == 0);
     CHECK(trace.textTint[0] == 11);
     CHECK(trace.textAlpha[0] == 0x82);
     CHECK(trace.textMode[0] == 0);
@@ -2123,10 +2646,6 @@ static int test_draw_text_hud_bridge_contract(void)
     CHECK_FLOAT_CLOSE(trace.textScale[0], 3.24f, 0.0001f);
     CHECK_FLOAT_CLOSE(trace.textScaleAdjustment[0], 1.125f, 0.0001f);
     CHECK(trace.textFontStyle[0] == 2);
-
-    memset(&trace, 0, sizeof(trace));
-    CHECK(_DrawText(1.0f, 2.0f, 0.0f, 1.0f, UINT32_C(0x7F000000), NULL) == 0);
-    CHECK(trace.textCalls == 0);
 
     jpb_TextSetDrawHook(NULL, NULL);
     scaleAdjustment = 1.0f;
@@ -2144,18 +2663,18 @@ static int test_level_countdown_outcomes(void)
     OptionStruct.ScreenHeight = 480;
     scaleAdjustment = 1.0f;
     jpb_TextSetDrawHook(capture_overlay_text, &trace);
-    allText[435] = L"SUCCESS";
-    allText[436] = L"FAILED";
-    allText[427] = L"targets";
+    allText[435] = "SUCCESS";
+    allText[436] = "FAILED";
+    allText[427] = "targets";
 
     zerobss_levelReset = 101;
     level_CountDown(2, 0, 0);
     CHECK(trace.textCalls == 2);
-    CHECK(wcscmp(trace.text[0], L"002") == 0);
+    CHECK(jpb_utf16_compare(trace.text[0], L"002") == 0);
     CHECK(trace.textX[0] == 231);
     CHECK(trace.textY[0] == 328);
     CHECK_FLOAT_CLOSE(trace.textScale[0], 3.0f, 0.0001f);
-    CHECK(wcscmp(trace.text[1], L"sec") == 0);
+    CHECK(jpb_utf16_compare(trace.text[1], L"sec") == 0);
     CHECK(trace.textX[1] == 353);
     CHECK(trace.textY[1] == 359);
     CHECK_FLOAT_CLOSE(trace.textScale[1], 1.5f, 0.0001f);
@@ -2167,11 +2686,11 @@ static int test_level_countdown_outcomes(void)
     zerobss_levelReset = 104;
     level_CountDown(2, 0, 0);
     CHECK(trace.textCalls == 2);
-    CHECK(wcscmp(trace.text[0], L"002") == 0);
+    CHECK(jpb_utf16_compare(trace.text[0], L"002") == 0);
     CHECK(trace.textX[0] == 435);
     CHECK(trace.textY[0] == 464);
     CHECK_FLOAT_CLOSE(trace.textScale[0], 3.0f, 0.0001f);
-    CHECK(wcscmp(trace.text[1], L"sec") == 0);
+    CHECK(jpb_utf16_compare(trace.text[1], L"sec") == 0);
     CHECK(trace.textX[1] == 496);
     CHECK(trace.textY[1] == 479);
     CHECK_FLOAT_CLOSE(trace.textScale[1], 1.5f, 0.0001f);
@@ -2183,11 +2702,11 @@ static int test_level_countdown_outcomes(void)
     zerobss_levelReset = 102;
     level_CountDown(0, 3, 0);
     CHECK(trace.textCalls == 2);
-    CHECK(wcscmp(trace.text[0], L"003") == 0);
+    CHECK(jpb_utf16_compare(trace.text[0], L"003") == 0);
     CHECK(trace.textX[0] == 48);
     CHECK(trace.textY[0] == 200);
     CHECK_FLOAT_CLOSE(trace.textScale[0], 3.0f, 0.0001f);
-    CHECK(wcscmp(trace.text[1], L"t") == 0);
+    CHECK(jpb_utf16_compare(trace.text[1], L"targets") == 0);
     CHECK(trace.textX[1] == 48);
     CHECK(trace.textY[1] == 260);
     CHECK_FLOAT_CLOSE(trace.textScale[1], 1.5f, 0.0001f);
@@ -2199,11 +2718,11 @@ static int test_level_countdown_outcomes(void)
     zerobss_levelReset = 105;
     level_CountDown(0, 3, 0);
     CHECK(trace.textCalls == 2);
-    CHECK(wcscmp(trace.text[0], L"003") == 0);
+    CHECK(jpb_utf16_compare(trace.text[0], L"003") == 0);
     CHECK(trace.textX[0] == 24);
     CHECK(trace.textY[0] == 100);
     CHECK_FLOAT_CLOSE(trace.textScale[0], 3.0f, 0.0001f);
-    CHECK(wcscmp(trace.text[1], L"t") == 0);
+    CHECK(jpb_utf16_compare(trace.text[1], L"targets") == 0);
     CHECK(trace.textX[1] == 24);
     CHECK(trace.textY[1] == 130);
     CHECK_FLOAT_CLOSE(trace.textScale[1], 1.5f, 0.0001f);
@@ -2221,7 +2740,7 @@ static int test_level_countdown_outcomes(void)
     memset(&trace, 0, sizeof(trace));
     level_CountDown(0, 0, 0);
     CHECK(find_overlay_text(
-              &trace, L"SUCCESS", 2, 320, 200, 1.0f) == 1);
+              &trace, L"SUCCESS", 2, 320, 200, 3.0f) == 1);
 
     memset(abGlobalBits, 0, sizeof(abGlobalBits));
     memset(&trace, 0, sizeof(trace));
@@ -2238,7 +2757,7 @@ static int test_level_countdown_outcomes(void)
     memset(&trace, 0, sizeof(trace));
     level_CountDown(0, 0, 0);
     CHECK(find_overlay_text(
-              &trace, L"SUCCESS", 2, 480, 100, 1.0f) == 1);
+              &trace, L"SUCCESS", 2, 480, 100, 3.0f) == 1);
 
     OptionStruct.ScreenWidth = 640;
     OptionStruct.ScreenHeight = 480;
@@ -2264,7 +2783,7 @@ static int test_level_countdown_outcomes(void)
     memset(&trace, 0, sizeof(trace));
     level_CountDown(1, 0, 0);
     CHECK(find_overlay_text(
-              &trace, L"FAILED", 2, 320, 200, 1.0f) == 1);
+              &trace, L"FAILED", 2, 320, 200, 3.0f) == 1);
 
     memset(abGlobalBits, 0, sizeof(abGlobalBits));
     memset(&trace, 0, sizeof(trace));
@@ -2282,7 +2801,7 @@ static int test_level_countdown_outcomes(void)
     memset(&trace, 0, sizeof(trace));
     level_CountDown(1, 0, 0);
     CHECK(find_overlay_text(
-              &trace, L"FAILED", 2, 480, 100, 1.0f) == 1);
+              &trace, L"FAILED", 2, 480, 100, 3.0f) == 1);
 
     OptionStruct.ScreenWidth = 640;
     OptionStruct.ScreenHeight = 480;
@@ -2300,6 +2819,370 @@ static int test_level_countdown_outcomes(void)
     allText[427] = NULL;
     allText[435] = NULL;
     allText[436] = NULL;
+    return 0;
+}
+
+static int test_level_mini_owners(void)
+{
+    WorldData world;
+    WorldData *saved_world = gpWorld;
+    Motion player0_motions[2];
+    Motion player1_motions[2];
+    OverlayTrace trace;
+
+    reset_game_state();
+    memset(&world, 0, sizeof(world));
+    memset(player0_motions, 0, sizeof(player0_motions));
+    memset(player1_motions, 0, sizeof(player1_motions));
+    memset(&trace, 0, sizeof(trace));
+    memset(abGlobalBits, 0, sizeof(abGlobalBits));
+    world.player0 = &gaPlayerData[0];
+    world.player1 = &gaPlayerData[1];
+    gaPlayerData[0].paMotions = player0_motions;
+    gaPlayerData[1].paMotions = player1_motions;
+    gpWorld = &world;
+    OptionStruct.ScreenWidth = 640;
+    OptionStruct.ScreenHeight = 480;
+    scaleAdjustment = 1.0f;
+    allText[237] = "PLAYER ONE";
+    allText[238] = "PLAYER TWO";
+    allText[435] = "SUCCESS";
+    allText[436] = "FAILED";
+    nextLevel = 0;
+    jpb_TextSetDrawHook(capture_overlay_text, &trace);
+
+    gGlobalTimer = 100;
+    zerobss_levelReset = 801;
+    level_Mini1(2, 21);
+    level_Mini1(2, 21);
+    CHECK(find_overlay_text(&trace, L"002", 0, 231, 213, 3.0f) == 1);
+    CHECK(find_overlay_text(&trace, L"sec", 0, 353, 244, 1.5f) == 1);
+    memset(&trace, 0, sizeof(trace));
+    GameStruct.CurrentLevel = 14;
+    gDeathCount = 21;
+    level_Mini1(2, 21);
+    level_Mini1(2, 21);
+    CHECK(find_overlay_text(
+              &trace, L"SUCCESS", 2, 320, 200, 3.0f) == 1);
+    CHECK((secretBits & UINT32_C(0x100)) != 0);
+
+    memset(&trace, 0, sizeof(trace));
+    memset(abGlobalBits, 0, sizeof(abGlobalBits));
+    GameStruct.GameState = UINT32_C(0x02000000);
+    gGlobalTimer = 200;
+    zerobss_levelReset = 802;
+    level_Mini2();
+    CHECK(trace.textCalls == 0);
+    GameStruct.GameState = 0;
+    level_Mini2();
+    CHECK(find_overlay_text(&trace, L"000", 0, 231, 343, 3.0f) == 1);
+    CHECK(find_overlay_text(&trace, L"sec", 0, 353, 374, 1.5f) == 1);
+    CHECK(find_overlay_text(
+              &trace, L"PLAYER ONE", 0, -30, 374, 1.5f) == 1);
+    CHECK(find_overlay_text(
+              &trace, L"PLAYER TWO", 0, 535, 374, 1.5f) == 1);
+    gCheckPoint = 9;
+    reStartScore[0] = 100;
+    reStartScore[1] = 200;
+    gGlobalTimer = 200 + UINT32_C(201) * UINT32_C(0x3c00);
+    level_Mini2();
+    CHECK((abGlobalBits[3] & UINT8_C(1)) != 0);
+    CHECK((GameStruct.GameState & UINT32_C(0x60)) == UINT32_C(0x60));
+    CHECK(gCheckPoint == 0);
+    CHECK(reStartScore[0] == 0);
+    CHECK(reStartScore[1] == 0);
+
+    memset(&trace, 0, sizeof(trace));
+    memset(abGlobalBits, 0, sizeof(abGlobalBits));
+    GameStruct.GameState = UINT32_C(0x02000000);
+    GameStruct.NumPlayers = 1;
+    gGlobalTimer = 300;
+    zerobss_levelReset = 803;
+    level_Mini3();
+    level_Mini3();
+    CHECK(player0_motions[1].Charge == 12);
+    CHECK(player1_motions[1].Charge == 12);
+    CHECK(trace.textCalls == 0);
+    GameStruct.GameState = 0;
+    level_Mini3();
+    CHECK(find_overlay_text(&trace, L"090", 0, 231, 328, 3.0f) == 1);
+    CHECK(find_overlay_text(&trace, L"0", 1, 20, 56, 3.0f) == 1);
+    CHECK(find_overlay_text(&trace, L"0", 0, 620, 56, 3.0f) == 1);
+
+    abGlobalBits[5] = UINT8_C(0x80);
+    level_Mini3();
+    level_Mini3();
+    level_Mini3();
+    abGlobalBits[5] = 0;
+    memset(&trace, 0, sizeof(trace));
+    level_Mini3();
+    CHECK(find_overlay_text(
+              &trace, L"SUCCESS", 2, 320, 200, 3.0f) == 1);
+
+    memset(&trace, 0, sizeof(trace));
+    memset(abGlobalBits, 0, sizeof(abGlobalBits));
+    zerobss_levelReset = 804;
+    level_Mini3();
+    level_Mini3();
+    abGlobalBits[6] = UINT8_C(1);
+    level_Mini3();
+    level_Mini3();
+    level_Mini3();
+    abGlobalBits[6] = 0;
+    memset(&trace, 0, sizeof(trace));
+    level_Mini3();
+    CHECK(find_overlay_text(
+              &trace, L"FAILED", 2, 320, 200, 3.0f) == 1);
+
+    world.location.vx = 0x80ff - 0xdd * 0x100;
+    world.location.vz = 0x3c * 0x100 - 0x7f00;
+    LevelSelect = 7;
+    zerobss_levelReset = 805;
+    level_Ruins();
+    CHECK(zerobss_levelReset == 0);
+
+    jpb_TextSetDrawHook(NULL, NULL);
+    allText[237] = NULL;
+    allText[238] = NULL;
+    allText[435] = NULL;
+    allText[436] = NULL;
+    gpWorld = saved_world;
+    return 0;
+}
+
+static int test_level_core_helpers(void)
+{
+    sceneObject scene;
+    playerObject *player = &gaPlayerData[0];
+    physicsObject *physics = &maPhysicsData[0];
+    _svector position = {100, 200, 300, 0};
+    _svector line[2] = {
+        {100, 0, 300, 0},
+        {100, 0, 500, 0}
+    };
+    int x;
+    int y;
+
+    reset_game_state();
+    memset(&scene, 0, sizeof(scene));
+    memset(maPhysicsData, 0, sizeof(maPhysicsData));
+    scene.pScene = &scene.sceneRoot;
+    scene.pPhysics = &physics->physicsRoot;
+    player->playerRoot.pParent = &scene.sceneRoot;
+    player->playerRoot.objectID = 0;
+    player->playernum = 0;
+    physics->physicsRoot.pParent = &scene.sceneRoot;
+    physics->physicsRoot.objectID = 0;
+
+    physics->pos.vx = (float)(position.vx + 0x80 + 279);
+    physics->pos.vz = (float)(position.vz + 0x80);
+    physics->mov.vx = 7.0f;
+    physics->mov.vy = 8.0f;
+    physics->airmov.vy = 12.75f;
+    corecheck0(player, &position);
+    CHECK(physics->movemode == 5);
+    CHECK(physics->uservector.vx == position.vx + 0x80);
+    CHECK(physics->uservector.vz == position.vz + 0xe0);
+    CHECK(physics->mov.vx == 0.0f);
+    CHECK(physics->mov.vy == 0.0f);
+    CHECK(physics->userdata[0] == 12);
+    CHECK(physics->airmov.vy == 0.0f);
+
+    physics->movemode = 0;
+    physics->pos.vx = (float)(position.vx + 0x80 + 280);
+    physics->mov.vx = 7.0f;
+    corecheck0(player, &position);
+    CHECK(physics->movemode == 0);
+    CHECK(physics->mov.vx == 7.0f);
+
+    physics->pos.vz = (float)(0x37 * 0x100 - 0x7f00);
+    physics->pos.vx = (float)(0x80ff - 0x34 * 0x100);
+    x = 9;
+    y = 9;
+    calcboxcoord(player, &x, &y);
+    CHECK(x == 0);
+    CHECK(y == 2);
+
+    physics->pos.vz = (float)(0x38 * 0x100 - 0x7f00);
+    physics->pos.vx = (float)(0x80ff - 0x33 * 0x100);
+    x = 7;
+    y = 8;
+    calcboxcoord(player, &x, &y);
+    CHECK(x == 7);
+    CHECK(y == 8);
+
+    player->playerRoot.objectID = -1;
+    calcboxcoord(player, &x, &y);
+    CHECK(x == 3);
+    CHECK(y == 3);
+    player->playerRoot.objectID = 0;
+
+    physics->pos.vx = (float)(line[0].vx - 0x30);
+    physics->pos.vz = 400.0f;
+    CHECK(corecheck2(player, &line[0], &line[1]) == 0);
+    physics->pos.vx = 100.0f;
+    physics->pos.vz = (float)(line[0].vz - 0x30);
+    CHECK(corecheck2(player, &line[0], &line[1]) == 0);
+    player->currentMotion = 0x27;
+    physics->pos.vx = 100.0f;
+    physics->pos.vz = 400.0f;
+    CHECK(corecheck2(player, &line[0], &line[1]) == 0);
+    return 0;
+}
+
+static int test_level_core_owner(void)
+{
+    WorldData world;
+    WorldData *saved_world = gpWorld;
+    wsl_BAP_PLACEMENT placements[74];
+    wsl_BAP_PLACEMENT *placement_ptrs[74];
+    int index;
+
+    reset_game_state();
+    memset(&world, 0, sizeof(world));
+    memset(placements, 0, sizeof(placements));
+    memset(maPhysicsData, 0, sizeof(maPhysicsData));
+    memset(abGlobalBits, 0, sizeof(abGlobalBits));
+    for (index = 0; index < 74; ++index) {
+        placement_ptrs[index] = &placements[index];
+    }
+    world.apEnemy = placement_ptrs;
+    world.location.vx = 0x80ff;
+    world.location.vz = -0x7f00;
+    world.aDolly[0].flags = UINT32_C(0x400);
+    gpWorld = &world;
+    LevelSelect = 10;
+    GameStruct.NumPlayers = 0;
+    zerobss_levelReset = 901;
+
+    core_specials();
+    CHECK(placements[68].actorNum == 7);
+    CHECK(placements[68].aiDf.ownerType == 3);
+    CHECK(placements[69].actorNum == 7);
+    CHECK(placements[69].aiDf.ownerType == 3);
+    CHECK(placements[71].actorNum == 7);
+    CHECK(placements[72].actorNum == 7);
+    CHECK(placements[73].actorNum == 7);
+
+    gpWorld = saved_world;
+    return 0;
+}
+
+static int test_level_remaining_routines(void)
+{
+    WorldData world;
+    WorldData *saved_world = gpWorld;
+    Motion player0_motions[2];
+    Motion player1_motions[2];
+    TextureRectTrace number_trace;
+    _Material digit_materials[10] = {{0}};
+    LevelTextureTrace texture_trace;
+    _Material *saved_menu_textures[249];
+    _svector *points = (_svector *)(void *)&gaScratch[0x80];
+    int digit_index;
+
+    reset_game_state();
+    memset(&world, 0, sizeof(world));
+    memset(player0_motions, 0, sizeof(player0_motions));
+    memset(player1_motions, 0, sizeof(player1_motions));
+    memset(&number_trace, 0, sizeof(number_trace));
+    memset(&texture_trace, 0, sizeof(texture_trace));
+    memcpy(
+        saved_menu_textures,
+        menuTextures,
+        sizeof(saved_menu_textures));
+    memset(menuTextures, 0, sizeof(saved_menu_textures));
+    memset(fontSpec, 0, sizeof(fontSpec));
+    for (digit_index = 0; digit_index < 10; ++digit_index) {
+        fontSpec[0xb5 + digit_index].clut =
+            (uint16_t)(digit_index + 1);
+        fontSpec[0xb5 + digit_index].w = 4;
+        fontSpec[0xb5 + digit_index].h = 5;
+        menuTextures[digit_index + 1] =
+            &digit_materials[digit_index];
+    }
+    gPSXDrawScaleX = 1.0f;
+    gPSXDrawScaleY = 1.0f;
+    gPSXDrawScaleW = 1.0f;
+    gPSXDrawScaleH = 1.0f;
+    scaleAdjustmentMM = 1.0f;
+    memset(g_material, 0, sizeof(g_material));
+    memset(abGlobalBits, 0, sizeof(abGlobalBits));
+    world.player0 = &gaPlayerData[0];
+    world.player1 = &gaPlayerData[1];
+    gaPlayerData[0].paMotions = player0_motions;
+    gaPlayerData[1].paMotions = player1_motions;
+    gpWorld = &world;
+
+    CHECK(jpb_ResourceSetBasePath("C:/jpb-level-test") == 1);
+    jpb_TextureSetPlatformHooks(
+        capture_level_texture_load, NULL, &texture_trace);
+    level_InitSpecials(0);
+    CHECK(texture_trace.calls == 0);
+    level_InitSpecials(1);
+    CHECK(texture_trace.calls == 1);
+    CHECK(strcmp(
+              texture_trace.filename,
+              "C:/jpb-level-test/res/level/jpx/fed\\belt.tga") == 0);
+    CHECK(texture_trace.option == 0);
+    CHECK(texture_trace.materialType == 0);
+    CHECK(g_material[0].type == TT_LEVEL);
+
+    jpb_WHookSetDrawTextureHook(
+        capture_texture_rect, &number_trace);
+    GameStruct.GameState = UINT32_C(0x02000000);
+    oldlevel_Mini3();
+    CHECK(player0_motions[1].Charge == 12);
+    CHECK(player1_motions[1].Charge == 12);
+    CHECK(number_trace.calls == 0);
+
+    GameStruct.GameState = 0;
+    OptionStruct.ScreenHeight = 480;
+    gGlobalTimer = 1;
+    abGlobalBits[5] = UINT8_C(0x80);
+    abGlobalBits[6] = UINT8_C(1);
+    oldlevel_Mini3();
+    CHECK(number_trace.calls == 6);
+    CHECK(number_trace.materials[0] == &digit_materials[9]);
+    CHECK(number_trace.materials[1] == &digit_materials[0]);
+    CHECK(number_trace.destinations[0].left == 256);
+    CHECK(number_trace.destinations[1].left == 261);
+    CHECK(number_trace.destinations[0].top == 458);
+    CHECK(number_trace.materials[2] == &digit_materials[0]);
+    CHECK(number_trace.materials[3] == &digit_materials[1]);
+    CHECK(number_trace.destinations[2].left == 160);
+    CHECK(number_trace.destinations[2].top == 32);
+    CHECK(number_trace.materials[4] == &digit_materials[0]);
+    CHECK(number_trace.materials[5] == &digit_materials[1]);
+    CHECK(number_trace.destinations[4].left == 448);
+    CHECK(number_trace.destinations[4].top == 32);
+    jpb_WHookSetDrawTextureHook(NULL, NULL);
+
+    gaPlayerData[0].playerRoot.objectID = -1;
+    gaPlayerData[1].playerRoot.objectID = -1;
+    memset(gaScratch, 0xa5, sizeof(gaScratch));
+    plotmaze(
+        UINT32_C(0x00100000),
+        0,
+        UINT32_C(0x7f102030),
+        0,
+        0x100);
+    CHECK(points[0].vx == INT16_C(0x4700));
+    CHECK(points[0].vy == INT16_C(0x0a00));
+    CHECK(points[0].vz == INT16_C(-0x4300));
+    CHECK(points[1].vx == INT16_C(0x4880));
+    CHECK(points[1].vy == INT16_C(0x0a00));
+    CHECK(points[1].vz == INT16_C(-0x4280));
+
+    jpb_TextureSetPlatformHooks(NULL, NULL, NULL);
+    CHECK(jpb_ResourceSetBasePath(NULL) == 0);
+    memcpy(
+        menuTextures,
+        saved_menu_textures,
+        sizeof(saved_menu_textures));
+    gPSXDrawScaleW = 3.75f;
+    gPSXDrawScaleH = 4.5f;
+    gpWorld = saved_world;
     return 0;
 }
 
@@ -2385,9 +3268,9 @@ static int test_level_arena(void)
 
     reset_game_state();
     memset(&trace, 0, sizeof(trace));
-    allText[437] = L"ONE WINS";
-    allText[438] = L"TWO WINS";
-    allText[439] = L"DRAW";
+    allText[437] = "ONE WINS";
+    allText[438] = "TWO WINS";
+    allText[439] = "DRAW";
     OptionStruct.ScreenWidth = 640;
     OptionStruct.ScreenHeight = 480;
     scaleAdjustment = 1.0f;
@@ -2406,7 +3289,7 @@ static int test_level_arena(void)
     level_Arena();
     level_Arena();
     CHECK(find_overlay_text(
-              &trace, L"O", 0, 192, 112, 3.0f) == 1);
+              &trace, L"ONE WINS", 0, 192, 112, 3.0f) == 1);
     CHECK(trace.textAlpha[0] == 254);
     CHECK(trace.textTint[0] == 11);
     for (frame = 0; frame < 254; ++frame) {
@@ -2427,7 +3310,7 @@ static int test_level_arena(void)
     level_Arena();
     level_Arena();
     CHECK(find_overlay_text(
-              &trace, L"T", 0, 192, 112, 3.0f) == 1);
+              &trace, L"TWO WINS", 0, 192, 112, 3.0f) == 1);
     CHECK(trace.textAlpha[0] == 254);
     CHECK(trace.textTint[0] == 11);
 
@@ -2446,7 +3329,7 @@ static int test_level_arena(void)
     level_Arena();
     level_Arena();
     CHECK(find_overlay_text(
-              &trace, L"O", 0, 352, 142, 3.0f) == 1);
+              &trace, L"ONE WINS", 0, 352, 142, 3.0f) == 1);
     CHECK(trace.textAlpha[0] == 254);
     CHECK(trace.textTint[0] == 11);
 
@@ -2462,7 +3345,7 @@ static int test_level_arena(void)
     level_Arena();
     level_Arena();
     CHECK(find_overlay_text(
-              &trace, L"T", 0, 352, 142, 3.0f) == 1);
+              &trace, L"TWO WINS", 0, 352, 142, 3.0f) == 1);
     CHECK(trace.textAlpha[0] == 254);
     CHECK(trace.textTint[0] == 11);
 
@@ -2481,7 +3364,7 @@ static int test_level_arena(void)
     level_Arena();
     level_Arena();
     CHECK(find_overlay_text(
-              &trace, L"D", 0, 192, 112, 3.0f) == 1);
+              &trace, L"DRAW", 0, 192, 112, 3.0f) == 1);
     CHECK(trace.textAlpha[0] == 254);
     CHECK(trace.textTint[0] == 11);
 
@@ -2500,7 +3383,7 @@ static int test_level_arena(void)
     level_Arena();
     level_Arena();
     CHECK(find_overlay_text(
-              &trace, L"D", 0, 352, 142, 3.0f) == 1);
+              &trace, L"DRAW", 0, 352, 142, 3.0f) == 1);
     CHECK(trace.textAlpha[0] == 254);
     CHECK(trace.textTint[0] == 11);
 
@@ -2604,6 +3487,56 @@ static int test_level_theed(void)
     CHECK(reStartScore[1] == 0);
     jpb_TextSetDrawHook(NULL, NULL);
     gpWorld = NULL;
+    return 0;
+}
+
+static int test_game_system_initialization(void)
+{
+    WorldData world;
+    WorldData *old_world = gpWorld;
+    uint16_t old_fcount = menuVars.fcount;
+    int32_t old_level_reset = zerobss_levelReset;
+    int32_t old_boss_reset = zerobss_ResetBoss;
+    int markers[JPB_POINTER_ARRAY_COUNT];
+    int indices[JPB_POINTER_ARRAY_COUNT];
+    int type;
+
+    memset(&world, 0xa5, sizeof(world));
+    gpWorld = &world;
+    menuVars.fcount = UINT16_C(0x7bcd);
+    zerobss_levelReset = -71;
+    zerobss_ResetBoss = -72;
+    funcArray[0] = brain_HangCallback;
+    funcArray[1] = NULL;
+
+    (void)memory_InitMemorySystem();
+    pointerRegistry_Reset();
+    for (type = 0; type < JPB_POINTER_ARRAY_COUNT; ++type) {
+        markers[type] = type;
+        indices[type] = addPtr(&markers[type], type);
+        CHECK(indices[type] >= 0);
+    }
+
+    game_InitGameSystems();
+
+    CHECK(world.start.vx == 0);
+    CHECK(world.location.vy == 0);
+    CHECK(world.player0 == NULL);
+    CHECK(world.nEnemy == 0);
+    CHECK(world.gotbackdrop == 0);
+    for (type = 0; type < JPB_POINTER_ARRAY_COUNT; ++type) {
+        CHECK(getPtr(indices[type], type) == NULL);
+    }
+    CHECK(funcArray[0] == NULL);
+    CHECK(funcArray[1] == ai_FireWeapon);
+    CHECK(zerobss_levelReset == 1);
+    CHECK(zerobss_ResetBoss == 1);
+    CHECK(menuVars.fcount == UINT16_C(0x7b00));
+
+    gpWorld = old_world;
+    menuVars.fcount = old_fcount;
+    zerobss_levelReset = old_level_reset;
+    zerobss_ResetBoss = old_boss_reset;
     return 0;
 }
 
@@ -2874,7 +3807,13 @@ static int test_save_game_persistence(void)
 
 int main(void)
 {
+    CHECK(test_game_console_variables_and_input_clear() == 0);
+    CHECK(test_next_level_transition() == 0);
+    CHECK(test_player_position_command_paths() == 0);
+    CHECK(test_resolution_settings_owners() == 0);
+    CHECK(test_complete_achievement_routes() == 0);
     CHECK(test_process_status_death_routes() == 0);
+    CHECK(test_run_stage_clears_level_exit() == 0);
     CHECK(test_energy_access_and_clamps() == 0);
     CHECK(test_energy_line_scaling() == 0);
     CHECK(test_exact_setters() == 0);
@@ -2892,9 +3831,14 @@ int main(void)
     CHECK(test_sdl_text_hud_leaf_contract() == 0);
     CHECK(test_draw_text_hud_bridge_contract() == 0);
     CHECK(test_level_countdown_outcomes() == 0);
+    CHECK(test_level_mini_owners() == 0);
+    CHECK(test_level_core_helpers() == 0);
+    CHECK(test_level_core_owner() == 0);
+    CHECK(test_level_remaining_routines() == 0);
     CHECK(test_level_hangar() == 0);
     CHECK(test_level_arena() == 0);
     CHECK(test_level_theed() == 0);
+    CHECK(test_game_system_initialization() == 0);
     CHECK(test_callback_table() == 0);
     CHECK(test_save_game_persistence() == 0);
     puts("game tests passed");

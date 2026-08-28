@@ -19,6 +19,12 @@ int jpb_PCLoadFbxLevel(
     JPBPcFbxLevel *level,
     char *error_text,
     size_t error_text_capacity);
+int jpb_PCBeginFbxLevelImport(
+    int level_index,
+    JPBPcFbxLevel *level,
+    char *error_text,
+    size_t error_text_capacity);
+int jpb_PCEndFbxLevelImport(void);
 void jpb_PCFreeFbxLevel(JPBPcFbxLevel *level);
 
 #endif

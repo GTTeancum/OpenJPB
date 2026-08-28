@@ -270,6 +270,49 @@ static int test_hot_node_player_collision(void)
     return 0;
 }
 
+static int test_hot_node_signed_parent_lookup(void)
+{
+    CollisionData attacker_collision = {64, 0, -2};
+    CollisionData target_collision = {64, 1, -1};
+    playerObject attacker;
+    playerObject target;
+    Mnode attacker_node;
+    Mnode parent_node;
+    Mnode target_node;
+    Motion *authored_motion = (Motion *)(uintptr_t)0x5678;
+
+    memset(&attacker, 0, sizeof(attacker));
+    memset(&target, 0, sizeof(target));
+    memset(&attacker_node, 0, sizeof(attacker_node));
+    memset(&parent_node, 0, sizeof(parent_node));
+    memset(&target_node, 0, sizeof(target_node));
+    attacker.playernum = 2;
+    attacker.fScale = 4096;
+    attacker.paNodesSizes = &attacker_collision;
+    attacker.numCollisionNodes = 1;
+    attacker.pMotion = &authored_motion;
+    target.playernum = 3;
+    target.fScale = 4096;
+    target.paNodesSizes = &target_collision;
+    target.numCollisionNodes = 1;
+    attacker_node.id = NODE_DYNAMIC;
+    attacker_node.v3RotCenter.vx = 100;
+    parent_node.id = (modelNodeId)(NODE_DYNAMIC | 30);
+    parent_node.flags = JPB_COLLISION_FLAG_HOT;
+    target_node.id = (modelNodeId)(NODE_DYNAMIC | 1);
+    target_node.v3RotCenter.vx = 100;
+
+    coll_ResetCollisionSystem();
+    coll_gRegisterNode(2, &attacker_node);
+    coll_gRegisterNode(1, &parent_node);
+    coll_gRegisterNode(3, &target_node);
+    totalframes = 100;
+    CHECK(coll_gCheckHotNodes(&attacker, &target) == 1);
+    CHECK((attacker.pFlags & UINT32_C(0x00010000)) != 0);
+    CHECK(target.hitMotion == authored_motion);
+    return 0;
+}
+
 static int test_projectile_collision(void)
 {
     ProjType *types = (ProjType *)(void *)maProjTypes;
@@ -988,11 +1031,25 @@ static int test_pikobis_visibility_branch(void)
 
 #undef P
 
-int main(void)
+int main(int argc, char **argv)
 {
+    if (argc == 2 &&
+        strcmp(argv[1], "--registration-fatal") == 0) {
+        Mnode invalid_node;
+
+        memset(&invalid_node, 0, sizeof(invalid_node));
+        invalid_node.id =
+            (modelNodeId)((uint32_t)NODE_DYNAMIC |
+                          (uint32_t)JPB_COLLISION_NODE_CAPACITY);
+        coll_ResetCollisionSystem();
+        coll_gRegisterNode(0, &invalid_node);
+        return 0;
+    }
+
     CHECK(test_4d_collision() == 0);
     CHECK(test_registry_and_accessors() == 0);
     CHECK(test_hot_node_player_collision() == 0);
+    CHECK(test_hot_node_signed_parent_lookup() == 0);
     CHECK(test_projectile_collision() == 0);
     CHECK(test_default_character_collision_settings() == 0);
     CHECK(test_destroyer_character_collision_settings() == 0);

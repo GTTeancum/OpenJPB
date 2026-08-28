@@ -1,8 +1,9 @@
 /*
- * PARTIAL REVIEWED RECONSTRUCTION of
+ * COMPLETE REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\Work\vectors.c.
  *
- * All 29 emitted procedures now have reviewed, dependency-light bodies.
+ * All 29 emitted procedures have reviewed bodies, including their exact
+ * wRender stack ownership and inert debug_printf dependency.
  * Original procedure records remain below the bodies as provenance.
  *
  * Provenance:
@@ -28,7 +29,9 @@
  */
 
 #include "jpb/fmath.h"
+#include "jpb/debugtext.h"
 #include "jpb/vectors.h"
+#include "jpb/wrender.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -324,26 +327,21 @@ static void vectors_scaled_identity(MATRIX *matrix, float scale)
 /* Reference RVA 0x103DA0, 224 bytes. */
 int vec_InvRotVectorLV(_svector *rot, VECTOR *src, VECTOR *dest)
 {
-    VECTOR temp = *src;
+    VECTOR temp;
     MATRIX m3x;
     MATRIX m3y;
 
     vectors_scaled_identity(&m3x, 4096.0f);
     vectors_scaled_identity(&m3y, 4096.0f);
+    PushMatrix();
+    temp = *src;
     (void)fRotMatrixX((int)rot->vx, &m3x);
     (void)fApplyMatrixLV(&m3x, &temp, dest);
     temp = *dest;
     (void)fRotMatrixY((int)rot->vy, &m3y);
     (void)fApplyMatrixLV(&m3y, &temp, dest);
-
-    /*
-     * The reference brackets this local-only work with the renderer's
-     * PushMatrix/PopMatrix. At normal stack depths the pair has no lasting
-     * state effect, and callers ignore the accidental stack-depth value left
-     * in EAX despite the PDB's int return type. The portable form omits that
-     * renderer dependency and defines the otherwise indeterminate return.
-     */
-    return 0;
+    PopMatrix();
+    return jpb_WRenderMatrixStackBaseLow32();
 }
 
 /* Reference RVA 0x103E80, 26 bytes. */
@@ -528,11 +526,11 @@ int vec_RotVectorLV(_svector *rot, VECTOR *src, VECTOR *dest)
     MATRIX matrix;
 
     vectors_scaled_identity(&matrix, 4096.0f);
+    PushMatrix();
     (void)fRotMatrix(rot, &matrix);
     (void)fApplyMatrixLV(&matrix, src, dest);
-
-    /* See vec_InvRotVectorLV for the omitted balanced render-stack pair. */
-    return 0;
+    PopMatrix();
+    return jpb_WRenderMatrixStackBaseLow32();
 }
 
 /* Reference RVA 0x104340, 123 bytes. */
@@ -541,11 +539,11 @@ int vec_RotVectorY(int y, VECTOR *src, VECTOR *dest)
     MATRIX matrix;
 
     vectors_scaled_identity(&matrix, 1.0f);
+    PushMatrix();
     (void)fRotMatrixY(y, &matrix);
     (void)fApplyMatrixLV(&matrix, src, dest);
-
-    /* See vec_InvRotVectorLV for the omitted balanced render-stack pair. */
-    return 0;
+    PopMatrix();
+    return jpb_WRenderMatrixStackBaseLow32();
 }
 
 /* Reference RVA 0x1043C0, 41 bytes. */
@@ -619,12 +617,12 @@ void vec_gDefinePlane(VECTOR *p, VECTOR *q, VECTOR *r, Plane *plane)
     plane->plane_normal.vz = nz;
     plane->plane_const = vectors_wrap_add(
         constant, vectors_wrap_multiply(ny, p->vy));
-
-    /*
-     * Substituted diagnostic side effect: the reference sends the values to
-     * its internal console. Geometry and stored state are exact; the portable
-     * foundation deliberately does not depend on that console module.
-     */
+    (void)debug_printf(
+        "plane_normal %d,%d,%d \t plane_const %d\n",
+        nx,
+        ny,
+        nz,
+        plane->plane_const);
 }
 
 /* Reference RVA 0x1045E0, 45 bytes. */

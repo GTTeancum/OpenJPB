@@ -10,6 +10,20 @@
 
 static int failures;
 static int feedback_calls;
+static uint32_t test_pose_words[3];
+
+static void init_test_animations(void)
+{
+    int index;
+
+    (anim_InitAnimations)(0);
+    for (index = 0; index < JPB_ANIMATION_CAPACITY; ++index) {
+        maAnimationData[index].depack_context.huffdataorigin =
+            test_pose_words;
+        maAnimationData[index].depack_context3.huffdataorigin =
+            test_pose_words;
+    }
+}
 
 #define CHECK(condition) \
     do { \
@@ -66,7 +80,7 @@ static void reset_state(ActivateFixture *fixture)
     memset(&GameStruct, 0, sizeof(GameStruct));
     memset(&OptionStruct, 0, sizeof(OptionStruct));
     memset(jediUpgrades, 0, sizeof(jediUpgrades));
-    anim_InitAnimations(0);
+    init_test_animations();
     fixture->animation = &maAnimationData[0];
     fixture->player.playerRoot.pParent =
         &fixture->scene.sceneRoot;

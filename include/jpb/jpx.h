@@ -1,6 +1,8 @@
 #ifndef JPB_JPX_H
 #define JPB_JPX_H
 
+#include "jpb/material.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -122,6 +124,7 @@ typedef struct JPBJpxLoadConfig {
 
 extern int32_t *WorldmeshData;
 extern size_t gJpxWorldmeshSize;
+extern _Material *level_materials[512];
 
 int jpx_Inspect(void *data, size_t size, JPBJpxView *view);
 const char *jpx_GetMaterialName(
@@ -148,8 +151,6 @@ int jpx_LoadFile(
     const char *path,
     const JPBJpxLoadConfig *config,
     JPBJpxView *view);
-void jpx_SetRuntimeConfig(const JPBJpxLoadConfig *config);
-const JPBJpxView *jpx_GetRuntimeView(void);
 int InitJPX(char *name);
 
 #ifdef __cplusplus

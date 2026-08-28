@@ -1,5 +1,5 @@
 /*
- * REVIEWED RECONSTRUCTION of
+ * COMPLETE REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\Work\animctrl.c.
  *
  * All six motion-chain/lock wrappers are reviewed. Their predicates and queue
@@ -9,9 +9,9 @@
  * Provenance:
  *   direct     - name/signature and object layouts from the exact PDB.
  *   decompiled - control flow checked against the raw Ghidra export.
- *   assembly   - component lookup, unsigned lock comparisons, queue arguments,
- *                activation calls, and boolean results checked at RVAs
- *                0x19660..0x1985D.
+ *   assembly   - every body checked at RVAs 0x19660..0x1985D, including
+ *                component lookup, unsigned lock comparisons, queue arguments,
+ *                activation calls, the rejected-level diagnostic, and results.
  *
  * PDB module: 0005
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\animctrl.obj
@@ -23,6 +23,7 @@
  */
 
 #include "jpb/animctrl.h"
+#include "jpb/debugtext.h"
 #include "jpb/scene.h"
 
 static animObject *animctrl_get_animation(objectRoot *object)
@@ -69,8 +70,10 @@ int animctrl_MotionComboChain(
 {
     animObject *pAnim = animctrl_get_animation(parent);
 
-    motion->motionFlags |= UINT32_C(0x02000000);
-    if (alt != 0) {
+    if ((motion->motionFlags & UINT32_C(0x02000000)) == 0) {
+        motion->motionFlags |= UINT32_C(0x02000000);
+    }
+    if (alt != 0 && (motion->motionFlags & UINT32_C(2)) == 0) {
         motion->motionFlags |= UINT32_C(2);
     }
     if (IsChain != 0) {
@@ -129,6 +132,7 @@ int animctrl_MotionLockLevel(
     if ((int)(uint16_t)animation->Lock < level) {
         return animctrl_force_motion_state(animation, motion);
     }
+    (void)debug_printf("level %d LOCKED: %d\t", level);
     return 0;
 }
 

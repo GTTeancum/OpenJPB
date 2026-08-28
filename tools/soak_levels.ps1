@@ -156,6 +156,7 @@ function New-RouteArguments {
 
     $arguments = @(
         '--headless',
+        '--control-harness',
         '--mute',
         '--camera-diagnostics',
         '--frames', ([string]$FrameCount),
@@ -300,6 +301,7 @@ function Get-LevelPlacements {
 
     $arguments = @(
         '--headless',
+        '--control-harness',
         '--mute',
         '--quickload', $Entry.Name,
         '--enemy-placement-diagnostics',

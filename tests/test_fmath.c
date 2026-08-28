@@ -1,5 +1,6 @@
 #include "jpb/fmath.h"
 #include "jpb/flex.h"
+#include "jpb/jonnywin.h"
 #include "jpb/scene.h"
 #include "jpb/vectors.h"
 #include "jpb/wrender.h"
@@ -212,6 +213,69 @@ static int test_apply_matrix_many_variants(void)
     ApplyMatrixMany10BitStride(NULL, NULL, 0, 22, 1);
     ApplyMatrixManyFV(NULL, NULL, 0);
     ApplyMatrixManySV(NULL, NULL, 0);
+    return 0;
+}
+
+static int test_jonnywin_packed_transform(void)
+{
+    MATRIX matrix = {
+        {
+            {1.0f, 0.0f, 0.0f},
+            {0.0f, 1.0f, 0.0f},
+            {0.0f, 0.0f, 1.0f}
+        },
+        {10, -20, 30}
+    };
+    int packed[4] = {
+        pack_10bit_vector(18, 14, 16),
+        pack_10bit_vector(-1, -2, -3),
+        pack_10bit_vector(511, -512, 0),
+        pack_10bit_vector(-300, 400, -500)
+    };
+    FVECTOR output[4];
+
+    SetupTransformMatrix(&matrix);
+    CHECK(RotTransPersMany10bit(packed, 4, output) == 0);
+    CHECK(output[0].vx == 28.0f);
+    CHECK(output[0].vy == -6.0f);
+    CHECK(output[0].vz == 46.0f);
+    CHECK(output[1].vx == 9.0f);
+    CHECK(output[1].vy == -22.0f);
+    CHECK(output[1].vz == 27.0f);
+    CHECK(output[2].vx == 521.0f);
+    CHECK(output[2].vy == -532.0f);
+    CHECK(output[2].vz == 30.0f);
+    CHECK(output[3].vx == -290.0f);
+    CHECK(output[3].vy == 380.0f);
+    CHECK(output[3].vz == -470.0f);
+    return 0;
+}
+
+static int test_jonnywin_worldmesh_matrix(void)
+{
+    MATRIX matrix = {
+        {
+            {1.0f, -0.5f, 0.25f},
+            {-2.0f, 3.5f, -4.25f},
+            {0.125f, -0.0625f, 8.0f}
+        },
+        {123, -456, 0}
+    };
+
+    SetupWorldmeshMatrix(&matrix);
+
+    CHECK(matrix.m[0][0] == 256.0f);
+    CHECK(matrix.m[0][1] == -128.0f);
+    CHECK(matrix.m[0][2] == 64.0f);
+    CHECK(matrix.m[1][0] == -512.0f);
+    CHECK(matrix.m[1][1] == 896.0f);
+    CHECK(matrix.m[1][2] == -1088.0f);
+    CHECK(matrix.m[2][0] == 32.0f);
+    CHECK(matrix.m[2][1] == -16.0f);
+    CHECK(matrix.m[2][2] == 2048.0f);
+    CHECK(matrix.t[0] == 31488);
+    CHECK(matrix.t[1] == -116736);
+    CHECK(matrix.t[2] == 0);
     return 0;
 }
 
@@ -1129,6 +1193,8 @@ int main(void)
     if (test_square_roots() != 0 ||
         test_apply_matrix_many_10bit() != 0 ||
         test_apply_matrix_many_variants() != 0 ||
+        test_jonnywin_packed_transform() != 0 ||
+        test_jonnywin_worldmesh_matrix() != 0 ||
         test_angles() != 0 ||
         test_lengths_and_distances() != 0 ||
         test_point_line_squared() != 0 ||

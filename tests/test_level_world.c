@@ -10,6 +10,7 @@
 #include "jpb/world.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -97,7 +98,7 @@ static int test_streets_cullmesh(void)
 
     CHECK(jpb_ShouldDrawFbxMesh(
         7, JPB_LEVEL_FBX_PASS_OPAQUE, 31, 5, "unused"));
-    CHECK(jpb_ShouldDrawFbxMesh(
+    CHECK(!jpb_ShouldDrawFbxMesh(
         7, JPB_LEVEL_FBX_PASS_OPAQUE, 31, 4, "unused"));
     CHECK(jpb_ShouldDrawFbxMesh(
         7, JPB_LEVEL_FBX_PASS_OPAQUE, 32, 4, "unused"));
@@ -167,6 +168,57 @@ static int test_cube_init_visibility(void)
     LevelSelect = saved_level;
     tato_wallfrigflag = saved_tato;
     fed_wallfrigflag = saved_fed;
+    return 0;
+}
+
+static int test_cube_init_uvs(void)
+{
+    uint32_t texture_words[(JPB_CUBE_UV_SET_COUNT / 8) * 48] = {0};
+    int32_t *saved_texturebase = texturebase;
+    const float *uv;
+
+    texture_words[1] = UINT32_C(0xff804001);
+    texture_words[2] = UINT32_C(0x000102fe);
+    texture_words[48 + 43] = UINT32_C(0x10203040);
+    texture_words[48 + 44] = UINT32_C(0x50607080);
+    texture_words[(JPB_CUBE_UV_SET_COUNT / 8 - 1) * 48 + 44] =
+        UINT32_C(0xa5c3e17f);
+    texturebase = (int32_t *)(void *)texture_words;
+
+    CHECK(initUVs() == 0xa5);
+    uv = jpb_CubeUVTable();
+    CHECK(uv[0] == 1.0f / 256.0f);
+    CHECK(uv[1] == 0.75f);
+    CHECK(uv[2] == 0.5f);
+    CHECK(uv[3] == 1.0f / 256.0f);
+    CHECK(uv[4] == 254.0f / 256.0f);
+    CHECK(uv[5] == 254.0f / 256.0f);
+    CHECK(uv[6] == 1.0f / 256.0f);
+    CHECK(uv[7] == 1.0f);
+    CHECK(uv[8] == 0.0f);
+    CHECK(uv[9] == 1.0f);
+    CHECK(uv[JPB_CUBE_UV_FLOATS_PER_SET * 8 + 56] ==
+          64.0f / 256.0f);
+    CHECK(uv[JPB_CUBE_UV_FLOATS_PER_SET * 8 + 63] ==
+          1.0f - 80.0f / 256.0f);
+    CHECK(uv[(JPB_CUBE_UV_SET_COUNT - 1) *
+                 JPB_CUBE_UV_FLOATS_PER_SET +
+             7] ==
+          1.0f - 165.0f / 256.0f);
+
+    texturebase = saved_texturebase;
+    return 0;
+}
+
+static int test_gpu_clut_cache(void)
+{
+    int32_t buffer[1024] = {0};
+
+    buffer[1023] = (int32_t)UINT32_C(0x4d6e6f4a);
+    buffer[1022] = 1;
+    CHECK(GPUcluts(NULL, buffer) == 1);
+    buffer[1022] = 0;
+    CHECK(GPUcluts(NULL, buffer) == 0);
     return 0;
 }
 
@@ -266,26 +318,55 @@ static int test_custom_level_transforms(void)
     return 0;
 }
 
-typedef struct LegacyRenderCapture {
-    int calls;
-    JPBCubeRenderBounds bounds;
-} LegacyRenderCapture;
-
-static int capture_legacy_render(
-    void *user_data,
-    int min_x,
-    int min_z,
-    int max_x,
-    int max_z)
+static int test_fbx_uv_scroll(void)
 {
-    LegacyRenderCapture *capture = (LegacyRenderCapture *)user_data;
+    float u;
+    float v;
+
+    jpb_LevelFbxUvScroll(1, "belt.bmp", &u, &v);
+    CHECK(close_float(u, 0.082f));
+    CHECK(v == 0.0f);
+    jpb_LevelFbxUvScroll(9, "t_water.tga", &u, &v);
+    CHECK(close_float(u, 0.001f));
+    CHECK(close_float(v, 0.001f));
+    jpb_LevelFbxUvScroll(9, "t_waterStatic.tga", &u, &v);
+    CHECK(u == 0.0f);
+    CHECK(close_float(v, -0.1f));
+    jpb_LevelFbxUvScroll(1, "other.tga", &u, &v);
+    CHECK(u == 0.0f);
+    CHECK(v == 0.0f);
+    jpb_LevelFbxUvScroll(1, NULL, NULL, NULL);
+    return 0;
+}
+
+typedef struct CubePolygonCapture {
+    int calls;
+    _Material *material;
+    uint32_t material_flags;
+    int vertex_count;
+    JPBScreenPolyVertex vertices[4];
+    int no_scale;
+} CubePolygonCapture;
+
+static void capture_cube_polygon(
+    void *user_data,
+    _Material *material,
+    uint32_t material_flags,
+    int vertex_count,
+    const JPBScreenPolyVertex *vertices,
+    int no_scale)
+{
+    CubePolygonCapture *capture = (CubePolygonCapture *)user_data;
 
     ++capture->calls;
-    capture->bounds.minX = min_x;
-    capture->bounds.minZ = min_z;
-    capture->bounds.maxX = max_x;
-    capture->bounds.maxZ = max_z;
-    return 73;
+    capture->material = material;
+    capture->material_flags = material_flags;
+    capture->vertex_count = vertex_count;
+    memcpy(
+        capture->vertices,
+        vertices,
+        (size_t)vertex_count * sizeof(*vertices));
+    capture->no_scale = no_scale;
 }
 
 static void prepare_cube_render_player(
@@ -322,7 +403,6 @@ static int test_cube_new_world_render(void)
     };
     JPBCubeRenderBounds bounds;
     const JPBLevelTransformation *transformation;
-    LegacyRenderCapture capture = {0};
     WorldData *saved_world = gpWorld;
     int32_t *saved_leveldata = leveldata;
     char saved_level_select = LevelSelect;
@@ -434,20 +514,6 @@ static int test_cube_new_world_render(void)
     CHECK(bounds.maxX == 68);
     CHECK(bounds.maxZ == 141);
 
-    GameStruct.CurrentLevel = 12;
-    LevelSelect = 12;
-    world.location.vx = 0x7000;
-    world.location.vy = 0;
-    world.location.vz = -0x6f00;
-    jpb_CubeSetLegacyRenderHook(capture_legacy_render, &capture);
-    cube_NewWorldRender(&matrix);
-    jpb_CubeGetLastRenderBounds(&bounds);
-    CHECK(capture.calls == 1);
-    CHECK(memcmp(&capture.bounds, &bounds, sizeof(bounds)) == 0);
-    CHECK(plotsomecubes(1, 2, 3, 4) == 73);
-    CHECK(capture.calls == 2);
-
-    jpb_CubeSetLegacyRenderHook(NULL, NULL);
     gpWorld = saved_world;
     leveldata = saved_leveldata;
     LevelSelect = saved_level_select;
@@ -466,16 +532,122 @@ static int test_cube_new_world_render(void)
     return 0;
 }
 
+static int test_plot_some_cubes(void)
+{
+    enum {
+        MAP_WORDS = 65536,
+        CUBE_INDEX = 100,
+        LIBRARY_INDEX = 1000,
+        TEXTURE_WORDS = (JPB_CUBE_UV_SET_COUNT / 8) * 48
+    };
+    int32_t *storage =
+        (int32_t *)calloc(MAP_WORDS + 4, sizeof(*storage));
+    int32_t *mapbase;
+    int32_t texture_words[TEXTURE_WORDS] = {0};
+    int32_t palette[256] = {0};
+    _Material material = {0};
+    CubePolygonCapture capture = {0};
+    int32_t *saved_leveldata = leveldata;
+    int32_t *saved_texturebase = texturebase;
+    int32_t *saved_colorbase = colorbase;
+    int32_t saved_mapyend = mapyend;
+    _Material *saved_leveltexture[4];
+    MATRIX saved_camera_matrix = CameraMatrix;
+    _winmat saved_winmatrix = globalwinmatrix;
+    Camera saved_camera = gCamera;
+
+    CHECK(storage != NULL);
+    mapbase = storage + 4;
+    mapbase[0] =
+        (int32_t)(UINT32_C(0x80000000) | CUBE_INDEX);
+    mapbase[CUBE_INDEX] = (int32_t)UINT32_C(0x48000000);
+    mapbase[CUBE_INDEX + 1] = 0;
+    mapbase[CUBE_INDEX + 2] = LIBRARY_INDEX;
+    mapbase[LIBRARY_INDEX] = 0;
+    mapbase[LIBRARY_INDEX + 1] = 0;
+    mapbase[LIBRARY_INDEX + 2] =
+        (int32_t)UINT32_C(0x40000000);
+    mapbase[LIBRARY_INDEX + 3] =
+        (int32_t)(UINT32_C(1) << 5 |
+                  UINT32_C(2) << 10 |
+                  UINT32_C(3) << 15);
+
+    texture_words[1] = (int32_t)UINT32_C(0x40400000);
+    texture_words[2] = (int32_t)UINT32_C(0xc0c08080);
+    memcpy(saved_leveltexture, leveltexture, sizeof(saved_leveltexture));
+    memset(leveltexture, 0, sizeof(saved_leveltexture));
+    material.texture = &material;
+    material.flags = UINT32_C(0x12345678);
+    leveltexture[0] = &material;
+    leveldata = mapbase;
+    texturebase = texture_words;
+    colorbase = palette + 255;
+    mapyend = 1;
+    memset(&gCamera, 0, sizeof(gCamera));
+    memset(&CameraMatrix, 0, sizeof(CameraMatrix));
+    CameraMatrix.m[0][0] = 1.0f;
+    CameraMatrix.m[1][1] = 1.0f;
+    CameraMatrix.m[2][2] = 1.0f;
+    memset(&globalwinmatrix, 0, sizeof(globalwinmatrix));
+    globalwinmatrix.m[0][0] = 1.0f;
+    globalwinmatrix.m[1][1] = 1.0f;
+    globalwinmatrix.m[2][2] = 1.0f;
+    CHECK(initUVs() == 0);
+
+    jpb_WHookSetScreenPolyHook(capture_cube_polygon, &capture);
+    CHECK(plotsomecubes(0, 0, 1, 0) == 0);
+    jpb_WHookSetScreenPolyHook(NULL, NULL);
+
+    CHECK(capture.calls == 1);
+    CHECK(capture.material == &material);
+    CHECK(capture.material_flags == UINT32_C(0x12345678));
+    CHECK(capture.vertex_count == 4);
+    CHECK(capture.no_scale == 1);
+    CHECK(capture.vertices[0].x == -32512.0f);
+    CHECK(capture.vertices[0].y == 0.0f);
+    CHECK(capture.vertices[0].z == -32512.0f);
+    CHECK(capture.vertices[1].x == -32768.0f);
+    CHECK(capture.vertices[1].z == -32512.0f);
+    CHECK(capture.vertices[2].x == -32512.0f);
+    CHECK(capture.vertices[2].z == -32256.0f);
+    CHECK(capture.vertices[3].x == -32768.0f);
+    CHECK(capture.vertices[3].z == -32256.0f);
+    CHECK(capture.vertices[0].argb == UINT32_C(0x00ff00ff));
+    CHECK(capture.vertices[0].tu == 0.0f);
+    CHECK(capture.vertices[0].tv == 1.0f);
+    CHECK(capture.vertices[1].tu == 0.25f);
+    CHECK(capture.vertices[1].tv == 0.75f);
+    CHECK(capture.vertices[2].tu == 0.5f);
+    CHECK(capture.vertices[2].tv == 0.5f);
+    CHECK(capture.vertices[3].tu == 0.75f);
+    CHECK(capture.vertices[3].tv == 0.25f);
+
+    leveldata = saved_leveldata;
+    texturebase = saved_texturebase;
+    colorbase = saved_colorbase;
+    mapyend = saved_mapyend;
+    memcpy(leveltexture, saved_leveltexture, sizeof(saved_leveltexture));
+    CameraMatrix = saved_camera_matrix;
+    globalwinmatrix = saved_winmatrix;
+    gCamera = saved_camera;
+    free(storage);
+    return 0;
+}
+
 int main(void)
 {
     CHECK(test_exact_globals() == 0);
     CHECK(test_streets_cullmesh() == 0);
     CHECK(test_cube_init_visibility() == 0);
+    CHECK(test_cube_init_uvs() == 0);
+    CHECK(test_gpu_clut_cache() == 0);
     CHECK(test_streets_jpx_cull_map() == 0);
     CHECK(test_path_lookup() == 0);
     CHECK(test_streets_spawn_alignment() == 0);
     CHECK(test_custom_level_transforms() == 0);
+    CHECK(test_fbx_uv_scroll() == 0);
     CHECK(test_cube_new_world_render() == 0);
+    CHECK(test_plot_some_cubes() == 0);
     puts("level world tests passed");
     return 0;
 }

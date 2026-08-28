@@ -1,5 +1,5 @@
 /*
- * PARTIAL REVIEWED RECONSTRUCTION of
+ * REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\Work\boss.c.
  * PDB module: 0007
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\boss.obj

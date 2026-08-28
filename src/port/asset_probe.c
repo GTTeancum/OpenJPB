@@ -104,10 +104,7 @@ int main(int argc, char **argv)
     memset(&world, 0, sizeof(world));
     gpWorld = &world;
     pointerRegistry_Reset();
-    if (memory_InitMemorySystem() != 0) {
-        fputs("memory_InitMemorySystem failed\n", stderr);
-        return 3;
-    }
+    (void)memory_InitMemorySystem();
     buffer = file_LoadFile2PoolFunc(
         argv[1],
         &file_size,

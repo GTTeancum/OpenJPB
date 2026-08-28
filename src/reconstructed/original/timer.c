@@ -1,11 +1,12 @@
 /*
- * Reviewed reconstruction of W:\SWJediPowerBattles\Work\timer.c.
+ * COMPLETE REVIEWED RECONSTRUCTION of
+ * W:\SWJediPowerBattles\Work\timer.c.
  *
  * Provenance:
  *   direct     - function/global names, signatures, types, addresses, and the
  *                five-entry timer table from the exact PDB and executable.
- *   decompiled - control flow checked against Ghidra and x64 instructions at
- *                RVAs 0x103110 through 0x1031E3.
+ *   assembly   - all seven bodies checked instruction-by-instruction at RVAs
+ *                0x103110 through 0x1031E3, including 32-bit multiply wrap.
  *
  * This module contains the original platform-neutral timer state transitions.
  * Wiring timer_VBlankCallback to the Xbox vertical-blank source belongs in
@@ -54,10 +55,13 @@ int timer_gCheckSystemTimer(void)
 /* Reference RVA 0x103170, 39 bytes. */
 int32_t timer_gGetRoundTimer(void)
 {
+    int32_t scaled;
+
     if (mRoundTimer < 0) {
         return -1;
     }
-    return (mRoundTimer * 100) / 0x3C00;
+    scaled = (int32_t)((uint32_t)mRoundTimer * UINT32_C(100));
+    return scaled / 0x3C00;
 }
 
 /* Reference RVA 0x1031A0, 3 bytes. */
@@ -68,7 +72,7 @@ void timer_gInitSystemTimer(void)
 /* Reference RVA 0x1031B0, 52 bytes. */
 void timer_gSetRoundTimer(int val)
 {
-    static const int32_t time_table[5] = {
+    const int32_t TimeTable[5] = {
         -1,
         460800,
         691200,
@@ -77,6 +81,6 @@ void timer_gSetRoundTimer(int val)
     };
 
     if (val >= 0 && val < 5) {
-        mRoundTimer = time_table[val];
+        mRoundTimer = TimeTable[val];
     }
 }

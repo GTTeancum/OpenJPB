@@ -1,4 +1,5 @@
 #include "jpb/camera.h"
+#include "jpb/boss.h"
 #include "jpb/cube.h"
 #include "jpb/game.h"
 #include "jpb/jonny.h"
@@ -246,6 +247,8 @@ static int test_gameplay_camera_owner(void)
     int32_t *saved_leveldata = leveldata;
     gamestruct saved_game = GameStruct;
     char saved_level = LevelSelect;
+    _svector saved_jar_jar = gJarJarPos;
+    float saved_range = maRange[0][1];
     BAP_CAMERADOLLY *dolly;
 
     camera_gameplay_fixture_init(&fixture);
@@ -356,7 +359,7 @@ static int test_gameplay_camera_owner(void)
             flexmul(0x100, gGlobalFrameRate);
         decay = 0x1000 - flexmul(0x18c, gGlobalFrameRate);
         expected_x = flexmul(
-            lead_before.vx + flexmul12(movement.vx, scale), decay);
+            lead_before.vx + flexmul(movement.vx, scale), decay);
 
         fixture.physics[0].mov.vx = -100.0f;
         fixture.physics[0].mov.vz = 1.0f;
@@ -391,7 +394,7 @@ static int test_gameplay_camera_owner(void)
             flexmul(0x100, gGlobalFrameRate);
         decay = 0x1000 - flexmul(0x18c, gGlobalFrameRate);
         accumulated_x = (int16_t)(
-            lead_before.vx + flexmul12(movement.vx, scale));
+            lead_before.vx + flexmul(movement.vx, scale));
         expected_x = flexmul(accumulated_x, decay);
         expected_z = flexmul(lead_before.vz, decay);
 
@@ -465,6 +468,74 @@ static int test_gameplay_camera_owner(void)
         CHECK(fixture.world.location.vz == -6400);
     }
 
+    {
+        memset(dolly, 0, sizeof(*dolly));
+        GameStruct.NumPlayers = 1;
+        LevelSelect = 5;
+        gGlobalFrameRate = 0;
+        fixture.players[1].playerRoot.objectID = -1;
+        fixture.physics[0].vpos.vx = 100;
+        fixture.physics[0].vpos.vy = 200;
+        fixture.physics[0].vpos.vz = 300;
+        fixture.physics[0].pos.vx = 100.0f;
+        fixture.physics[0].pos.vy = 200.0f;
+        fixture.physics[0].pos.vz = 300.0f;
+        fixture.physics[1].pos.vx = 9000.0f;
+        fixture.physics[1].pos.vy = 9999.0f;
+        fixture.physics[1].pos.vz = 7777.0f;
+
+        camera_SetCurrentCameraType(5);
+        CHECK(camera_SetCameraPos(5) == 1);
+        CHECK(gCamera.focus.vx == 9668);
+        CHECK(gCamera.focus.vy == 1432);
+        CHECK(gCamera.focus.vz == 384);
+        CHECK(fixture.world.location.vx == 100);
+        CHECK(fixture.world.location.vy == 200);
+        CHECK(fixture.world.location.vz == 300);
+    }
+
+    {
+        memset(dolly, 0, sizeof(*dolly));
+        fixture.players[1].playerRoot.objectID = 1;
+        fixture.physics[0].vpos.vx = 1000;
+        fixture.physics[0].vpos.vy = 2000;
+        fixture.physics[0].vpos.vz = 3000;
+        fixture.physics[0].pos.vx = 1000.0f;
+        fixture.physics[0].pos.vy = 2000.0f;
+        fixture.physics[0].pos.vz = 3000.0f;
+        gJarJarPos.vx = 111;
+        gJarJarPos.vy = 222;
+        gJarJarPos.vz = 333;
+        LevelSelect = 12;
+
+        camera_SetCurrentCameraType(1);
+        CHECK(camera_SetCameraPos(1) == 1);
+        CHECK(fixture.world.location.vx == 1000);
+        CHECK(fixture.world.location.vy == 2000);
+        CHECK(fixture.world.location.vz == 3000);
+        CHECK(gCamera.focus.vx == 1000);
+        CHECK(gCamera.focus.vy == 2000);
+        CHECK(gCamera.focus.vz == 3000);
+    }
+
+    {
+        int expected_x;
+
+        LevelSelect = 25;
+        fixture.physics[0].pos.vx = 6200.9f;
+        fixture.physics[1].pos.vx = 6201.9f;
+        fixture.physics[0].vpos.vx = 6200;
+        fixture.physics[1].vpos.vx = 6200;
+        maRange[0][1] = 0.0f;
+        expected_x = (int)(
+            (fixture.physics[0].pos.vx +
+             fixture.physics[1].pos.vx) * 0.5f) + 0x100;
+
+        CHECK(camera_SetCameraPos(1) == 1);
+        CHECK(gCamera.focusDest.vx == expected_x);
+        CHECK(expected_x == 6457);
+    }
+
     fixture.world.aBkDolly[3].flags = UINT32_C(0xaabbccdd);
     fixture.world.aDolly[3].flags = 0;
     uberXRange = 22;
@@ -485,6 +556,8 @@ static int test_gameplay_camera_owner(void)
     leveldata = saved_leveldata;
     GameStruct = saved_game;
     LevelSelect = saved_level;
+    gJarJarPos = saved_jar_jar;
+    maRange[0][1] = saved_range;
     gGlobalFrameRate = 0;
     return 0;
 }
@@ -677,10 +750,11 @@ static int test_camera_console_and_focus(void)
     camera_SetFocusedCameraFocus(4, &focus, 2);
     CHECK(camera_GetCurrentCameraType() == 4);
     CHECK(gCamera.cameraTimer == 1124U);
+    CHECK(gCamera.userData != (uint32_t)(uintptr_t)&focus);
+    gGlobalTimer = 1125;
     camera_SetCameras();
-    CHECK(gCamera.focusDest.vx == 11);
-    CHECK(gCamera.focusDest.vy == 22);
-    CHECK(gCamera.focusDest.vz == 33);
+    CHECK(camera_GetCurrentCameraType() == 1);
+    CHECK(gCamera.userData == 0);
     CHECK(screenshake == 250);
 
     gpWorld = saved_world;

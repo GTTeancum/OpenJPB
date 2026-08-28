@@ -14,6 +14,17 @@
 
 /* Exact initialized PDB global at matched-PC RVA 0x4C1358. */
 float menuTextDepthOverride = -1.0f;
+/* Exact matched-PC globals at RVAs 0x4C6024 and 0x4C6028. */
+float minSlider = -432.0f;
+float maxSlider = 364.0f;
+
+/* Exact PDB global at matched-PC RVA 0x4C8D00. */
+char *snames[5] = {"obi", "qui", "mace", "adi", "plo"};
+uint16_t playerSelectPix[23] = {
+    220, 212, 163, 227, 221, 218, 49, 48,
+    50, 51, 52, 53, 54, 55, 56, 57,
+    58, 59, 60, 47, 223, 228, 217
+};
 
 /* Exact PDB globals at matched-PC RVAs 0x582640 and 0x582E40. */
 RESOLUTION g_resolutions[256];
@@ -39,6 +50,231 @@ uint8_t frameRightMover[24] = {
     0x32, 0x30, 0x34, 0x04, 0x2b, 0x0a, 0x24, 0x18,
     0x02, 0x0a, 0x00, 0x33, 0x25, 0x82, 0x01, 0x0a,
     0x00, 0x14, 0x39, 0x02, 0x2d, 0x00, 0x00, 0x00
+};
+
+/* Exact PDB menu-definition globals at matched-PC RVAs 0x4C8D30 and
+ * 0x53A0B0. menu_scoreComboDraw fills comboTotal[1] before interpreting
+ * these one-command streams. */
+uint32_t comboType[2] = {6, 0};
+uint32_t comboTotal[2];
+
+/* Exact initialized PDB globals at matched-PC RVAs 0x4C8D48..0x4C8D73. */
+uint16_t redline[8] = {72, 298, 101, 287, 130, 276, 0, 0};
+uint16_t barTable[4] = {0, 47, 76, 105};
+uint16_t bonusMessBits[10] = {
+    0x1000, 0x2000, 0x4000, 0x0080, 0x0100,
+    0x0200, 0x0400, 0x0010, 0x0020, 0x0040
+};
+uint32_t comboDispDef[4] = {0x1d, 0x12, 4, 0x14};
+uint32_t healthForceMdef[22] = {
+    0, 2, 0x20, 0, 7, 0x21, 6, 0,
+    0x1d, 0x12, 2, 8, 0, 0x11c, 0x7d,
+    0x12, 3, 8, 1, 0x11d, 0x7f, 0x14
+};
+uint32_t eulaMdef[4] = {0, 0, 0x49, 0x14};
+
+/* Exact PDB global at matched-PC RVA 0x4C6B30. */
+uint32_t memoryMdef[24] = {
+    0, 1, 3, 0x14, 0x38, 6, 0, 8,
+    0, 0x50, 0x32, 3, 0x14, 0x24, 6, 0,
+    8, UINT32_MAX, 0x50, 0x32, 0x10, 0x14, 0, 0
+};
+
+/* Exact PDB global at matched-PC RVA 0x4C75A8. */
+uint32_t insert1Mdef[14] = {
+    0, 1, 3, 0x100, 0x3c, 6, 2,
+    8, 0, 0x12e, 0x32, 0x11, 0x14, 0
+};
+
+/* Exact PDB global at matched-PC RVA 0x4C7498. */
+uint32_t loadMenuMdef[18] = {
+    0, 1, 3, 0x100, 0x3c, 6, 2, 1, 9,
+    0, 0x176, 0x52, 0x29, 0x11, 0x14, 0, 0, 0
+};
+
+/* Exact PDB globals at matched-PC RVAs 0x4C6A90 and 0x4C7AB0..0x4C817F. */
+uint32_t memcarddebugMdef[40] = {
+    0, 5, 3, 0x14, 0x28, 6, 0, 9, 0, 0xa8,
+    0x32, 0x27, 8, 1, 0x51, 0x71, 8, 2, 0x52, 0x72,
+    8, 3, 0x53, 0x73, 8, 4, 0x54, 0x74, 3, 0x3c0,
+    0x14, 6, 2, 8, UINT32_MAX, 0xa8, 0x32, 0x10, 0x14, 0
+};
+uint32_t movieMenuMdef[24] = {
+    0, 1, 3, 0x100, 0x28, 6, 2, 9,
+    0, 0xbd, 0x39, 0x19, 6, 2, 3, 0x100,
+    0x10, 8, UINT32_MAX, 0xbd, 0x32, 0x10, 0x14, 0
+};
+uint32_t rusureMenuMdef[28] = {
+    0, 2, 0x3f, 0, 0x5a, 6, 2, 8,
+    0, 0x110, 0x53, 8, 1, 0x111, 0x54, 0x3f,
+    0, 0xd2, 8, UINT32_MAX, 0x11b, 0x32, 0x45, 0xdc,
+    0x14, 0, 0, 0
+};
+uint32_t aidebugMenuMdef[84] = {
+    6, 0, 0x42, 0, 3, 0x64, 0x64, 0, 0xe, 9,
+    0, 0xd, 0x32, 0xc, 9, 1, 0x13, 0x32, 0x1d, 9,
+    2, 0x40, 0x32, 0x1f, 9, 3, 0x41, 0x32, 0x20, 9,
+    4, 0x43, 0x32, 0x21, 9, 5, 0x44, 0x32, 0x22, 9,
+    6, 0x45, 0x32, 0x23, 9, 7, 0x46, 0x32, 0x24, 9,
+    8, 0x47, 0x32, 0x25, 8, 9, 0x50, 0x31, 8, 0xa,
+    0x55, 0x75, 8, 0xb, 0x5c, 0x79, 9, 0xc, 0xf, 0x32,
+    0x2d, 0x42, 1, 3, 0, 0x64, 8, 0xd, 0x11, 0x29,
+    0x10, 0x45, 0xdc, 0x14
+};
+uint32_t editMenuMdef[28] = {
+    6, 0, 0x42, 0, 3, 0x64, 0x64, 0,
+    3, 8, 0, 0x3a, 0x5f, 8, 1, 0x3b,
+    0x48, 8, 2, 0x3c, 0x49, 0x10, 0x45, 0xdc,
+    0x14, 0, 0, 0
+};
+uint32_t cameraMenuMdef[44] = {
+    0, 6, 3, 0x100, 0x28, 6, 2, 8, 0, 0x3d,
+    0x5f, 8, 1, 0xec, 0x60, 8, 2, 0xed, 0x61, 8,
+    3, 0xee, 0x62, 8, 4, 0x11a, 0x63, 8, 5, 0x3e,
+    0x64, 6, 2, 3, 0x100, 0x10, 8, UINT32_MAX, 0x19, 0x32,
+    0x10, 0x45, 0x1b1, 0x14
+};
+uint32_t objectiveMenuMdef[44] = {
+    0, 1, 0x3f, 0, 0, 6, 2, 0xf, 0, 2, 6,
+    0x40, 0x40, 0x236, 0x122, 9, UINT32_MAX, 0xe0, 0x32, 7,
+    6, 0, 0x40, 0x236, 0xd2, 9, UINT32_MAX, 2, 0x32, 0x1e,
+    6, 0, 0x3e, 0x236, 0x5a, 8, UINT32_MAX, 0xdd, 0x32, 0x46,
+    0xdc, 0x14, 0, 0
+};
+uint32_t specialMessMenuMdef[24] = {
+    0, 1, 0xf, 0, 2, 6, 0x40, 0x40,
+    0x1f4, 0x122, 0x1a, UINT32_MAX, 6, 0, 0x3e, 0x1f4,
+    0x5a, 8, UINT32_MAX, 0xdd, 0x32, 0x45, 0xdc, 0x14
+};
+uint32_t specialMessMenu2Mdef[24] = {
+    0, 1, 0xf, 0, 2, 6, 0x40, 0x40,
+    0x1f4, 0x122, 0x1a, UINT32_MAX, 6, 0, 0x3e, 0x1f4,
+    0x5a, 8, UINT32_MAX, 0xdd, 0x32, 0x45, 0xdc, 0x14
+};
+uint32_t gamecombosMenu[12] = {
+    0, 1, 8, 0, 2, 0x4e, 0x10, 0x47, 0x14, 0, 0, 0
+};
+
+/* Exact PDB global at matched-PC RVA 0x4C8260. */
+uint32_t ngpUnlockMdef[26] = {
+    0, 1, 0xf, 0, 2, 6, 0, 0x40, 0x212, 0x50,
+    8, UINT32_MAX, 0x1e8, 0x32, 6, 0, 0x3e, 0x212,
+    0x118, 8, UINT32_MAX, 0xdd, 0x32, 0x45, 0x1b1, 0x14
+};
+
+/* Exact PDB globals at matched-PC RVAs 0x4C7CC0 and 0x4C8CC0..0x4C8CF3. */
+uint32_t gamepauseMenuMdef[48] = {
+    0, 6, 0x3f, 0, 0xd2, 6, 2, 8,
+    0, 0x102, 0x3f, 8, 1, 0xf2, 0x23, 8,
+    2, 0xff, 0x10, 8, 3, 0xfe, 0x11, 0x12,
+    6, 9, 4, 0x179, 0x32, 0x37, 8, 5,
+    0x103, 0x2e, 6, 2, 0x3f, 0, 0x122, 8,
+    UINT32_MAX, 0x18d, 0x32, 0x45, 0xdc, 0x14, 0, 0
+};
+unsigned short cheatCheckPoint[10] = {
+    4, 8, 4, 4, 8, 8, 4, 8, 8, 4
+};
+unsigned char cheatCheckPointKeyboard[10] = {
+    'P', 'O', 'P', 'P', 'O', 'O', 'P', 'O', 'O', 'P'
+};
+unsigned short cheatRadar[6] = {
+    0x1000, 0x4000, 0x1000, 4, 8, 4
+};
+
+/* Exact PDB globals at matched-PC RVAs 0x4C68D0 and 0x4C7FB0. */
+uint32_t debugMdef[112] = {
+    0, 0x13, 3, 0x32, 0x50, 6, 0, 0xc,
+    4, 9, 0, 0xbe, 0x3e, 6, 9, 1,
+    0xe4, 0x32, 1, 9, 2, 0xe7, 0x32, 4,
+    9, 3, 0xe8, 0x32, 5, 8, 4, 0x3f,
+    0x27, 9, 5, 0x4f, 0x32, 0x33, 8, 6,
+    0x50, 0x31, 8, 7, 0xa8, 0x30, 9, 8,
+    0xf, 0x32, 0x2d, 8, 9, 0x10, 0x32, 8,
+    0xa, 0xb9, 0x1d, 8, 0xb, 0xb8, 0x26, 3,
+    0x140, 0x50, 9, 0xc, 0xe7, 0x32, 0, 9,
+    0xd, 0xe8, 0x32, 0, 9, 0xe, 0x7b, 0x38,
+    0x35, 9, 0xf, 0x7c, 0x32, 0x36, 9, 0x10,
+    0xbd, 0x32, 0x38, 8, 0x11, 0xa8, 8, 9,
+    0x12, 4, 0x33, 0x39, 3, 0x3c0, 0x2c, 6,
+    2, 8, UINT32_MAX, 0x4f, 0x32, 0x10, 0x14, 0
+};
+uint32_t comboDebugMenuMdef[44] = {
+    6, 0, 0x42, 0, 3, 0x64, 0x64, 0,
+    6, 9, 0, 0x42, 0x32, 0x31, 9, 1,
+    0xe7, 0x32, 0, 9, 2, 0xe8, 0x32, 0,
+    9, 3, 0x65, 0x7a, 0x32, 8, 4, 0x66,
+    0x7b, 8, 5, 0x67, 0x7c, 0x10, 0x45, 0xdc,
+    0x14, 0, 0, 0
+};
+
+/* Exact PDB table at matched-PC RVA 0x4C5C20. */
+const ScoreScreenModelMap psxScoreScreenMaps[23] = {
+    {obi_wan_model, "obi2"},
+    {qui_gon_model, "qui2"},
+    {mace_model, "mace2"},
+    {adi_model, "adi2"},
+    {plo_model, "plo2"},
+    {ki_adi_model, "Ki_Adi_Score"},
+    {maul_p_model, "maul"},
+    {amidala_model, "queen"},
+    {panaka_model, "panaka"},
+    {jar_jar_playable_model, "JarJar_Score"},
+    {battle_d_model, "BattleDroidMelee_Score"},
+    {pilot_model, "Pilot_Score"},
+    {rifle_model, "BattleDroidRifle_Score"},
+    {flame_model, "FlameDroid_Score"},
+    {destroye_model, "Destroyer_Score"},
+    {loader_model, "Loader_Score"},
+    {tusken_s_model, "TuskenStaff_Score"},
+    {tusken_r_model, "TuskenRifle_Score"},
+    {thug_1_model, "Weequay_Score"},
+    {thug_2_model, "IshiTib_Score"},
+    {thug_3_model, "Rodian_Score"},
+    {thug_4_model, "Merc_Score"},
+    {gungan_1_model, "GunganGuard_Score"}
+};
+
+/* Exact PDB menu definitions and pointer table at RVAs 0x4C7620 and
+ * 0x4C77F8..0x4C8357. */
+uint32_t saveNowMdef[26] = {
+    0, 2, 0x20, 1, 0, 3, 0x100, 0x78,
+    6, 2, 8, 0, 0x111, 0x1d, 8, 1,
+    0x110, 0x1f, 3, 0x100, 0x5a, 8, UINT32_MAX, 0x131,
+    0x32, 0x14
+};
+uint32_t saveNowSureMdef[26] = {
+    0, 2, 0x20, 1, 0, 3, 0x100, 0x78,
+    6, 2, 8, 0, 0x110, 0x4e, 8, 1,
+    0x111, 0x4f, 3, 0x100, 0x5a, 8, UINT32_MAX, 0x17c,
+    0x32, 0x14
+};
+uint32_t frameTopMdef[7] = {2, 0, 0, 5, 0x1e, 3, 0x14};
+uint32_t frameBotMdef[7] = {2, 0, 0, 5, 0x1e, 2, 0x14};
+uint32_t frameBotMdefls[8] = {2, 0, 0, 5, 0x1f, 2, 0xc8, 0x14};
+uint32_t frameLeftMdef[7] = {2, 0, 0, 5, 0x1e, 4, 0x14};
+uint32_t frameRightMdef[7] = {2, 0, 0, 5, 0x1e, 5, 0x14};
+uint32_t *moverMenus[6] = {
+    frameTopMdef,
+    frameBotMdef,
+    frameBotMdefls,
+    frameLeftMdef,
+    frameRightMdef,
+    saveNowMdef
+};
+
+/* Exact PDB pointer table at RVA 0x4BDB00. */
+char *menu_soundList[11] = {
+    "",
+    "xjedscrl",
+    "xopt_sel",
+    "xjedscrl",
+    "xjedsel",
+    "xlvbrows",
+    "xlvselct",
+    "xsecret",
+    "xsavload",
+    "xlocklvl",
+    "xpointbp"
 };
 
 /*
@@ -265,6 +501,24 @@ MDEF_MOD modVars[74] = {
     JPB_MOD(0x8000, 1, 0, 6, &OptionStruct.Language, 147),
     JPB_MOD(0x8001, 1, 0, 2, &OptionStruct.WindowMode, 446),
     JPB_MOD(0x0006, 1, 0, 256, &OptionStruct.ResolutionChanged, 2),
+};
+
+/* Exact 74 names and null sentinel at matched-PC RVA 0x4CA790. */
+char *modVarNames[75] = {
+    "nada_mod", "players", "p1sel", "p2sel", "player1", "player2",
+    "level", "fulllevel", "level2", "tlevel", "diff", "fun", "ai",
+    "debuglevel", "shock1", "shock2", "walklim1", "walklim2",
+    "runlim1", "runlim2", "music", "STEREO", "musicvol", "sfxvol",
+    "conspkr", "moviesel", "control1", "control2", "qkdraw", "jumpy",
+    "obj", "aidam", "jedidam", "hthrate", "rangedrate", "blockrate",
+    "pooplvl", "forcelvl", "xatrack", "memcrd", "memcrd2",
+    "memcrdslot", "aibit", "pausemenu", "dialogbox1", "screenshot",
+    "timerbars", "maxdraw", "saveposslot", "jedicombo", "combosel",
+    "gamedbmode", "gmi", "soundtest", "textures", "ultimate",
+    "ingamemovie", "sbit", "training", "ai1", "ai2", "rescue",
+    "camerablock", "obi", "runnin", "dimscreen", "maxbright", "versus",
+    "streets", "freq", "nextlvl", "language", "resmode", "ressize",
+    NULL
 };
 
 #undef JPB_MOD

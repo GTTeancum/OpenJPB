@@ -5,11 +5,7 @@
 extern "C" {
 #endif
 
-/*
- * Portable service boundary for platform achievement persistence. The
- * platform_* functions are exact PDB symbols; only the jpb_ registration API
- * is an inferred PC/nxdk integration seam.
- */
+/* Exact PDB platform entry points plus deterministic test interception. */
 typedef int (*JPBPlatformCompleteAchievementHook)(
     int id, void *user_data);
 typedef int (*JPBPlatformGetCompleteAchievementHook)(
@@ -23,8 +19,13 @@ typedef struct JPBPlatformAchievementHooks {
 void jpb_PlatformSetAchievementHooks(
     const JPBPlatformAchievementHooks *hooks,
     void *user_data);
+int jpb_PlatformInitializeSteamServices(void);
+void jpb_PlatformShutdownSteamServices(void);
 int platform_completeAchievement(int id);
 int platform_getCompleteAchievement(int id);
+unsigned char platform_getSystemLanguage(void);
+int platform_openURL(const char *url);
+void platform_update(void);
 
 #ifdef __cplusplus
 }

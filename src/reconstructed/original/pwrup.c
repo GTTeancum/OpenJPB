@@ -1,12 +1,10 @@
 /*
- * PARTIAL REVIEWED RECONSTRUCTION of
+ * REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\Work\pwrup.c.
  *
- * The exact authored power-up stream loader, checkpoint lifecycle, emitter
- * timer path, proximity traversal, and collection/effect dispatcher are
- * recovered here. The legacy immediate-mode model renderer remains isolated
- * behind a dependency-light realization seam; its original PDB call surface
- * and arguments are retained.
+ * The exact authored model submission, console command, power-up stream
+ * loader, checkpoint lifecycle, emitter timer path, proximity traversal,
+ * and collection/effect dispatcher are recovered here.
  *
  * Provenance:
  *   direct     - procedure/global/type names and layouts from game.pdb;
@@ -24,23 +22,30 @@
 
 #include "jpb/achievement.h"
 #include "jpb/animutil.h"
+#include "jpb/bmd.h"
 #include "jpb/bullet.h"
 #include "jpb/camera.h"
 #include "jpb/collision.h"
+#include "jpb/console.h"
 #include "jpb/cube.h"
 #include "jpb/effects.h"
+#include "jpb/enemy.h"
 #include "jpb/filesys.h"
 #include "jpb/game.h"
+#include "jpb/globalarrays.h"
 #include "jpb/input.h"
 #include "jpb/intersec.h"
 #include "jpb/jedi.h"
+#include "jpb/jonnywin.h"
 #include "jpb/loader.h"
 #include "jpb/physics.h"
 #include "jpb/player.h"
 #include "jpb/resources.h"
+#include "jpb/scene.h"
 #include "jpb/sound.h"
 #include "jpb/sprite.h"
 #include "jpb/vectors.h"
+#include "jpb/whook.h"
 #include "jpb/world.h"
 
 #include <stdlib.h>
@@ -62,10 +67,10 @@ char *powerUpNames[17] = {
     "ARTIFACT", "CHALLENGE", "LIFE"
 };
 unsigned powColorLimit = 0x40;
-char *powerUpFiles[17] = {
+char *powerUpFiles[18] = {
     "health_1", "health_2", "force_1", "force_2", "stuff", "check", "",
     "points_1", "points_2", "saber_b", "saber_g", "random", "uber", "",
-    "g_art", "chal", "life"
+    "g_art", "chal", "life", NULL
 };
 int32_t powerUpScales[17] = {
     4096, 4096, 4096, 4096, 2048, 4096, 4096, 4096, 4096,
@@ -84,6 +89,11 @@ CVECTOR pwrIcons[17] = {
 };
 int32_t mRandomPower[9] = {15, 3, 1, 3, 15, 1, 3, 1, 15};
 int32_t cheat_currentCheckPoint;
+
+/* Exact PDB globals at matched-PC RVAs 0x53D470 and 0x94F360/0x94F3E0. */
+FVECTOR vert[JPB_POWERUP_TRANSFORMED_VERTEX_CAPACITY];
+FVECTOR4 charpos[JPB_POWERUP_CHARPOS_CAPACITY];
+void *powerUpData[JPB_POWERUP_MODEL_CAPACITY];
 
 /* Exact pwrup.c file statics at RVAs 0x4CBDCC and 0x546470/74. */
 static int32_t growmod = 1;
@@ -174,14 +184,7 @@ void jpb_PwrupSetDrawHook(
     jpb_pwrup_draw_user_data = user_data;
 }
 
-/*
- * Reference RVA 0xE9390, 811 bytes.
- *
- * The matched body submits powerUpData[type] through the removed immediate
- * renderer. Its exact, renderer-independent call surface is retained here;
- * the portable PC owner supplies a realization without coupling gameplay to
- * a host graphics API. The original mesh submission remains a tracked gap.
- */
+/* Reference RVA 0xE9390, 811 bytes. */
 void DrawPowerUp(
     _svector *position,
     unsigned type,
@@ -189,6 +192,13 @@ void DrawPowerUp(
     VECTOR *scale,
     _svector *offset)
 {
+    geomData *geometry;
+    int *packed_vertices;
+    int16_t (*indices)[4];
+    faceUV *uvs;
+    uint32_t *colors;
+    uint32_t face;
+
     if (jpb_pwrup_draw_hook != NULL) {
         jpb_pwrup_draw_hook(
             jpb_pwrup_draw_user_data,
@@ -198,9 +208,91 @@ void DrawPowerUp(
             scale,
             offset);
     }
+    if (powerUpData[type] == NULL) {
+        return;
+    }
+    powColorLimit = 0x40;
+    if (type == 4 || type == 15) {
+        powColorLimit = 0xa0;
+    }
+    charpos[0].vx = (float)position->vx;
+    charpos[0].vy = (float)position->vy;
+    charpos[0].vz = (float)position->vz;
+    charpos[0].vw = 128.0f;
+    jitteryFesteringMatrixCrack(
+        position, rotation, offset, scale);
+
+    geometry = (geomData *)(
+        (uint8_t *)powerUpData[type] + sizeof(geomData));
+    packed_vertices = (int *)getPtr(
+        geometry->pVertex, JPB_POINTER_ARRAY_VERTEX);
+    (void)RotTransPersMany10bit(
+        packed_vertices, geometry->numVerts * 3, vert);
+    indices = (int16_t (*)[4])getPtr(
+        geometry->pIndex, JPB_POINTER_ARRAY_INDEX);
+    uvs = (faceUV *)getPtr(
+        geometry->pUV, JPB_POINTER_ARRAY_UV);
+    colors = (uint32_t *)getPtr(
+        geometry->pColor, JPB_POINTER_ARRAY_COLOR);
+
+    for (face = 0; face < (uint32_t)geometry->numFaces; ++face) {
+        int corners = indices[face][3] == INT16_MAX ? 3 : 4;
+        int corner;
+
+        _StartPoly(
+            corners,
+            (_Material *)(uintptr_t)geometry->t.TextureID);
+        for (corner = 0; corner < corners; ++corner) {
+            int vertex_index = indices[face][corner];
+
+            _SetVert(
+                corner,
+                vert[vertex_index].vx,
+                vert[vertex_index].vy,
+                vert[vertex_index].vz,
+                colors[corner],
+                uvs[face].uv[corner].u,
+                uvs[face].uv[corner].v);
+        }
+        colors += corners;
+        _NoScaleEndPoly();
+    }
 }
 
-/* 0xE96C0, 650 bytes: FixDrawPowerUp remains unreconstructed. */
+/* Reference RVA 0xE96C0, 650 bytes. */
+void FixDrawPowerUp(unsigned type)
+{
+    geomData *geometry;
+    int16_t (*indices)[4];
+    uint32_t *colors;
+    uint32_t face;
+
+    if (powerUpData[type] == NULL) {
+        return;
+    }
+    powColorLimit = 0x40;
+    if (type == 4 || type == 15) {
+        powColorLimit = 0xa0;
+    }
+    geometry = (geomData *)(
+        (uint8_t *)powerUpData[type] + sizeof(geomData));
+    indices = (int16_t (*)[4])getPtr(
+        geometry->pIndex, JPB_POINTER_ARRAY_INDEX);
+    colors = (uint32_t *)getPtr(
+        geometry->pColor, JPB_POINTER_ARRAY_COLOR);
+
+    for (face = 0; face < (uint32_t)geometry->numFaces; ++face) {
+        int corners = indices[face][3] == INT16_MAX ? 3 : 4;
+
+        colors[0] = fixPowColor(colors[0]);
+        colors[1] = fixPowColor(colors[1]);
+        if (corners == 4) {
+            colors[3] = fixPowColor(colors[3]);
+        }
+        colors[2] = fixPowColor(colors[2]);
+        colors += corners;
+    }
+}
 
 /* Reference RVA 0xE9950, 195 bytes. */
 void cheat_nextCheckPoint(void)
@@ -241,7 +333,191 @@ void cheat_nextCheckPoint(void)
     }
 }
 
-/* 0xE9A20, 1012 bytes: console_PowerCommand remains unreconstructed. */
+/* Reference RVA 0xE9A20, 1012 bytes. */
+int console_PowerCommand(
+    int argument_count,
+    char **string_arguments,
+    int *integer_arguments,
+    float *float_arguments)
+{
+    (void)float_arguments;
+    if (argument_count == 2) {
+        if (_stricmp(string_arguments[0], "pants") == 0) {
+            int bit = integer_arguments[1];
+
+            if (bit == 0x44) {
+                secretBits = UINT32_C(0x00ff0000);
+            } else if (bit == 0x56) {
+                secretBits = 0;
+            } else {
+                uint32_t mask;
+
+                if (bit < 0) bit = 0;
+                if (bit > 31) bit = 31;
+                mask = UINT32_C(1) << bit;
+                if ((secretBits & mask) == 0) {
+                    secretBits |= mask;
+                }
+                return 1;
+            }
+            if (bit == 0x44) {
+                uint32_t mask;
+
+                if (bit > 31) bit = 31;
+                mask = UINT32_C(1) << bit;
+                if ((secretBits & mask) == 0) {
+                    secretBits |= mask;
+                }
+                return 1;
+            }
+        }
+        if (_stricmp(string_arguments[0], "bank") == 0) {
+            return 1;
+        }
+        if (_stricmp(string_arguments[0], "sound") == 0) {
+            (void)sound_Play(
+                NULL, 3, string_arguments[1], 0);
+            return 1;
+        }
+        if (_stricmp(string_arguments[0], "check") == 0) {
+            int checkpoint = integer_arguments[1];
+
+            if (checkpoint < 1) checkpoint = 1;
+            if (checkpoint > maxCheckPoints - 1) {
+                checkpoint = maxCheckPoints - 1;
+            }
+            physics_gSetPosition(
+                &gpWorld->player0->playerRoot,
+                aCheckPoints[checkpoint].vx,
+                aCheckPoints[checkpoint].vy,
+                aCheckPoints[checkpoint].vz);
+            if (GameStruct.NumPlayers == 2) {
+                physics_gSetPosition(
+                    &gpWorld->player1->playerRoot,
+                    aCheckPoints[checkpoint].vx,
+                    aCheckPoints[checkpoint].vy,
+                    aCheckPoints[checkpoint].vz);
+            }
+            return 1;
+        }
+    } else if (argument_count == 1) {
+        if (_stricmp(string_arguments[0], "lastcheck") == 0) {
+            if (GameStruct.CurrentLevel < JPB_GAME_CHECKPOINT_CAPACITY) {
+                (void)console_Printf(
+                    "last check point id = %d\n",
+                    GameStruct.checkpoint[GameStruct.CurrentLevel]);
+            }
+            return 1;
+        }
+        if (_stricmp(string_arguments[0], "points") == 0) {
+            Node *node = poopList[mDrawingSurfaceId].head;
+            int powerup_count = 0;
+            int powerup_points = 0;
+            int health_count = 0;
+            int force_count = 0;
+            int item_count = 0;
+            int saber_count = 0;
+            int challenge_count = 0;
+            int point_count = 0;
+            int life_count = 0;
+            int enemy_count;
+            int enemy_points;
+
+            while (node != NULL) {
+                unsigned type =
+                    (uint16_t)((powerPoop *)node)->pos.pad &
+                    UINT16_C(0x7fff);
+
+                ++powerup_count;
+                switch (type) {
+                case 0:
+                    powerup_points += 50;
+                    ++health_count;
+                    break;
+                case 1:
+                    powerup_points += 100;
+                    ++health_count;
+                    break;
+                case 2:
+                    powerup_points += 50;
+                    ++force_count;
+                    break;
+                case 3:
+                    powerup_points += 100;
+                    ++force_count;
+                    break;
+                case 4:
+                    powerup_points += 100;
+                    ++item_count;
+                    break;
+                case 5:
+                case 14:
+                    powerup_points += 50;
+                    break;
+                case 7:
+                    powerup_points += 1000;
+                    ++point_count;
+                    break;
+                case 8:
+                    powerup_points += 2500;
+                    ++point_count;
+                    break;
+                case 9:
+                case 10:
+                    powerup_points += 100;
+                    ++saber_count;
+                    break;
+                case 12:
+                    powerup_points += 1500;
+                    ++challenge_count;
+                    break;
+                case 15:
+                    powerup_points += 1500;
+                    ++life_count;
+                    break;
+                case 16:
+                    powerup_points += 200;
+                    ++life_count;
+                    break;
+                default:
+                    break;
+                }
+                node = node->next;
+            }
+            (void)console_Printf(
+                "%d powerups for points: %d\n",
+                powerup_count, powerup_points);
+            (void)console_Printf(
+                "health    powerups %d\n", health_count);
+            (void)console_Printf(
+                "force     powerups %d\n", force_count);
+            (void)console_Printf(
+                "item      powerups %d\n", item_count);
+            (void)console_Printf(
+                "sabre     powerups %d\n", saber_count);
+            (void)console_Printf(
+                "challenge powerups %d\n", challenge_count);
+            (void)console_Printf(
+                "point     powerups %d\n", point_count);
+            (void)console_Printf(
+                "life      powerups %d\n", life_count);
+            enemy_points = enemy_CalcPoints(&enemy_count);
+            (void)console_Printf(
+                "%d enemies for points: %d\n",
+                enemy_count, enemy_points);
+            (void)console_Printf(
+                "total points: %d\n",
+                enemy_points + powerup_points);
+            return 1;
+        }
+    }
+    (void)console_Printf("power:\n");
+    (void)console_Printf(
+        "\tcheck x - jump to check point (1-n)\n");
+    (void)console_Printf(
+        "\tpoints  - display points avail on level\n");
+    return 1;
+}
 
 /* Reference RVA 0xE9E20, 106 bytes. */
 unsigned fixPowColor(unsigned color)
@@ -260,7 +536,65 @@ unsigned fixPowColor(unsigned color)
         (red << 16) | (green << 8) | blue;
 }
 
-/* 0xE9E90, 909 bytes: jitteryFesteringMatrixCrack remains unreconstructed. */
+/* Reference RVA 0xE9E90, 909 bytes. */
+void jitteryFesteringMatrixCrack(
+    _svector *position,
+    _svector *rotation,
+    _svector *offset,
+    VECTOR *scale)
+{
+    MATRIX x;
+    MATRIX y;
+    MATRIX z;
+    MATRIX temp;
+    MATRIX model;
+    MATRIX transformed;
+    int16_t translated[3];
+    int row;
+    int column;
+
+    XRotMatrix(&x, (float)rotation->vx);
+    YRotMatrix(&y, (float)rotation->vy);
+    ZRotMatrix(&z, (float)rotation->vz);
+    (void)fMulMatrix0(&z, &y, &temp);
+    (void)fMulMatrix0(&temp, &x, &model);
+    model.t[0] = (int32_t)position->vx + (int32_t)offset->vx;
+    model.t[1] = (int32_t)position->vy + (int32_t)offset->vy;
+    model.t[2] = (int32_t)position->vz + (int32_t)offset->vz;
+
+    for (row = 0; row < 3; ++row) {
+        model.m[row][0] *= (float)scale->vx * (1.0f / 4096.0f);
+        model.m[row][1] *= (float)scale->vy * (1.0f / 4096.0f);
+        model.m[row][2] *= (float)scale->vz * (1.0f / 4096.0f);
+    }
+    for (row = 0; row < 3; ++row) {
+        for (column = 0; column < 3; ++column) {
+            transformed.m[row][column] =
+                gSceneGeometryEnv.matrix.m[row][0] *
+                    model.m[0][column] +
+                gSceneGeometryEnv.matrix.m[row][1] *
+                    model.m[1][column] +
+                gSceneGeometryEnv.matrix.m[row][2] *
+                    model.m[2][column];
+        }
+    }
+    translated[0] = (int16_t)(
+        (int16_t)model.t[0] + gSceneGeometryEnv.pos.vx);
+    translated[1] = (int16_t)(
+        (int16_t)model.t[1] + gSceneGeometryEnv.pos.vy);
+    translated[2] = (int16_t)(
+        (int16_t)model.t[2] + gSceneGeometryEnv.pos.vz);
+    for (row = 0; row < 3; ++row) {
+        transformed.t[row] = (int32_t)(
+            (float)translated[0] *
+                gSceneGeometryEnv.matrix.m[row][0] +
+            (float)translated[1] *
+                gSceneGeometryEnv.matrix.m[row][1] +
+            (float)translated[2] *
+                gSceneGeometryEnv.matrix.m[row][2]);
+    }
+    SetupTransformMatrix(&transformed);
+}
 
 /* Reference RVA 0xEA220, 6 bytes. */
 int kmAudioSFX_DumpBank(int bankID)

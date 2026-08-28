@@ -53,7 +53,7 @@ static CollisionData maSmallNodeSizes[1] = {
     {0x20, 0x00, -1}
 };
 
-/* Exact 22-record fallback combo block at matched-PC RVA 0x4CC1A0. */
+/* Exact 22-record default combo block at matched-PC RVA 0x4CC1A0. */
 static Combo combos[22] = {
     {.Index = 0x40, .comboFlags = UINT32_C(0x00290000),
      .String = "n"},

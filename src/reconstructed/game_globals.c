@@ -16,7 +16,11 @@
 #include "jpb/menu.h"
 #include "jpb/input.h"
 #include "jpb/game.h"
+#include "jpb/savegame.h"
 #include "jpb/player.h"
+
+/* Exact PDB global at matched-PC RVA 0x4F3000. */
+int console_currentmemcard;
 
 Camera gCamera;
 VECTOR streetcampos;
@@ -81,8 +85,6 @@ CVECTOR mStrobe;
 FVECTOR4 collisionfrustrum[6];
 FVECTOR4 clippingfrustrum[6];
 uint8_t initialLevelPauseDelay;
-/* Inferred name for the anonymous matched-PC byte at RVA 0x10DB3A4. */
-uint8_t jpb_StreetsEndingShortCollisionTimeout;
 VECTOR v3Translate;
 MATRIX gGTEMATRIX;
 uint32_t padMaskBits[JPB_INPUT_PAD_COUNT];
@@ -96,10 +98,22 @@ int32_t p2Disconnected;
 uint32_t secretBits;
 int32_t nShockers[2];
 /* Exact PDB globals used by brain_ControlPlayer's analog direction path. */
-SDL_InputType player1InputType;
-SDL_InputType player2InputType;
+SDL_InputType player1InputType = -1;
+SDL_InputType player2InputType = -1;
 /* Exact PDB global at matched-PC RVA 0x4D49AC. Zero selects KBM art. */
-int32_t lastUsedInputType;
+int32_t lastUsedInputType = -1;
+/* Exact PDB globals at matched-PC RVAs 0x515BAA and 0x515BC0..0x515BC8. */
+uint8_t resolutionUpdated;
+int32_t newWidth;
+int32_t newHeight;
+int32_t newWindowMode;
+/* Exact PDB globals at matched-PC RVAs 0x5395A4 and 0x582E44. */
+unsigned char introPlayed;
+float VideoVolume;
+/* Exact PDB global at matched-PC RVA 0x4D4A04. */
+int32_t firstRun = 1;
+/* Exact matched-PC global at RVA 0x582E58. */
+int32_t g_isSteamDeck;
 float g_p1X;
 float g_p1Y;
 float g_p2X;
@@ -107,7 +121,7 @@ float g_p2Y;
 WorldData *gpWorld;
 char *jonnylevel;
 int32_t *leveldata;
-void *leveltexture;
+_Material *leveltexture[4];
 int32_t *texturebase;
 int32_t *colorbase;
 int32_t *vertbase;
@@ -131,6 +145,8 @@ gamestruct GameStruct;
 optionstruct OptionStruct;
 /* Exact PDB global at matched-PC RVA 0x10D8EE0. */
 saveGameStruct SaveGameStruct;
+/* Exact PDB-typed three-slot memory-card block at matched-PC RVA 0x930C00. */
+SAVEGAMEBLOCK cardLoadBuffer;
 /*
  * Exact initialized PDB global at matched-PC RVA 0x4BAB98. The named
  * option procedures copy either the whole record or their owned fields.
@@ -164,10 +180,14 @@ optionstruct defaultOptionStruct = {
     .PadAudioEnabled = 1,
     .EULAaccepted = 0
 };
-/* Exact PDB global at matched-PC RVA 0x10DEBC0, type wchar_t*[498]. */
-wchar_t *allText[JPB_ALL_TEXT_CAPACITY];
-/* Exact BSS global at matched-PC RVA 0x538100. */
-Upgrades jediUpgrades[9];
+/* Exact PDB global at RVA 0x10DEBC0; its pointees are UTF-8 byte strings. */
+char *allText[JPB_ALL_TEXT_CAPACITY];
+/*
+ * Exact BSS owner at matched-PC RVA 0x538100. The PDB leaves the global
+ * extent unspecified; jedi_SetHighestLevel directly proves sparse slot 17.
+ * Save payloads still serialize only their exact nine-entry member.
+ */
+Upgrades jediUpgrades[JPB_GAME_JEDI_MODEL_CAPACITY];
 /*
  * Exact initialized PDB global at matched-PC RVA 0x4BAA00.
  * Type 0x1063 is int[5][6].
@@ -257,10 +277,6 @@ uint16_t tanknoise;
 uint16_t turretnoise;
 /* Exact PDB global at matched-PC RVA 0x53A5E8. */
 playerObject *afterLife;
-/* Inferred name for the callback-table slot at matched-PC RVA 0x10EFBB0. */
-JPBPlayerCallback jpb_TrajectoryCallbackSlot;
-/* Inferred companion slot at RVA 0x10EFD00. */
-JPBPlayerCallback jpb_MaulTrajectoryCallbackSlot;
 /* Inferred name for the anonymous flag word at matched-PC RVA 0x10DBEFC. */
 uint32_t jpb_CubeRuntimeFlags;
 _Alignas(16) uint8_t gaScratch[2048];
@@ -275,6 +291,8 @@ int32_t *eventlist_next = jpb_eventlist_storage;
 int32_t *eventlist_end = jpb_eventlist_storage + 2048;
 int32_t *WorldmeshData;
 size_t gJpxWorldmeshSize;
+/* Exact PDB global: _Material *level_materials[512], RVA 0x10D7E80. */
+_Material *level_materials[512];
 _Alignas(2) uint8_t maProjTypes[JPB_PROJECT_TYPE_BYTES];
 uint8_t aEmiter[JPB_EMITTER_BYTES];
 EffectHeader *paEffects[JPB_EFFECT_COUNT];

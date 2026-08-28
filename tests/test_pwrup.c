@@ -1,5 +1,9 @@
 #include "jpb/alloc.h"
+#include "jpb/bmd.h"
+#include "jpb/console.h"
 #include "jpb/game.h"
+#include "jpb/globalarrays.h"
+#include "jpb/jonnywin.h"
 #include "jpb/objroot.h"
 #include "jpb/physics.h"
 #include "jpb/player.h"
@@ -274,6 +278,8 @@ static int test_initialized_tables_and_leaf_functions(void)
     CHECK(strcmp(powerUpNames[0], "HEAL") == 0);
     CHECK(strcmp(powerUpNames[5], "CHECK POINT") == 0);
     CHECK(strcmp(powerUpFiles[14], "g_art") == 0);
+    CHECK(strcmp(powerUpFiles[16], "life") == 0);
+    CHECK(powerUpFiles[17] == NULL);
     CHECK(powerUpScales[4] == 2048);
     CHECK(powerUpScales[5] == 4096);
     CHECK(mRandomPower[0] == 15);
@@ -283,6 +289,163 @@ static int test_initialized_tables_and_leaf_functions(void)
     CHECK(fixPowColor(UINT32_C(0x001020f0)) ==
           UINT32_C(0xff4040ff));
     CHECK(kmAudioSFX_DumpBank(3) == -1);
+    return 0;
+}
+
+static int test_fix_draw_powerup_face_walk(void)
+{
+    uint8_t payload[sizeof(geomData) * 2] = {0};
+    geomData *geometry =
+        (geomData *)(void *)(payload + sizeof(geomData));
+    int16_t indices[2][4] = {
+        {0, 1, 2, INT16_MAX},
+        {0, 1, 2, 3}
+    };
+    uint32_t colors[7] = {
+        UINT32_C(0x00010203), UINT32_C(0x00102030),
+        UINT32_C(0x00203040), UINT32_C(0x00304050),
+        UINT32_C(0x00405060), UINT32_C(0x00506070),
+        UINT32_C(0x00607080)
+    };
+    uint32_t expected[7];
+    size_t index;
+
+    pointerRegistry_Reset();
+    geometry->numFaces = 2;
+    geometry->pIndex = addPtr(
+        indices, JPB_POINTER_ARRAY_INDEX);
+    geometry->pColor = addPtr(
+        colors, JPB_POINTER_ARRAY_COLOR);
+    powerUpData[0] = payload;
+    powColorLimit = 0x40;
+    for (index = 0; index < 7; ++index) {
+        expected[index] = fixPowColor(colors[index]);
+    }
+
+    FixDrawPowerUp(0);
+    CHECK(powColorLimit == 0x40);
+    for (index = 0; index < 7; ++index) {
+        CHECK(colors[index] == expected[index]);
+    }
+
+    powerUpData[0] = NULL;
+    pointerRegistry_Reset();
+    return 0;
+}
+
+static int test_powerup_scene_transform(void)
+{
+    _svector position = {10, 20, 30, 0};
+    _svector rotation = {0, 0, 0, 0};
+    _svector offset = {1, 2, 3, 0};
+    VECTOR scale = {4096, 4096, 4096, 0};
+
+    memset(&gSceneRoot, 0, sizeof(gSceneRoot));
+    gSceneGeometryEnv.matrix.m[0][0] = 1.0f;
+    gSceneGeometryEnv.matrix.m[1][1] = 1.0f;
+    gSceneGeometryEnv.matrix.m[2][2] = 1.0f;
+    gSceneGeometryEnv.pos.vx = 100;
+    gSceneGeometryEnv.pos.vy = 200;
+    gSceneGeometryEnv.pos.vz = 300;
+
+    jitteryFesteringMatrixCrack(
+        &position, &rotation, &offset, &scale);
+    CHECK(globalwinmatrix.m[0][0] == 1.0f);
+    CHECK(globalwinmatrix.m[1][1] == 1.0f);
+    CHECK(globalwinmatrix.m[2][2] == 1.0f);
+    CHECK(globalwinmatrix.t[0] == 111.0f);
+    CHECK(globalwinmatrix.t[1] == 222.0f);
+    CHECK(globalwinmatrix.t[2] == 333.0f);
+    return 0;
+}
+
+static int test_console_power_command(void)
+{
+    WorldData world;
+    playerObject players[2];
+    sceneObject scenes[2];
+    physicsObject physics[2];
+    powerPoop nodes[3];
+    char *arguments[2];
+    int integers[2] = {0, 0};
+    int output_row;
+
+    memset(&world, 0, sizeof(world));
+    memset(players, 0, sizeof(players));
+    memset(scenes, 0, sizeof(scenes));
+    memset(physics, 0, sizeof(physics));
+    memset(nodes, 0, sizeof(nodes));
+    scenes[0].pPhysics = &physics[0].physicsRoot;
+    scenes[1].pPhysics = &physics[1].physicsRoot;
+    players[0].playerRoot.pParent = &scenes[0].sceneRoot;
+    players[1].playerRoot.pParent = &scenes[1].sceneRoot;
+    world.player0 = &players[0];
+    world.player1 = &players[1];
+    gpWorld = &world;
+
+    arguments[0] = "pants";
+    arguments[1] = "5";
+    integers[1] = 5;
+    secretBits = 0;
+    CHECK(console_PowerCommand(2, arguments, integers, NULL) == 1);
+    CHECK(secretBits == UINT32_C(0x20));
+
+    arguments[1] = "68";
+    integers[1] = 0x44;
+    CHECK(console_PowerCommand(2, arguments, integers, NULL) == 1);
+    CHECK(secretBits == UINT32_C(0x80ff0000));
+
+    arguments[0] = "check";
+    arguments[1] = "99";
+    integers[1] = 99;
+    maxCheckPoints = 3;
+    aCheckPoints[2].vx = 111;
+    aCheckPoints[2].vy = -222;
+    aCheckPoints[2].vz = 333;
+    GameStruct.NumPlayers = 2;
+    CHECK(console_PowerCommand(2, arguments, integers, NULL) == 1);
+    CHECK(physics[0].pos.vx == 111.0f);
+    CHECK(physics[0].pos.vy == -222.0f);
+    CHECK(physics[0].pos.vz == 333.0f);
+    CHECK(physics[1].pos.vx == 111.0f);
+
+    arguments[0] = "lastcheck";
+    GameStruct.CurrentLevel = 2;
+    GameStruct.checkpoint[2] = 7;
+    output_row = jpb_ConsoleBufferRow();
+    CHECK(console_PowerCommand(1, arguments, integers, NULL) == 1);
+    CHECK(strcmp(
+              jpb_ConsoleBufferLine((size_t)output_row),
+              "last check point id = 7") == 0);
+
+    nodes[0].pos.pad = 0;
+    nodes[1].pos.pad = 12;
+    nodes[2].pos.pad = 16;
+    nodes[0].node = (Node *)(void *)&nodes[1];
+    nodes[1].node = (Node *)(void *)&nodes[2];
+    nodes[2].node = NULL;
+    poopList[0].head = (Node *)(void *)&nodes[0];
+    poopList[0].tail = (Node *)(void *)&nodes[2];
+    mDrawingSurfaceId = 0;
+    arguments[0] = "points";
+    output_row = jpb_ConsoleBufferRow();
+    CHECK(console_PowerCommand(1, arguments, integers, NULL) == 1);
+    CHECK(strcmp(
+              jpb_ConsoleBufferLine((size_t)output_row),
+              "3 powerups for points: 1750") == 0);
+    CHECK(strcmp(
+              jpb_ConsoleBufferLine((size_t)(uint8_t)(output_row + 5)),
+              "challenge powerups 1") == 0);
+    CHECK(strcmp(
+              jpb_ConsoleBufferLine((size_t)(uint8_t)(output_row + 7)),
+              "life      powerups 1") == 0);
+    CHECK(strcmp(
+              jpb_ConsoleBufferLine((size_t)(uint8_t)(output_row + 9)),
+              "total points: 1750") == 0);
+
+    poopList[0].head = NULL;
+    poopList[0].tail = NULL;
+    gpWorld = NULL;
     return 0;
 }
 
@@ -429,6 +592,9 @@ int main(int argc, char **argv)
     CHECK(test_checkpoint_jump() == 0);
     CHECK(test_rejections() == 0);
     CHECK(test_initialized_tables_and_leaf_functions() == 0);
+    CHECK(test_fix_draw_powerup_face_walk() == 0);
+    CHECK(test_powerup_scene_transform() == 0);
+    CHECK(test_console_power_command() == 0);
     CHECK(test_dispatcher_draw_collection_and_publication() == 0);
     CHECK(test_combo_level_and_afterlife_marker_noncollection() == 0);
     CHECK(test_dispatcher_checkpoint_and_artifact() == 0);

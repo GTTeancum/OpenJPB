@@ -2,6 +2,7 @@
 #define JPB_MENU_H
 
 #include "jpb/fmath.h"
+#include "jpb/extracharacters.h"
 #include "jpb/game.h"
 #include "jpb/whook.h"
 
@@ -10,12 +11,22 @@
 #include <wchar.h>
 
 #ifdef __cplusplus
+#define _Static_assert static_assert
 extern "C" {
 #endif
+
+struct playerObject;
 
 enum {
     JPB_ALL_TEXT_CAPACITY = 498,
     JPB_CREDIT_LINE_COUNT = 706,
+    JPB_EULA_ENG_LINE_COUNT = 0x22b,
+    JPB_EULA_GER_LINE_COUNT = 0x275,
+    JPB_EULA_FRE_LINE_COUNT = 0x25d,
+    JPB_EULA_ITA_LINE_COUNT = 0x25d,
+    JPB_EULA_SPA_LINE_COUNT = 0x24e,
+    JPB_EULA_RUS_LINE_COUNT = 0x293,
+    JPB_EULA_ZHO_LINE_COUNT = 0x1c7,
     JPB_CONCEPT_ART_PAGE_COUNT = 42
 };
 
@@ -28,12 +39,15 @@ typedef struct MENUTEMPDATA {
 } MENUTEMPDATA;
 
 /* Exact PDB type 0x132D. */
+#ifndef JPB_SRECT_DEFINED
+#define JPB_SRECT_DEFINED
 typedef struct SRECT {
     int16_t x;
     int16_t y;
     int16_t w;
     int16_t h;
 } SRECT;
+#endif
 
 /* Exact PDB type 0x6EC4. */
 typedef struct MDEF_MOD {
@@ -68,6 +82,49 @@ typedef struct MMVDEF {
     uint8_t state;
     uint8_t reserved45[3];
 } MMVDEF;
+
+/* Exact PDB type 0x6DAF. */
+typedef struct AWARDSET {
+    uint32_t award[3];
+    uint8_t awardType[3];
+    uint8_t awardCount;
+    uint8_t awardTotal;
+    uint8_t reserved17[3];
+    uint32_t pointAwarded[3];
+    uint32_t maxpointaward;
+} AWARDSET;
+
+/* Exact PDB type nested in MENUVARS.mp. */
+typedef struct MPNT {
+    int16_t x;
+    int16_t y;
+    uint16_t state;
+    uint16_t scrolly;
+    uint16_t maxScrolly;
+    uint16_t alpha;
+} MPNT;
+
+/* Exact matched-PC PDB type 0x6E54. */
+typedef struct PSELMOD {
+    uint16_t mode;
+    uint16_t jedi;
+    int16_t x[2];
+    int16_t y[2];
+} PSELMOD;
+
+_Static_assert(sizeof(PSELMOD) == 12, "PSELMOD PDB layout changed");
+
+_Static_assert(sizeof(MPNT) == 12, "MPNT size must match matched-PC PDB");
+
+/* Exact matched-PC PDB type used by psxScoreScreenMaps. */
+typedef struct ScoreScreenModelMap {
+    model_id ID;
+    const char *scoreScreenTextureName;
+} ScoreScreenModelMap;
+
+_Static_assert(
+    sizeof(ScoreScreenModelMap) == 16,
+    "ScoreScreenModelMap size must match matched-PC PDB");
 
 /*
  * Exact named prefix and menu-stack region of PDB type MENUVARS (0x6DBE).
@@ -181,12 +238,12 @@ typedef struct MENUVARS {
     uint32_t pointSeek;
     uint16_t sndtest;
     uint16_t textures;
-    uint8_t pselectMode[24];
-    uint8_t mp[36];
-    uint8_t awardOrder[6];
+    PSELMOD pselectMode[2];
+    MPNT mp[3];
+    uint8_t awardOrder[2][3];
     uint16_t reserved862;
     uint32_t maxAwardScore[3];
-    uint8_t awardSet[72];
+    AWARDSET awardSet[2];
     uint8_t currentAward;
     uint8_t ultimate;
     uint8_t holdButtFlag;
@@ -212,15 +269,26 @@ _Static_assert(
 _Static_assert(
     offsetof(MENUVARS, menuModeSP) == 0x138,
     "MENUVARS menu stack pointer offset must match matched-PC PDB");
+_Static_assert(
+    offsetof(MENUVARS, mp) == 0x334,
+    "MENUVARS score-menu position offset must match matched-PC PDB");
+_Static_assert(
+    offsetof(MENUVARS, maxAwardScore) + sizeof(uint32_t) ==
+        offsetof(MENUVARS, mp) + 4 * sizeof(MPNT),
+    "retail score-menu sentinel view must match matched-PC PDB layout");
 
 /* Exact PDB global, matched-PC RVA 0x10DEBC0. */
-extern wchar_t *allText[JPB_ALL_TEXT_CAPACITY];
+/* PDB says wchar_t*, but the executable stores and formats UTF-8 bytes. */
+extern char *allText[JPB_ALL_TEXT_CAPACITY];
 /* Exact PDB globals at matched-PC RVAs 0x539DC0 and 0x987D88. */
 extern unsigned loadScreenFlag;
 extern unsigned loadTotal;
+extern char *snames[5];
+extern uint16_t playerSelectPix[23];
 extern MENUVARS menuVars;
 extern unsigned menuTexLoaded;
 extern unsigned menuTexLoaded2;
+extern unsigned loadvrmFlag;
 extern _Material *menuTextures[249];
 extern _Material *controlTextures[10];
 extern _Material *kbmTextures[10];
@@ -257,6 +325,10 @@ extern unsigned screenSaverCount;
 extern unsigned screenSaverFlag;
 extern unsigned saverAlpha;
 extern unsigned saverPads[2];
+extern unsigned eulaMinScroll;
+extern unsigned eulaMaxScroll;
+extern unsigned eulaAcceptThreshold;
+extern unsigned eulaCanAccept;
 extern float menuTextDepthOverride;
 /* Exact PDB global at matched-PC RVA 0x539590. */
 extern unsigned slider;
@@ -277,6 +349,7 @@ extern uint32_t newMenu_select;
 extern int newMenu_playerSelectTypeP1;
 extern int newMenu_currentModelSelectBaseP1;
 extern int newMenu_playerSelectTypeP2;
+extern unsigned mp1ComboCount;
 
 /* Exact initialized title-menu definition streams from matched menu.obj. */
 extern uint32_t xmainMdef[43];
@@ -294,6 +367,26 @@ extern uint32_t titlePlayerCountContinueMdef[21];
 extern uint32_t titlePlayerCountVSMdef[21];
 extern uint32_t difficultyMdef[21];
 extern uint32_t playerCountSelectMdef[20];
+extern uint32_t memoryMdef[24];
+extern uint32_t insert1Mdef[14];
+extern uint32_t loadMenuMdef[18];
+extern uint32_t memcarddebugMdef[40];
+extern uint32_t movieMenuMdef[24];
+extern uint32_t rusureMenuMdef[28];
+extern uint32_t aidebugMenuMdef[84];
+extern uint32_t editMenuMdef[28];
+extern uint32_t cameraMenuMdef[44];
+extern uint32_t objectiveMenuMdef[44];
+extern uint32_t specialMessMenuMdef[24];
+extern uint32_t specialMessMenu2Mdef[24];
+extern uint32_t gamecombosMenu[12];
+extern uint32_t ngpUnlockMdef[26];
+extern uint32_t gamepauseMenuMdef[48];
+extern uint32_t comboDebugMenuMdef[44];
+extern uint32_t debugMdef[112];
+extern unsigned short cheatCheckPoint[10];
+extern unsigned char cheatCheckPointKeyboard[10];
+extern unsigned short cheatRadar[6];
 extern uint32_t newgameconfirmMdef[29];
 extern uint32_t optionsMdef[44];
 extern uint32_t controlsMdef[16];
@@ -325,30 +418,56 @@ extern uint8_t frameTopMover[24];
 extern uint8_t frameBottomMover[24];
 extern uint8_t frameLeftMover[24];
 extern uint8_t frameRightMover[24];
+extern uint32_t frameTopMdef[7];
+extern uint32_t frameBotMdef[7];
+extern uint32_t frameBotMdefls[8];
+extern uint32_t frameLeftMdef[7];
+extern uint32_t frameRightMdef[7];
+extern uint32_t saveNowMdef[26];
+extern uint32_t saveNowSureMdef[26];
+extern uint32_t comboType[2];
+extern uint32_t comboTotal[2];
+extern uint16_t redline[8];
+extern uint16_t barTable[4];
+extern uint16_t bonusMessBits[10];
+extern uint32_t comboDispDef[4];
+extern uint32_t healthForceMdef[22];
+extern uint32_t eulaMdef[4];
+extern const ScoreScreenModelMap psxScoreScreenMaps[23];
+extern int cachedAwardIndex;
+extern int16_t cachedRewardsInit[3];
+extern int16_t cachedRewardsEnd[3];
+extern int16_t cachedBonusLines[3];
+extern unsigned scoreYtot;
+extern int bonusOverride;
+extern float minSlider;
+extern float maxSlider;
+extern uint32_t *moverMenus[6];
+extern char *menu_soundList[11];
 extern uint32_t mmsizes[75];
 extern RESOLUTION g_resolutions[256];
 extern int32_t g_resolutionsCount;
 extern MDEF_MOD modVars[74];
+extern char *modVarNames[75];
 
 /* Exact initialized PDB globals owned by the two bespoke presentation paths. */
 extern unsigned char *theCredits[JPB_CREDIT_LINE_COUNT];
+extern unsigned char *EULA_ENG[JPB_EULA_ENG_LINE_COUNT];
+extern unsigned char *EULA_GER[JPB_EULA_GER_LINE_COUNT];
+extern unsigned char *EULA_FRE[JPB_EULA_FRE_LINE_COUNT];
+extern unsigned char *EULA_ITA[JPB_EULA_ITA_LINE_COUNT];
+extern unsigned char *EULA_SPA[JPB_EULA_SPA_LINE_COUNT];
+extern unsigned char *EULA_RUS[JPB_EULA_RUS_LINE_COUNT];
+extern unsigned char *EULA_ZHO[JPB_EULA_ZHO_LINE_COUNT];
 extern unsigned char credMusic[8];
 extern unsigned char credMuse;
 extern int cachedInputL;
 extern int cachedInputR;
 extern float creditBarPosition;
 extern int skipCreditForFrame;
+extern unsigned char introPlayed;
+extern float VideoVolume;
 
-/*
- * Dependency-free publication seam for the still-pending menu renderer.
- * The callback is reconstruction infrastructure; menu_specialMess and mess
- * are exact PDB names.
- */
-typedef void (*JPBMenuSpecialMessageHook)(
-    const uint8_t *mess,
-    uint16_t message_menu,
-    uint16_t response_menu,
-    void *user_data);
 typedef void (*JPBMenuCheatAction)(void);
 typedef void (*JPBMenuP1CharacterSelectDrawHook)(
     int model,
@@ -371,7 +490,6 @@ typedef struct JPBMenuPlatformHooks {
     int (*assignBackToP1)(void *user_data);
     int (*activateItem)(
         uint32_t destination, void *user_data);
-    void (*menuSound)(unsigned sound, void *user_data);
     const uint8_t *(*keyboardState)(
         size_t *key_count, void *user_data);
     void (*triggerMovie)(
@@ -384,12 +502,6 @@ typedef struct JPBMenuPlatformHooks {
     void (*scanLevel)(unsigned level, void *user_data);
     void (*soundCue)(const char *name, void *user_data);
     void (*refreshLevelTransforms)(void *user_data);
-    void (*applyResolution)(
-        unsigned resolution_index,
-        unsigned window_mode,
-        uint32_t *width,
-        uint32_t *height,
-        void *user_data);
     unsigned (*controllerCount)(void *user_data);
     const char *(*controllerName)(
         unsigned player, void *user_data);
@@ -398,9 +510,6 @@ typedef struct JPBMenuPlatformHooks {
     void (*requestExit)(void *user_data);
 } JPBMenuPlatformHooks;
 
-void jpb_MenuSetSpecialMessageHook(
-    JPBMenuSpecialMessageHook hook,
-    void *user_data);
 void jpb_MenuSetP1CharacterSelectDrawHook(
     JPBMenuP1CharacterSelectDrawHook hook,
     void *user_data);
@@ -410,7 +519,102 @@ void jpb_MenuSetP2CharacterSelectDrawHook(
 void jpb_MenuSetPlatformHooks(
     const JPBMenuPlatformHooks *hooks,
     void *user_data);
+unsigned comboSubset(unsigned char *source, unsigned char *candidate);
+void menuPreString(unsigned char *src1, unsigned char *src2);
+void menuPushKey(void);
+void menu_buildComboString(
+    unsigned char *mp1Combos,
+    unsigned char *src,
+    unsigned comboNum);
+void genComboStrings(unsigned player);
+void menu_drawCombos(void);
+void menu_councilPos(struct playerObject *player, VECTOR *center);
+void menu_showCouncil(void);
+unsigned drawDropForceMess(unsigned type);
+void drawScoreMenus(unsigned current_award, AWARDSET *award_set);
+void fixPSPos(float *x, float *y);
 void menu_addTotal(unsigned amount);
+void menu_redrawLoadscreen(void);
+void menu_initLoadBar(void);
+void initSaveMenu(void);
+void initsavegamestruct(void);
+void loadVRM(
+    char *file,
+    unsigned indoxo,
+    unsigned height,
+    unsigned char *dst,
+    unsigned winTexIndex);
+int menu_gameContinue(void);
+void menuLoadSelectTextures(
+    unsigned short *load_list,
+    unsigned short load_list_size,
+    unsigned texture_type);
+int menu_CheckValidLevel(unsigned check, unsigned *award_level);
+unsigned menu_calcCompletionPoints(void);
+void menu_calcTbarspeed(unsigned range);
+void menu_decAwardLevel(void);
+int menu_FormatMenu(int type, unsigned long controller_pad);
+void menu_JumpCheckPoint(void);
+void menu_RadarCheat(void);
+void menu_drawColorPoly(
+    unsigned x,
+    unsigned y,
+    unsigned width,
+    unsigned height,
+    unsigned char red,
+    unsigned char green,
+    unsigned char blue,
+    unsigned type,
+    unsigned flag);
+void menu_drawColorPolyG4(
+    unsigned x,
+    unsigned y,
+    unsigned width,
+    unsigned height,
+    unsigned char red1,
+    unsigned char green1,
+    unsigned char blue1,
+    unsigned char red2,
+    unsigned char green2,
+    unsigned char blue2,
+    unsigned type);
+void menu_drawController(unsigned x, unsigned y, int padnum);
+void menu_finishloadGame(void);
+void menu_grayBars(
+    unsigned x,
+    unsigned y,
+    unsigned width,
+    unsigned height,
+    unsigned type);
+void menu_handleMovers(void);
+int menu_handleUnformatted(void);
+void menu_initReconnect(void);
+void menu_initEULA(int text_length);
+void menu_initTitleLoad(void);
+void menu_initialLoad(unsigned card);
+void menu_loadFrontEndArt(unsigned nothing);
+void menu_loadGame(void);
+void menu_mkEmptySaveGame(void);
+void menu_nukePrimo(void);
+void menu_overLifeBars(unsigned y);
+void menu_showGameMode(void);
+void menu_showSaves(void);
+void menu_showVRAMBackground(unsigned background_index);
+void menu_screenSaver(void);
+void mmDrawCard(
+    unsigned card_number,
+    unsigned value,
+    unsigned x,
+    unsigned y);
+void mmDrawMisc(MDEF_MOD *modifier, unsigned value);
+void mmvInitScore(unsigned player_number);
+int mmvRunScore(unsigned player_number);
+void newMenu_DrawMessageBox(int x, int y, int width, int height);
+void runInitialMemcard(void);
+void runSaveMenu(void);
+void menu_saveGameTriggered(void);
+void turnOffBackground(void);
+void menu_killLoadScreen(void);
 void menu_specialMess(uint8_t *mess);
 void SetGlobalColorDefault(void);
 void SetGlobalDST(void);
@@ -432,12 +636,23 @@ unsigned menu_checkSoftReset(unsigned unused);
 void menu_checkTitleReload(void);
 void menu_cameraChange(unsigned view_type);
 void menu_checkMiniMod(unsigned level, unsigned decreased);
+void menu_checkAbortOrPause(void);
+unsigned menu_checkCombo(unsigned jedi, short combonum);
+int menu_controlDisconnect(void);
+void menu_copyCouncil(void);
 void menu_continueGame(void);
 void menu_endGame(void);
+void menu_enterPauseMode(void);
 void menu_enterTitleMode(void);
 void menu_mainExitMenu(void);
 void menu_mainInitMenu(unsigned mode);
 void menu_mainLoop(void);
+void menu_applyvideooptions(void);
+void menu_demoMovie(void);
+void menu_dumpMemory(unsigned x, unsigned y);
+void menu_DisplayMessage(char *message);
+void menu_runTitleLoad(void);
+void menu_writexainfo(unsigned x1, unsigned x2, unsigned front);
 void menu_winLoadTextures(void);
 void drawControlsIcon(void);
 int getControllerTextures(int player, _Material **materialHandle);
@@ -447,7 +662,17 @@ void newDrawControllerIcon(
     int x,
     int y,
     int alpha,
-    int player);
+    int player,
+    SCREENRECT scissor_rect);
+void newDrawControllerIconDepth(
+    int icon,
+    float control_icon_scale,
+    int x,
+    int y,
+    int alpha,
+    int player,
+    SCREENRECT scissor_rect,
+    float depth);
 void runControlsMenu(void);
 void menu_mainMenu(uint32_t *mdef);
 void menu_slideco(
@@ -457,6 +682,17 @@ void menu_slideco(
     int y,
     float current,
     float maximum);
+void menu_slideco_a(
+    unsigned pos,
+    unsigned width,
+    unsigned height,
+    unsigned max,
+    unsigned x,
+    unsigned y,
+    unsigned c1,
+    unsigned c2);
+void menuBucketFront(void);
+void menuBucketSavegame(void);
 void newMenu_DrawArrows(
     uint32_t pad,
     int left_x,
@@ -465,15 +701,32 @@ void newMenu_DrawArrows(
     int right_y);
 int newMenu_P1CharacterSelect(void);
 int newMenu_P2CharacterSelect(int isVS);
+int newMenu_PlayerSelect(void);
+int newMenu_VSMode(void);
 int newMenu_Training(void);
 void menu_menuExit(void);
 void menu_menuMusic(unsigned track, unsigned loop);
 unsigned menu_handleMenuTriggers(int destination);
 void menu_levelSelect(void);
 void menu_drawLevelSelectScreen(unsigned interactive);
+void menu_drawLevelSelectScreen_OLD(unsigned interactive);
+void menu_drawPlayerSelect(
+    unsigned num,
+    unsigned cnum,
+    unsigned semi,
+    unsigned shade,
+    int player);
 void menu_drawReconnect(void);
 void menu_initLevelSelectScreen(void);
 void menu_levelSelectMenu(uint32_t *mdef);
+void menu_DrawArrows(
+    unsigned pad,
+    int left_x,
+    int left_y,
+    int right_x,
+    int right_y);
+void menu_DrawOnePlayer(void);
+void menu_DrawTwoPlayer(void);
 void menu_restartLevel(void);
 void menu_sound(unsigned sound);
 void menu_pushMenu(unsigned menu_id);
@@ -489,8 +742,22 @@ void menu_scanAllLevels(void);
 void menu_scanProtection(void);
 void menu_setDrawSurface(unsigned surface);
 void menu_setScoreMode(unsigned mode, unsigned index);
+void menu_initScoreScreen(void);
+void menu_enterScoreMode(unsigned mode);
+void menu_drawBigScore(unsigned num, unsigned x, unsigned y);
+void menu_drawScoreMovers(void);
+void menu_drawScoreScreen(unsigned interactive);
+void menu_drawEULA(unsigned char **eula_text, int eula_text_length);
+void redlineFunc(void);
+unsigned menu_scoreSmackdown(unsigned target);
+int menu_scoreComboDraw(void);
+int newMenu_GetVSExtraPlayer(char **name, int *texture, int model);
+int newMenu_SelectPlayers(int num_players);
+void scoreloadart(unsigned player);
+void testcombo(unsigned player);
 void menu_triggerMovie(unsigned movie);
 void menu_handleObjectiveMessage(void);
+void menu_enterPlayerCouncilMode(void);
 void menu_initGameover(void);
 void menu_initPlayerSelect(void);
 void menu_setNumPlayers(unsigned num_players);
@@ -555,6 +822,7 @@ _Static_assert(sizeof(MENUVARS) == 984, "MENUVARS PDB size changed");
 
 #ifdef __cplusplus
 }
+#undef _Static_assert
 #endif
 
 #endif

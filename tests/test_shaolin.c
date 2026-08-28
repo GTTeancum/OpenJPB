@@ -11,6 +11,20 @@
 #include <string.h>
 
 static int failures;
+static uint32_t test_pose_words[3];
+
+static void init_test_animations(void)
+{
+    int index;
+
+    (anim_InitAnimations)(0);
+    for (index = 0; index < JPB_ANIMATION_CAPACITY; ++index) {
+        maAnimationData[index].depack_context.huffdataorigin =
+            test_pose_words;
+        maAnimationData[index].depack_context3.huffdataorigin =
+            test_pose_words;
+    }
+}
 
 #define CHECK(condition) \
     do { \
@@ -75,7 +89,7 @@ static void init_fixture(ShaolinFixture *fixture)
         }
     }
     memset(&GameStruct, 0, sizeof(GameStruct));
-    anim_InitAnimations(0);
+    init_test_animations();
     fixture->animation = &maAnimationData[2];
     connect_actor(
         &fixture->attacker_scene,
@@ -127,6 +141,7 @@ static void init_fixture(ShaolinFixture *fixture)
         fixture->motions[index].Seq =
             (uint16_t)index;
         fixture->motions[index].Lock = 1;
+        fixture->templates[index].Lframe = 10;
     }
 }
 
@@ -270,6 +285,7 @@ static void test_attack_scheduler(void)
     data->hth[1] = 1;
     fixture.attacker_physics.vpos.vx = 100;
     fixture.target_physics.vpos.vx = 0;
+    fixture.attacker_physics.angle.vy = 123;
     shaolin_InitKungfu();
     shaolin_StartKungfu();
     shaolin_Attack(&fixture.kungfu);
@@ -280,6 +296,8 @@ static void test_attack_scheduler(void)
     CHECK(fixture.kungfu.chi == 1);
     CHECK(fixture.animation->pMotion ==
           &fixture.motions[5]);
+    CHECK(fixture.attacker_physics.angle.vy ==
+          (ratan2(-100, 0) & 0x0fff));
 
     /*
      * A far target selects the exact walk owner and consumes no attack
@@ -328,6 +346,9 @@ static void test_ai_attack_opcode_owners(void)
     fixture.world.player1 = &fixture.target;
     vars[1].si = 5;
     fixture.attacker.pFlags = UINT32_C(0x20);
+    fixture.attacker_physics.vpos.vx = 100;
+    fixture.target_physics.vpos.vx = 0;
+    fixture.attacker_physics.angle.vy = 123;
     fixture.enemy.kungfu =
         &fixture.kungfu;
     CHECK(ai_HthAttack(
@@ -337,6 +358,21 @@ static void test_ai_attack_opcode_owners(void)
           &fixture.motions[5]);
     CHECK((fixture.attacker.pFlags &
            UINT32_C(0x20)) == 0);
+    CHECK(fixture.attacker_physics.angle.vy ==
+          (ratan2(-100, 0) & 0x0fff));
+
+    init_fixture(&fixture);
+    fixture.attacker_physics.vpos.vx = 100;
+    fixture.target_physics.vpos.vx = 0;
+    fixture.attacker_physics.angle.vy = 123;
+    shaolin_InitKungfu();
+    shaolin_StartKungfu();
+    a[0] = 3;
+    shaolin_Attack(&fixture.kungfu);
+    CHECK(fixture.animation->pMotion ==
+          &fixture.motions[0x15]);
+    CHECK(fixture.attacker_physics.angle.vy ==
+          (ratan2(-100, 0) & 0x0fff));
 
     init_fixture(&fixture);
     memset(vars, 0, sizeof(vars));

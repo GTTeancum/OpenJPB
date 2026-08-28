@@ -12,49 +12,46 @@
 extern "C" {
 #endif
 
-/*
- * Exact matched-PC PDB type name used by nodes.c. The named fields are the
- * members established by _RenderPackets and render_CreateRenderPacket;
- * the two reserved regions have no observed reader in the retail renderer.
- */
 typedef struct primRendPacket {
-    geomData *geometry;
-    uint8_t reserved0[16];
-    FMATRIX modelMatrix;
-    FMATRIX lightMatrix;
-    uint8_t reserved1[8];
-    int32_t sceneObjectIndex;
-    uint32_t reserved2;
+    geomData *pGeomData;
+    int32_t ZBufferOffset;
+    int32_t ambientLightR;
+    int32_t ambientLightG;
+    int32_t ambientLightB;
+    FMATRIX m3LocalMatrix;
+    FMATRIX m3LightMatrix;
+    uint32_t flags;
+    int32_t ID;
+    int32_t modelID;
 } primRendPacket;
 
 enum {
     JPB_RENDER_MATRIX_STACK_CAPACITY = 16,
-    /* render_CreateRenderPacket accepts indices zero through 0x200. */
-    JPB_RENDER_PACKET_CAPACITY = 0x201
+    JPB_RENDER_PACKET_CAPACITY = 0x200,
+    /* Retail accepts index 0x200 despite the PDB array ending at 0x1ff. */
+    JPB_RENDER_PACKET_WRITE_LIMIT = 0x200
 };
 
-/*
- * Exact matched-PC PDB type name and 0x408-byte layout. Named members are
- * established by the reviewed nodes.c procedures. The zero-initialized tail
- * fields have no identified semantic consumer beyond the retail otag stub.
- */
 typedef struct SramModelStack {
-    FMATRIX matrixStack[JPB_RENDER_MATRIX_STACK_CAPACITY];
-    int32_t sceneObjectIndex;
-    int32_t matrixStackLevel;
-    sceneObject *scene;
-    FMATRIX *matrix;
-    modelObject *model;
-    _animFrame *keyFrame;
-    FVECTOR transformedTranslation;
-    uint8_t reserved0[20];
-    Mnode *node;
-    FMATRIX nodeMatrix;
-    MATRIX sceneMatrix;
-    _svector scenePosition;
-    uint8_t reserved1[40];
-    VECTOR otagCameraLocation;
-    uint8_t reserved2[24];
+    FMATRIX mm3MatrixArray[JPB_RENDER_MATRIX_STACK_CAPACITY];
+    int32_t index;
+    int32_t mMatrixLevel;
+    sceneObject *pCurrentSceneModel;
+    FMATRIX *m3LocalModelMatrix;
+    modelObject *pRoot;
+    _animFrame *pAnimFrame;
+    FVECTOR mv3TempPivot;
+    VECTOR scale;
+    Mnode *pNode;
+    FMATRIX mm3TempPSXMatrix;
+    MATRIX m3SceneMatrix;
+    _svector v3ViewPosition;
+    _svector v3temp;
+    VECTOR v3temp1;
+    VECTOR v3temp2;
+    VECTOR mCameraLocation;
+    VECTOR mAmbient;
+    int32_t node_flag;
 } SramModelStack;
 
 extern int32_t mCurRendPacket;
@@ -86,38 +83,50 @@ JPB_RENDER_NODES_STATIC_ASSERT(
     sizeof(primRendPacket) == 136,
     "primRendPacket must match the 0x88-byte retail stride");
 JPB_RENDER_NODES_STATIC_ASSERT(
-    offsetof(primRendPacket, modelMatrix) == 24,
-    "primRendPacket.modelMatrix layout changed");
+    offsetof(primRendPacket, ZBufferOffset) == 8,
+    "primRendPacket.ZBufferOffset layout changed");
 JPB_RENDER_NODES_STATIC_ASSERT(
-    offsetof(primRendPacket, lightMatrix) == 72,
-    "primRendPacket.lightMatrix layout changed");
+    offsetof(primRendPacket, m3LocalMatrix) == 24,
+    "primRendPacket.m3LocalMatrix layout changed");
 JPB_RENDER_NODES_STATIC_ASSERT(
-    offsetof(primRendPacket, sceneObjectIndex) == 128,
-    "primRendPacket.sceneObjectIndex layout changed");
+    offsetof(primRendPacket, m3LightMatrix) == 72,
+    "primRendPacket.m3LightMatrix layout changed");
+JPB_RENDER_NODES_STATIC_ASSERT(
+    offsetof(primRendPacket, flags) == 120,
+    "primRendPacket.flags layout changed");
+JPB_RENDER_NODES_STATIC_ASSERT(
+    offsetof(primRendPacket, modelID) == 128,
+    "primRendPacket.modelID layout changed");
 JPB_RENDER_NODES_STATIC_ASSERT(
     sizeof(SramModelStack) == 0x408,
     "SramModelStack must match PDB type 0x73A8");
 JPB_RENDER_NODES_STATIC_ASSERT(
-    offsetof(SramModelStack, sceneObjectIndex) == 0x300,
-    "SramModelStack.sceneObjectIndex layout changed");
+    offsetof(SramModelStack, index) == 0x300,
+    "SramModelStack.index layout changed");
 JPB_RENDER_NODES_STATIC_ASSERT(
-    offsetof(SramModelStack, scene) == 0x308,
-    "SramModelStack.scene layout changed");
+    offsetof(SramModelStack, pCurrentSceneModel) == 0x308,
+    "SramModelStack.pCurrentSceneModel layout changed");
 JPB_RENDER_NODES_STATIC_ASSERT(
-    offsetof(SramModelStack, transformedTranslation) == 0x328,
-    "SramModelStack.transformedTranslation layout changed");
+    offsetof(SramModelStack, mv3TempPivot) == 0x328,
+    "SramModelStack.mv3TempPivot layout changed");
 JPB_RENDER_NODES_STATIC_ASSERT(
-    offsetof(SramModelStack, node) == 0x348,
-    "SramModelStack.node layout changed");
+    offsetof(SramModelStack, scale) == 0x334,
+    "SramModelStack.scale layout changed");
 JPB_RENDER_NODES_STATIC_ASSERT(
-    offsetof(SramModelStack, sceneMatrix) == 0x380,
-    "SramModelStack.sceneMatrix layout changed");
+    offsetof(SramModelStack, pNode) == 0x348,
+    "SramModelStack.pNode layout changed");
 JPB_RENDER_NODES_STATIC_ASSERT(
-    offsetof(SramModelStack, scenePosition) == 0x3b0,
-    "SramModelStack.scenePosition layout changed");
+    offsetof(SramModelStack, m3SceneMatrix) == 0x380,
+    "SramModelStack.m3SceneMatrix layout changed");
 JPB_RENDER_NODES_STATIC_ASSERT(
-    offsetof(SramModelStack, otagCameraLocation) == 0x3e0,
-    "SramModelStack.otagCameraLocation layout changed");
+    offsetof(SramModelStack, v3ViewPosition) == 0x3b0,
+    "SramModelStack.v3ViewPosition layout changed");
+JPB_RENDER_NODES_STATIC_ASSERT(
+    offsetof(SramModelStack, mCameraLocation) == 0x3e0,
+    "SramModelStack.mCameraLocation layout changed");
+JPB_RENDER_NODES_STATIC_ASSERT(
+    offsetof(SramModelStack, node_flag) == 0x400,
+    "SramModelStack.node_flag layout changed");
 
 #undef JPB_RENDER_NODES_STATIC_ASSERT
 #endif

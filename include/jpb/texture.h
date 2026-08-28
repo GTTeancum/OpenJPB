@@ -31,6 +31,7 @@ typedef enum TT_TEXTYPE {
 enum { JPB_TEXTURE_MATERIAL_CAPACITY = 800 };
 
 extern _Material g_material[JPB_TEXTURE_MATERIAL_CAPACITY];
+extern _Material *atlasHandle;
 
 /*
  * Platform realization seam for el_chavo::LoadTexture/Texture::Restore.
@@ -71,6 +72,7 @@ _Material *_TryLoadTexture(
     const char *baseFileName,
     TT_TEXTYPE texturetype,
     unsigned long option);
+void _ClearTextureCache(void);
 void _FreeTexture(_Material *texture);
 
 /* Reviewed basename policy used by SpriteAtlasTextureDatabase.cpp. */

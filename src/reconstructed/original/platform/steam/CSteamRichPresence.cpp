@@ -1,13 +1,45 @@
 /*
- * GENERATED RECONSTRUCTION SHELL - no function bodies recovered here.
+ * REVIEWED RECONSTRUCTION OF ALL PROJECT PROCEDURES.
  * PDB module: 0063
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\CSteamRichPresence.obj
  * Primary source: W:\SWJediPowerBattles\work\platform\steam\CSteamRichPresence.cpp
  * Compiler language: c++
  * Emitted procedures: 74
  *
- * Use inventory/function_map.tsv with ExportReconstruction.java.
+ * Project behavior and layouts come from matched-PC PDB types and direct
+ * shipped-executable disassembly. Toolchain bodies remain compiler-owned.
  */
+
+#include "jpb/steam_rich_presence.h"
+
+#include <cstdint>
+#include <iostream>
+
+namespace {
+
+bool SetSteamRichPresence(
+    ISteamFriends *friends, const char *key, const char *value)
+{
+    typedef bool (*SetRichPresenceFn)(
+        ISteamFriends *, const char *, const char *);
+    void **vtable = *reinterpret_cast<void ***>(friends);
+
+    return reinterpret_cast<SetRichPresenceFn>(vtable[43])(
+        friends, key, value);
+}
+
+void ClearSteamRichPresence(ISteamFriends *friends)
+{
+    typedef void (*ClearRichPresenceFn)(ISteamFriends *);
+    void **vtable = *reinterpret_cast<void ***>(friends);
+
+    reinterpret_cast<ClearRichPresenceFn>(vtable[44])(friends);
+}
+
+} // namespace
+
+/* Exact matched-PC PDB global at RVA 0x582630. */
+CSteamRichPresence *g_SteamRicherPresence;
 
 /* 0xE4BE0, 681 bytes, global, 13 named locals
  * std::operator<<<std::char_traits<char> >
@@ -44,6 +76,18 @@
  * PDB type: void CSteamRichPresence::()
  * Source: W:\SWJediPowerBattles\work\platform\steam\CSteamRichPresence.cpp
  */
+CSteamRichPresence::CSteamRichPresence()
+    : m_initialized(0), m_inMenu(-1), m_currentLevel(-1)
+{
+    if (SteamUser() != nullptr && SteamFriends() != nullptr) {
+        m_initialized = 1;
+        return;
+    }
+
+    std::cerr
+        << "Failed to initialize SteamAPI or retrieve SteamUser/SteamFriends."
+        << std::endl;
+}
 
 /* 0xE5250, 742 bytes, global, 23 named locals
  * std::_System_error::_System_error
@@ -110,6 +154,10 @@
  * PDB type: void CSteamRichPresence::()
  * Source: W:\SWJediPowerBattles\work\platform\steam\CSteamRichPresence.cpp
  */
+CSteamRichPresence::~CSteamRichPresence()
+{
+    ClearSteamRichPresence(SteamFriends());
+}
 
 /* 0xE58C0, 36 bytes, global, 2 named locals
  * std::basic_ostream<char,std::char_traits<char> >::_Sentry_base::~_Sentry_base
@@ -194,18 +242,80 @@
  * PDB type: void CSteamRichPresence::()
  * Source: W:\SWJediPowerBattles\work\platform\steam\CSteamRichPresence.cpp
  */
+void CSteamRichPresence::ClearRichPresence()
+{
+    ClearSteamRichPresence(SteamFriends());
+}
 
 /* 0xE5BE0, 564 bytes, global, 4 named locals
  * CSteamRichPresence::SetRichPresence
  * PDB type: void CSteamRichPresence::(int, i...
  * Source: W:\SWJediPowerBattles\work\platform\steam\CSteamRichPresence.cpp
  */
+void CSteamRichPresence::SetRichPresence(
+    int inMenu, int currentLevel)
+{
+    const char *levelString;
+
+    if (m_initialized == 0) {
+        std::cerr
+            << "SteamAPI is not initialized or SteamUser/SteamFriends is not available."
+            << std::endl;
+        return;
+    }
+    if (m_inMenu == inMenu && m_currentLevel == currentLevel) {
+        return;
+    }
+
+    if (inMenu == 0) {
+        switch (currentLevel) {
+        case 1: levelString = "#Playing_Level_FED"; break;
+        case 2: levelString = "#Playing_Level_MARSH"; break;
+        case 3: levelString = "#Playing_Level_THEED"; break;
+        case 4: levelString = "#Playing_Level_PALACE"; break;
+        case 5: levelString = "#Playing_Level_TATOOINE"; break;
+        case 6:
+        case 15: levelString = "#Playing_Level_CORUS"; break;
+        case 7: levelString = "#Playing_Level_RUINS"; break;
+        case 8: levelString = "#Playing_Level_STREETS"; break;
+        case 9: levelString = "#Playing_Level_HANGAR"; break;
+        case 10: levelString = "#Playing_Level_CORE"; break;
+        case 11: levelString = "#Playing_Level_MINI1"; break;
+        case 12: levelString = "#Playing_Level_MINI2"; break;
+        case 13: levelString = "#Playing_Level_MINI3"; break;
+        case 14: levelString = "#Playing_Level_MINI4"; break;
+        case 16: levelString = "#Playing_Level_TRAINING1"; break;
+        case 17: levelString = "#Playing_Level_TRAINING2"; break;
+        case 18: levelString = "#Playing_Level_TRAINING3"; break;
+        case 19: levelString = "#Playing_Level_TRAINING4"; break;
+        case 20: levelString = "#Playing_Level_TRAINING5"; break;
+        case 21: levelString = "#Playing_Level_TRAINING6"; break;
+        case 22: levelString = "#Playing_Level_TRAINING7"; break;
+        case 25: levelString = "#Playing_Level_ARENA"; break;
+        default: levelString = nullptr; break;
+        }
+        SetSteamRichPresence(
+            SteamFriends(), "steam_display", levelString);
+    } else {
+        SetSteamRichPresence(
+            SteamFriends(), "steam_display", "#Menu");
+    }
+
+    m_inMenu = inMenu;
+    m_currentLevel = currentLevel;
+}
 
 /* 0xE5E20, 39 bytes, global, 1 named locals
  * SteamInternal_Init_SteamFriends
  * PDB type: void (ISteamFriends**)
  * Source: W:\SWJediPowerBattles\work\steam\include\isteamfriends.h
  */
+void SteamInternal_Init_SteamFriends(ISteamFriends **p)
+{
+    *p = static_cast<ISteamFriends *>(
+        SteamInternal_FindOrCreateUserInterface(
+            SteamAPI_GetHSteamUser(), "SteamFriends017"));
+}
 
 /* 0xE5E50, 437 bytes, global, 2 named locals
  * std::ctype<char>::_Getcat

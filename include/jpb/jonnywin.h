@@ -17,6 +17,10 @@ typedef struct _winmat {
 
 extern _winmat globalwinmatrix;
 
+int RotTransPersMany10bit(
+    int *source, int count, FVECTOR *destination);
+int RotTransPersManyFV(
+    FVECTOR *source, int count, FVECTOR *destination);
 void SetupTransformMatrix(MATRIX *matrix);
 void SetupWorldmeshMatrix(MATRIX *matrix);
 

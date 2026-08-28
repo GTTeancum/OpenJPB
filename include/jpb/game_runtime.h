@@ -80,11 +80,13 @@ typedef struct JPBGameRuntimeScreenDraw {
     _Material *texture;
     SCREENRECT destination;
     SCREENRECT source;
+    SCREENRECT scissor;
     int textureWidth;
     int textureHeight;
     CVECTOR color;
     float layerDepth;
     int hasSource;
+    int hasScissor;
     int isPlayerHudTile;
 } JPBGameRuntimeScreenDraw;
 
@@ -96,6 +98,7 @@ typedef int (*JPBGameRuntimeScreenDrawRenderHook)(
 
 typedef struct JPBGameRuntimeScreenPolyDraw {
     _Material *texture;
+    uint32_t materialFlags;
     int vertexCount;
     int noScale;
     int deferred;
@@ -126,19 +129,23 @@ typedef struct JPBGameRuntimeTextDraw {
     uint32_t order;
     int tint;
     int alpha;
+    uint32_t color;
     int mode;
     int x;
     int y;
     float scale;
     float scaleAdjustment;
+    int pointSize;
     int fontStyle;
+    int depthEnabled;
+    float depth;
     int clipEnabled;
     int clipLeft;
     int clipTop;
     int clipRight;
     int clipBottom;
     size_t compositePixels;
-    wchar_t text[JPB_GAME_RUNTIME_TEXT_CAPACITY];
+    uint16_t text[JPB_GAME_RUNTIME_TEXT_CAPACITY];
 } JPBGameRuntimeTextDraw;
 
 typedef struct JPBGameRuntimeDraw3dText {
@@ -330,6 +337,7 @@ typedef struct JPBGameRuntime {
     modelObject inactivePlayerModel;
     sceneObject *inactivePlayerScene;
     physicsObject *inactivePlayerPhysics;
+    animObject *inactivePlayerAnimation;
     playerObject *inactivePlayer;
     JPBGameRuntimeSecondPlayerState *secondPlayerState;
     objectRoot enemyActorRoot;
@@ -488,7 +496,7 @@ typedef struct JPBGameRuntime {
     size_t textDrawDroppedCount;
     size_t textDrawCompositePixelCount;
     size_t textTrueTypeDrawCount;
-    size_t textFallbackDrawCount;
+    size_t textFailedDrawCount;
     int maximumTextPointSize;
     int maximumTextMeasuredWidth;
     int maximumTextMeasuredHeight;
@@ -516,9 +524,12 @@ typedef struct JPBGameRuntime {
     size_t screenPolyCompositePixelCount;
     size_t waterPolyDrawCount;
     size_t waterPolyCompositePixelCount;
+    size_t loadScreenPresentCount;
+    int clearWindowRequested;
+    int clearWindowHookReady;
+    int renderLoadHookReady;
     int drawTextureHookReady;
     int screenPolyHookReady;
-    int barHookReady;
     int playerTileHookReady;
     int textHookReady;
     int draw3dTextHookReady;
@@ -559,6 +570,9 @@ int jpb_GameRuntimeEnemyClassModelId(
 int jpb_GameRuntimeEnemyClassWasActive(
     const JPBGameRuntime *runtime,
     int actor_num);
+int jpb_GameRuntimeEnemyClassWasRendered(
+    const JPBGameRuntime *runtime,
+    int actor_num);
 int jpb_GameRuntimeAddPlayerComboData(
     JPBGameRuntime *runtime,
     const char *cmb_path);
@@ -570,6 +584,7 @@ int jpb_GameRuntimeActivateSecondPlayer(
 int jpb_GameRuntimeAddSecondPlayerComboData(
     JPBGameRuntime *runtime,
     const char *cmb_path);
+int jpb_GameRuntimeRunCanonicalConstructor(JPBGameRuntime *runtime);
 int jpb_GameRuntimeSecondPlayerReady(
     const JPBGameRuntime *runtime);
 size_t jpb_GameRuntimeSecondPlayerRenderedTriangles(

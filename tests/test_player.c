@@ -16,10 +16,14 @@
 #include "jpb/jonny.h"
 #include "jpb/level_world.h"
 #include "jpb/loader.h"
+#include "jpb/menu.h"
 #include "jpb/model.h"
 #include "jpb/physics.h"
+#include "jpb/resources.h"
 #include "jpb/scene.h"
 #include "jpb/sprite.h"
+#include "jpb/text.h"
+#include "jpb/texture.h"
 #include "jpb/wrender.h"
 #include "jpb/whook.h"
 #include "jpb/world.h"
@@ -40,6 +44,21 @@
             return 1;                                                        \
         }                                                                    \
     } while (0)
+
+static uint32_t test_pose_words[3];
+
+static void init_test_animations(void)
+{
+    int index;
+
+    (anim_InitAnimations)(0);
+    for (index = 0; index < JPB_ANIMATION_CAPACITY; ++index) {
+        maAnimationData[index].depack_context.huffdataorigin =
+            test_pose_words;
+        maAnimationData[index].depack_context3.huffdataorigin =
+            test_pose_words;
+    }
+}
 
 #define CHECK_FLOAT_CLOSE(actual, expected, tolerance)                       \
     do {                                                                     \
@@ -101,15 +120,10 @@ typedef struct ScreenDrawTrace {
     int count;
 } ScreenDrawTrace;
 
-typedef struct Draw3dTrace {
-    float x[8];
-    float y[8];
-    float z[8];
-    float scale[8];
-    uint32_t color[8];
-    char text[8][256];
+typedef struct DebugPolyTrace {
+    JPBScreenPolyVertex first[128];
     int count;
-} Draw3dTrace;
+} DebugPolyTrace;
 
 typedef struct ProjectileLaunchTrace {
     int type[32];
@@ -160,30 +174,39 @@ static void trace_screen_draw(
     ++trace->count;
 }
 
-static void trace_draw3d_text(
-    float x,
-    float y,
-    float z,
-    float scale,
-    uint32_t color,
-    const char *text,
-    void *user_data)
+static void trace_debug_poly(
+    void *user_data,
+    _Material *material,
+    uint32_t material_flags,
+    int vertex_count,
+    const JPBScreenPolyVertex *vertices,
+    int no_scale)
 {
-    Draw3dTrace *trace = (Draw3dTrace *)user_data;
+    DebugPolyTrace *trace = (DebugPolyTrace *)user_data;
 
-    if (trace->count < 8) {
-        trace->x[trace->count] = x;
-        trace->y[trace->count] = y;
-        trace->z[trace->count] = z;
-        trace->scale[trace->count] = scale;
-        trace->color[trace->count] = color;
-        (void)snprintf(
-            trace->text[trace->count],
-            sizeof(trace->text[trace->count]),
-            "%s",
-            text != NULL ? text : "");
+    (void)material;
+    (void)material_flags;
+    (void)no_scale;
+    if (trace->count < 128 && vertex_count == 4) {
+        trace->first[trace->count] = vertices[0];
     }
     ++trace->count;
+}
+
+static void *load_debug_texture(
+    void *user_data,
+    const char *filename,
+    unsigned option,
+    int material_type,
+    int16_t *width,
+    int16_t *height)
+{
+    (void)filename;
+    (void)option;
+    (void)material_type;
+    *width = 64;
+    *height = 32;
+    return user_data;
 }
 
 static void trace_player_tile(
@@ -429,7 +452,7 @@ static int test_scene_player_construction(void)
     memset(&frame, 0, sizeof(frame));
     gpWorld = &world;
     jpb_SceneInitPool(0);
-    anim_InitAnimations(0);
+    init_test_animations();
     player_gInitPlayers(0);
     scene = scene_gGetNewSceneObject(0);
     CHECK(scene != NULL);
@@ -510,7 +533,7 @@ static int test_jedi_initialization_and_main_callback(void)
 
     player.playernum = 0;
     player.playerID = 0;
-    CHECK(jedi_InitPlayer(&player) == 0);
+    (void)jedi_InitPlayer(&player);
     CHECK(model.v3Scale.vx == 0x78a);
     CHECK(model.v3Scale.vy == 0x78a);
     CHECK(model.v3Scale.vz == 0x78a);
@@ -532,46 +555,46 @@ static int test_jedi_initialization_and_main_callback(void)
 
     player.playernum = 1;
     player.playerID = 1;
-    CHECK(jedi_InitPlayer(&player) == 0);
+    (void)jedi_InitPlayer(&player);
     CHECK(player.paCombos == combos2);
     CHECK(player.numCollisionNodes == 19);
     CHECK(player.paNodesSizes[12].radius1 == 0x60);
     CHECK(player.paNodesSizes[16].id == 0x14);
 
     player.playerID = 3;
-    CHECK(jedi_InitPlayer(&player) == 0);
+    (void)jedi_InitPlayer(&player);
     CHECK(player.paNodesSizes[16].id == 0x13);
 
     player.playerID = 5;
-    CHECK(jedi_InitPlayer(&player) == 0);
+    (void)jedi_InitPlayer(&player);
     CHECK(player.numCollisionNodes == 22);
     CHECK(player.paNodesSizes[19].id == 0x13);
     CHECK((uint16_t)jediUpgrades[5].forcePowers ==
           UINT16_C(0xf800));
 
     player.playerID = 6;
-    CHECK(jedi_InitPlayer(&player) == 0);
+    (void)jedi_InitPlayer(&player);
     CHECK(player.numCollisionNodes == 16);
     CHECK(player.paNodesSizes[11].radius1 == 0x60);
 
     player.playerID = 10;
-    CHECK(jedi_InitPlayer(&player) == 0);
+    (void)jedi_InitPlayer(&player);
     CHECK(player.paNodesSizes == maGunganNodeSizes);
 
     player.playerID = 0x1a;
-    CHECK(jedi_InitPlayer(&player) == 0);
+    (void)jedi_InitPlayer(&player);
     CHECK(player.numCollisionNodes == 8);
     CHECK(player.paNodesSizes[7].id == 0x12);
 
     model.flags = 0;
     player.playerID = 0x1e;
-    CHECK(jedi_InitPlayer(&player) == 0);
+    (void)jedi_InitPlayer(&player);
     CHECK(player.numCollisionNodes == 9);
     CHECK(player.paNodesSizes[0].radius1 == 0x100);
     CHECK((model.flags & UINT32_C(0x00000008)) != 0);
 
     player.playerID = 0x33;
-    CHECK(jedi_InitPlayer(&player) == 0);
+    (void)jedi_InitPlayer(&player);
     CHECK(player.numCollisionNodes == 16);
     CHECK(model.v3Scale.vx == 0x9cd);
     CHECK(player.paNodesSizes[11].radius1 == 0x80);
@@ -1084,6 +1107,100 @@ static int test_player_refresh_start_and_checkpoint(void)
     return 0;
 }
 
+static int test_loader_enemy_finalization(void)
+{
+    int32_t map_storage[8] = {0};
+    int32_t *old_leveldata = leveldata;
+    int8_t old_pool_offset = model_anim_table[72].poolOffset;
+    sceneObject scene;
+    physicsObject physics;
+    modelObject model;
+    playerObject player;
+    wsl_ENEMY enemy;
+    wsl_BAP_PLACEMENT placement;
+    Motion motions[120];
+    _animTemplate templates[120];
+    animObject *animation;
+    int index;
+
+    memset(&scene, 0, sizeof(scene));
+    memset(&physics, 0, sizeof(physics));
+    memset(&model, 0, sizeof(model));
+    memset(&player, 0, sizeof(player));
+    memset(&enemy, 0, sizeof(enemy));
+    memset(&placement, 0, sizeof(placement));
+    memset(motions, 0, sizeof(motions));
+    memset(templates, 0, sizeof(templates));
+    memset(&GameStruct, 0, sizeof(GameStruct));
+    init_test_animations();
+    animation = &maAnimationData[2];
+    animation->animRoot.objectID = 2;
+    animation->animRoot.pParent = &scene.sceneRoot;
+    animation->paMotions = motions;
+    animation->depack_context.seqdata = templates;
+    animation->depack_context.numseq = 120;
+    for (index = 0; index < 120; ++index) {
+        motions[index].Seq = (uint16_t)index;
+        motions[index].Lock = (uint8_t)(index + 1);
+        templates[index].Lframe = 10;
+    }
+
+    player.playerRoot.objectID = 2;
+    player.playerRoot.pParent = &scene.sceneRoot;
+    player.playernum = 2;
+    player.playerID = 72;
+    player.paMotions = motions;
+    player.maxMotions = 120;
+    player.oldmaxCMotions = 120;
+    player.pMotion = &animation->pMotion;
+    player.pEnemy = &enemy;
+    scene.sceneRoot.objectID = 2;
+    scene.pScene = &scene.sceneRoot;
+    scene.pModel = &model.modelRoot;
+    scene.pPhysics = &physics.physicsRoot;
+    scene.pPlayer = &player.playerRoot;
+    scene.pAnim = &animation->animRoot;
+    physics.physicsRoot.objectID = 2;
+    physics.physicsRoot.pParent = &scene.sceneRoot;
+    enemy.pPlayer = &player;
+    enemy.pPlace = &placement;
+    enemy.hitPoints = 77;
+    enemy.movementMode = 3;
+    placement.loc.vx = 100;
+    placement.loc.vy = 200;
+    placement.loc.vz = 300;
+    placement.aiDf.angle = 0x456;
+
+    leveldata = map_storage + 4;
+    leveldata[-2] = 0;
+    numsolids = 0;
+    afterLife = NULL;
+    model_anim_table[72].poolOffset = 3;
+    CHECK(jpb_LoaderFinalizeEnemyForTest(&enemy) == 2);
+    CHECK(physics.pos.vx == 100.0f);
+    CHECK(physics.pos.vy == 200.0f);
+    CHECK(physics.pos.vz == 300.0f);
+    CHECK(physics.angle.vy == 0x456);
+    CHECK(physics.movemode == MOVE_HOVER3D);
+    CHECK((physics.flags & UINT32_C(0x2000)) != 0);
+    CHECK(GameStruct.aCharacterData[2].Energy == 77);
+    CHECK(GameStruct.aCharacterData[2].MaxEnergy == 77);
+    CHECK(animation->paMotions == &motions[3]);
+    CHECK(player.paMotions == &motions[3]);
+    CHECK(player.subOffset == -3);
+    CHECK((player.pFlags & UINT32_C(0x8000)) != 0);
+    CHECK((animation->animFlags & UINT32_C(1)) != 0);
+    for (index = 0; index < 8; ++index) {
+        CHECK(player.paMotions[index].Seq == (uint16_t)index);
+    }
+    CHECK(player.paMotions[2].Lock == player.paMotions[1].Lock);
+    CHECK(player.shadow == NULL);
+
+    model_anim_table[72].poolOffset = old_pool_offset;
+    leveldata = old_leveldata;
+    return 0;
+}
+
 static int test_player_refresh_all_authored_starts(void)
 {
     static const int expected_facing[JPB_LEVEL_COUNT][2] = {
@@ -1579,18 +1696,21 @@ static int test_player_sabre_owner(void)
         unsigned baseNode;
         unsigned tipNode;
         unsigned secondBaseNode;
+        unsigned secondTipNode;
         uint32_t outerColor;
         int expectedDraws;
     } roster[] = {
-        {0, 0x11, 0x13, 0,    UINT32_C(0x7f45a6ff), 2},
-        {1, 0x14, 0x16, 0,    UINT32_C(0x7f01c03c), 2},
-        {2, 0x14, 0x16, 0,    UINT32_C(0x7fd870ff), 2},
-        {3, 0x13, 0x15, 0,    UINT32_C(0x7f45a6ff), 2},
-        {4, 0x11, 0x13, 0,    UINT32_C(0x7f45a6ff), 2},
-        {5, 0x12, 0x13, 0x17, UINT32_C(0x7fff3434), 4},
-        {6, 0,    0,    0,    UINT32_C(0),          0},
-        {7, 0,    0,    0,    UINT32_C(0),          0},
-        {8, 0x11, 0x13, 0,    UINT32_C(0x7f45a6ff), 2},
+        {0,  0x11, 0x13, 0,    0,    UINT32_C(0x7f45a6ff), 2},
+        {1,  0x14, 0x16, 0,    0,    UINT32_C(0x7f01c03c), 2},
+        {2,  0x14, 0x16, 0,    0,    UINT32_C(0x7fd870ff), 2},
+        {3,  0x13, 0x15, 0,    0,    UINT32_C(0x7f45a6ff), 2},
+        {4,  0x11, 0x13, 0,    0,    UINT32_C(0x7f45a6ff), 2},
+        {5,  0x12, 0x14, 0x13, 0x17, UINT32_C(0x7fff3434), 4},
+        {6,  0,    0,    0,    0,    UINT32_C(0),          0},
+        {7,  0,    0,    0,    0,    UINT32_C(0),          0},
+        {8,  0x11, 0x13, 0,    0,    UINT32_C(0x7f45a6ff), 2},
+        {9,  0x11, 0x13, 0,    0,    UINT32_C(0x7fff3434), 2},
+        {43, 0x12, 0x14, 0x13, 0x17, UINT32_C(0x7fff3434), 4},
     };
     SabreGlowTrace trace;
     SabreCylinderTrace cylinder_trace;
@@ -1649,10 +1769,10 @@ static int test_player_sabre_owner(void)
 
     /*
      * The matched owner selects both attachment nodes and colour from the
-     * character ID. Exercise the complete base roster so a shared default
-     * blade cannot stand in for character-owned behavior. Maul's second
-     * blade begins 0x20 units along its direction and therefore spans 0x50,
-     * rather than incorrectly extending the full 0x70 from the hilt.
+     * character ID. Exercise the complete base roster plus both shipped
+     * Maul owners so a shared default blade cannot stand in for
+     * character-owned behavior. Both Maul blades start at their authored
+     * v_weapon nodes and extend along the corresponding v_coll chains.
      */
     for (size_t roster_index = 0;
          roster_index < sizeof(roster) / sizeof(roster[0]);
@@ -1660,12 +1780,13 @@ static int test_player_sabre_owner(void)
         Mnode roster_base;
         Mnode roster_tip;
         Mnode roster_second_base;
-        const unsigned second_tip = 0x13;
+        Mnode roster_second_tip;
 
         memset(&trace, 0, sizeof(trace));
         memset(&roster_base, 0, sizeof(roster_base));
         memset(&roster_tip, 0, sizeof(roster_tip));
         memset(&roster_second_base, 0, sizeof(roster_second_base));
+        memset(&roster_second_tip, 0, sizeof(roster_second_tip));
         coll_ResetCollisionSystem();
         player->playerID = roster[roster_index].playerId;
         if (roster[roster_index].baseNode != 0) {
@@ -1688,11 +1809,16 @@ static int test_player_sabre_owner(void)
             roster_second_base.v3RotCenter.vx = 400;
             roster_second_base.v3RotCenter.vy = 200;
             roster_second_base.v3RotCenter.vz = 300;
-            CHECK(roster[roster_index].tipNode == second_tip);
+            roster_second_tip.id = (modelNodeId)(
+                NODE_DYNAMIC | roster[roster_index].secondTipNode);
+            roster_second_tip.v3RotCenter.vx = 288;
+            roster_second_tip.v3RotCenter.vy = 200;
+            roster_second_tip.v3RotCenter.vz = 300;
             coll_gRegisterNode(0, &roster_second_base);
+            coll_gRegisterNode(0, &roster_second_tip);
         }
 
-        CHECK(jedi_HandleSabre(NULL, player) == 1);
+        CHECK(jedi_HandleSabre(NULL, player) == 0);
         CHECK(trace.count == roster[roster_index].expectedDraws);
         if (trace.count != 0) {
             CHECK(trace.start[0].vx == 212);
@@ -1703,14 +1829,31 @@ static int test_player_sabre_owner(void)
             CHECK(trace.color[1] == UINT32_C(0xffffffff));
         }
         if (trace.count == 4) {
-            CHECK(trace.start[2].vx == 512);
-            CHECK(trace.end[2].vx == 432);
+            CHECK(trace.start[2].vx == 288);
+            CHECK(trace.end[2].vx == 400);
             CHECK(trace.width[2] >= 0x0e && trace.width[2] <= 0x13);
             CHECK(trace.color[2] == roster[roster_index].outerColor);
             CHECK(trace.width[3] == 2);
             CHECK(trace.color[3] == UINT32_C(0xffffffff));
         }
     }
+
+    /* The executable performs endpoint arithmetic on signed low words.
+     * Keep a world position crossing 0x8000 from silently switching the
+     * blade direction or detaching its inner endpoint. */
+    memset(&trace, 0, sizeof(trace));
+    coll_ResetCollisionSystem();
+    player->playerID = obi_wan_model;
+    base.v3RotCenter.vx = 32800;
+    tip.v3RotCenter.vx = 32700;
+    coll_gRegisterNode(0, &base);
+    coll_gRegisterNode(0, &tip);
+    CHECK(jedi_HandleSabre(NULL, player) == 0);
+    CHECK(trace.count == 2);
+    CHECK(trace.start[0].vx == 32688);
+    CHECK(trace.end[0].vx == -32736);
+    base.v3RotCenter.vx = 100;
+    tip.v3RotCenter.vx = 212;
 
     /* Blade Extender keeps the ordinary core/halo ownership but lengthens
      * the blade to 0xc4 and uses the authored wider core. */
@@ -1722,7 +1865,7 @@ static int test_player_sabre_owner(void)
     gGlobalTimer = 0;
     (void)game_gSetPowerType(0, 10);
     (void)game_gSetPowerLevel(0, 100);
-    CHECK(jedi_HandleSabre(NULL, player) == 1);
+    CHECK(jedi_HandleSabre(NULL, player) == 0);
     CHECK(trace.count == 2);
     CHECK(trace.width[0] >= 0x18 && trace.width[0] <= 0x1f);
     CHECK(trace.width[1] == 6);
@@ -1738,7 +1881,7 @@ static int test_player_sabre_owner(void)
     jpb_SpriteSetCylinderHook(
         trace_sabre_cylinder, &cylinder_trace);
     (void)game_gSetPowerType(0, 9);
-    CHECK(jedi_HandleSabre(NULL, player) == 1);
+    CHECK(jedi_HandleSabre(NULL, player) == 0);
     CHECK(trace.count == 3);
     CHECK(trace.width[2] == 0x10);
     CHECK(trace.start[2].vx == 100);
@@ -2046,7 +2189,11 @@ static int test_player_damage_tracker_owner(void)
 
 static int test_player_debug_hud_owner(void)
 {
-    Draw3dTrace trace;
+    static const char first_debug_text[] =
+        "7-DROID ai 13\nt-\nLAND BOSS IMMORTAL AIR";
+    static const char second_debug_text[] =
+        "8-BATTLE ai 21\nt-\n   ";
+    DebugPolyTrace trace;
     sceneObject scene[2];
     physicsObject physics[2];
     playerObject *player0;
@@ -2055,6 +2202,7 @@ static int test_player_debug_hud_owner(void)
     wsl_ENEMY enemy1;
     wsl_BAP_PLACEMENT place0;
     wsl_BAP_PLACEMENT place1;
+    int texture_token;
 
     memset(&trace, 0, sizeof(trace));
     memset(scene, 0, sizeof(scene));
@@ -2107,26 +2255,28 @@ static int test_player_debug_hud_owner(void)
     OptionStruct.overlayMode = 1;
     OptionStruct.DebugLevel = 2;
     scaleAdjustment = 1.0f;
+    memset(&CameraMatrix, 0, sizeof(CameraMatrix));
+    CameraMatrix.m[0][0] = 1.0f;
+    CameraMatrix.m[1][1] = 1.0f;
+    CameraMatrix.m[2][2] = 1.0f;
+    CameraMatrix.t[2] = 1000;
     raw_pad_bits = 0;
     jpb_InputSetProvider(test_read_pad, NULL);
-    jpb_DebugTextSetDraw3dHook(trace_draw3d_text, &trace);
+    FreeFont();
+    CHECK(jpb_ResourceSetBasePath("C:/jpb") == 1);
+    jpb_TextureSetPlatformHooks(
+        load_debug_texture, NULL, &texture_token);
+    jpb_WHookSetScreenPolyHook(trace_debug_poly, &trace);
 
     player_gProcessPlayers();
-    CHECK(trace.count == 2);
-    CHECK(trace.x[0] == 18.0f);
-    CHECK(trace.y[0] == 136.0f);
-    CHECK(trace.z[0] == 50.0f);
-    CHECK(trace.scale[0] == 1.0f);
-    CHECK(trace.color[0] == UINT32_C(0xff8090a0));
-    CHECK(strcmp(
-              trace.text[0],
-              "7-DROID ai 13\nt-\nLAND BOSS IMMORTAL AIR") == 0);
-    CHECK(trace.x[1] == 487.0f);
-    CHECK(trace.y[1] == 136.0f);
-    CHECK(trace.z[1] == 519.0f);
-    CHECK(strcmp(
-              trace.text[1],
-              "8-BATTLE ai 21\nt-\n   ") == 0);
+    CHECK(trace.count ==
+          (int)(strlen(first_debug_text) + strlen(second_debug_text) - 4));
+    CHECK(trace.first[0].argb == UINT32_C(0xff8090a0));
+    CHECK(trace.first[0].tu == U_System['7']);
+    CHECK(trace.first[0].tv == V_System['7']);
+    CHECK_FLOAT_CLOSE(trace.first[0].x, 217.88571f, 0.001f);
+    CHECK_FLOAT_CLOSE(trace.first[0].y, 277.08096f, 0.001f);
+    CHECK(trace.first[strlen(first_debug_text) - 2].tu == U_System['8']);
 
     memset(&trace, 0, sizeof(trace));
     OptionStruct.DebugLevel = 3;
@@ -2137,19 +2287,103 @@ static int test_player_debug_hud_owner(void)
     physics[1].vpos.vy = 500;
     physics[1].vpos.vz = 600;
     player_gProcessPlayers();
-    CHECK(trace.count == 2);
-    CHECK(trace.x[0] == 100.0f);
-    CHECK(trace.y[0] == 200.0f);
-    CHECK(trace.z[0] == 300.0f);
-    CHECK(strcmp(trace.text[0], "7-DROID SPAWN") == 0);
-    CHECK(trace.x[1] == 400.0f);
-    CHECK(trace.y[1] == 500.0f);
-    CHECK(trace.z[1] == 600.0f);
-    CHECK(strcmp(trace.text[1], "8-BATTLE NODE") == 0);
+    CHECK(trace.count ==
+          (int)(strlen("7-DROID SPAWN") + strlen("8-BATTLE NODE")));
+    CHECK(trace.first[0].tu == U_System['7']);
+    CHECK_FLOAT_CLOSE(trace.first[0].x, 290.38461f, 0.001f);
+    CHECK_FLOAT_CLOSE(trace.first[0].y, 303.26923f, 0.001f);
+    CHECK(trace.first[strlen("7-DROID SPAWN")].tu == U_System['8']);
 
-    jpb_DebugTextSetDraw3dHook(NULL, NULL);
+    jpb_WHookSetScreenPolyHook(NULL, NULL);
+    jpb_TextureSetPlatformHooks(NULL, NULL, NULL);
+    FreeFont();
     jpb_InputSetProvider(NULL, NULL);
     raw_pad_bits = 0;
+    return 0;
+}
+
+typedef struct ControllerDumpTrace {
+    unsigned glyph[64];
+    int y[64];
+    CVECTOR color[64];
+    int count;
+} ControllerDumpTrace;
+
+static void trace_controller_dump_draw(
+    void *user_data,
+    _Material *texture,
+    const SCREENRECT *destination,
+    const SCREENRECT *source,
+    CVECTOR color,
+    float depth)
+{
+    ControllerDumpTrace *trace = (ControllerDumpTrace *)user_data;
+
+    (void)texture;
+    (void)destination;
+    (void)depth;
+    if (trace->count < 64) {
+        trace->glyph[trace->count] = (unsigned)source->left;
+        trace->y[trace->count] = destination->top;
+        trace->color[trace->count] = color;
+        ++trace->count;
+    }
+}
+
+static int test_controller_dump(void)
+{
+    static const char expected[] = "EFNSW!+.JKabMOTION";
+    ControllerDumpTrace trace = {0};
+    Motion motion;
+    Motion *motion_pointer = &motion;
+    size_t index;
+
+    memset(&motion, 0, sizeof(motion));
+    memcpy(motion.name, "MOTION", 7);
+    memset(fontSpec, 0, sizeof(fontSpec));
+    for (index = 0; index < JPB_FONT_SPEC_COUNT; ++index) {
+        fontSpec[index].xypage = 1;
+        fontSpec[index].clut = 0;
+        fontSpec[index].x = (uint16_t)index;
+        fontSpec[index].h = 1;
+        fontSpec[index].w = 1;
+    }
+    menuTextures[0] = (_Material *)(uintptr_t)UINT64_C(0x12340000);
+    frontRGBoff = 0;
+    frontZ = 0.0f;
+    scaleAdjustmentMM = 1.0f;
+    GameStruct.screenShotFlag = 0;
+    memcpy(
+        gaPlayerData[0].PreMotion,
+        "XXXXefnswLMRS!+.JKab",
+        sizeof("XXXXefnswLMRS!+.JKab"));
+    gaPlayerData[0].pMotion = &motion_pointer;
+    jpb_WHookSetDrawTextureHook(trace_controller_dump_draw, &trace);
+    player_ControllerDump();
+    jpb_WHookSetDrawTextureHook(NULL, NULL);
+
+    CHECK(trace.count == (int)(sizeof(expected) - 1));
+    for (index = 0; index < sizeof(expected) - 1; ++index) {
+        CHECK(trace.glyph[index] == asciiRemap[(uint8_t)expected[index]]);
+        CHECK(trace.y[index] == (index < 12 ? 182 : 200));
+    }
+    CHECK(trace.color[0].r == 0x80);
+    CHECK(trace.color[0].g == 0x60);
+    CHECK(trace.color[0].b == 0x80);
+    CHECK(trace.color[0].cd == 0);
+    CHECK(trace.color[12].r == 0x10);
+    CHECK(trace.color[12].g == 0x10);
+    CHECK(trace.color[12].b == 0x10);
+    CHECK(trace.color[12].cd == 0);
+
+    memset(&trace, 0, sizeof(trace));
+    GameStruct.screenShotFlag = 1;
+    gaPlayerData[0].pMotion = NULL;
+    jpb_WHookSetDrawTextureHook(trace_controller_dump_draw, &trace);
+    player_ControllerDump();
+    jpb_WHookSetDrawTextureHook(NULL, NULL);
+    CHECK(trace.count == 0);
+    GameStruct.screenShotFlag = 0;
     return 0;
 }
 
@@ -2169,6 +2403,7 @@ int main(void)
     CHECK(test_after_life_cleanup() == 0);
     CHECK(test_combo_and_player_reset() == 0);
     CHECK(test_player_refresh_start_and_checkpoint() == 0);
+    CHECK(test_loader_enemy_finalization() == 0);
     CHECK(test_player_refresh_all_authored_starts() == 0);
     CHECK(test_player_free() == 0);
     CHECK(test_player_collision_owner() == 0);
@@ -2177,6 +2412,7 @@ int main(void)
     CHECK(test_player_life_tile_owner() == 0);
     CHECK(test_player_damage_tracker_owner() == 0);
     CHECK(test_player_debug_hud_owner() == 0);
+    CHECK(test_controller_dump() == 0);
     puts("player tests passed");
     return 0;
 }

@@ -1,13 +1,13 @@
 /*
- * REVIEWED RECONSTRUCTION of
+ * COMPLETE REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\work\win32\nodes.c.
  *
  * Provenance:
- *   direct      - procedure/type/local names and geometry records from PDB.
- *   decompiled  - stream traversal, point-cache ownership, face submission,
- *                 and packet stride checked at RVAs 0x129030..0x1294CA.
- *   inferred    - descriptive names for primRendPacket's observed fields;
- *                 its two unobserved byte ranges remain explicitly reserved.
+ *   direct      - all six procedures, globals, and complete PDB layouts for
+ *                 primRendPacket and SramModelStack.
+ *   assembly    - every instruction checked at RVAs 0x129030..0x12A6CB,
+ *                 including packet overflow, hierarchy state, clipping,
+ *                 detached-node motion, and packet submission.
  *
  * PDB module: 0098
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\nodes.obj
@@ -22,6 +22,7 @@
 #include "jpb/effects.h"
 #include "jpb/flex.h"
 #include "jpb/intersec.h"
+#include "jpb/jonny.h"
 #include "jpb/material.h"
 #include "jpb/physics.h"
 #include "jpb/render_nodes.h"
@@ -33,6 +34,7 @@
 #include <string.h>
 
 int32_t mCurRendPacket;
+/* Exact PDB count: the shipped writer nevertheless accepts index 0x200. */
 primRendPacket gRendPacket[JPB_RENDER_PACKET_CAPACITY];
 int32_t modelsclipped;
 int32_t drawme;
@@ -147,19 +149,6 @@ static void render_TransposeRotation(
     destination->t[0] = 0.0f;
     destination->t[1] = 0.0f;
     destination->t[2] = 0.0f;
-}
-
-static int render_OtagPosition(int x, int y, int z)
-{
-    /*
-     * jon_otagpos is an exact three-byte retail compatibility stub. Its
-     * nominal int return is not defined by the body and packet submission is
-     * insertion-ordered, so the portable source defines the unused value.
-     */
-    (void)x;
-    (void)y;
-    (void)z;
-    return 0;
 }
 
 static void render_ApplyMatrix(
@@ -294,9 +283,9 @@ void _RenderPackets(primRendPacket *pCurrentPacket, int num)
 
     for (i = 0; i < num; ++i) {
         _RenderNode(
-            pCurrentPacket[i].geometry,
-            &pCurrentPacket[i].modelMatrix,
-            &pCurrentPacket[i].lightMatrix,
+            pCurrentPacket[i].pGeomData,
+            &pCurrentPacket[i].m3LocalMatrix,
+            &pCurrentPacket[i].m3LightMatrix,
             aPointCache);
     }
 }
@@ -311,16 +300,16 @@ void render_CreateRenderPacket(FMATRIX *m3LocalMatrix)
     primRendPacket *pCurrentPacket;
     FVECTOR v3temp;
 
-    if (mCurRendPacket >= JPB_RENDER_PACKET_CAPACITY) {
+    if (mCurRendPacket > JPB_RENDER_PACKET_WRITE_LIMIT) {
         return;
     }
     pCurrentPacket = &gRendPacket[mCurRendPacket++];
     render_TransposeRotation(
-        m3LocalMatrix, &pCurrentPacket->lightMatrix);
+        m3LocalMatrix, &pCurrentPacket->m3LightMatrix);
     render_MultiplySceneRotation(
         &gSceneGeometryEnv.matrix,
         m3LocalMatrix,
-        &pCurrentPacket->modelMatrix);
+        &pCurrentPacket->m3LocalMatrix);
     v3temp.vx =
         (float)gSceneGeometryEnv.pos.vx + m3LocalMatrix->t[0];
     v3temp.vy =
@@ -330,9 +319,9 @@ void render_CreateRenderPacket(FMATRIX *m3LocalMatrix)
     fApplyMatrixFV(
         &gSceneGeometryEnv.matrix,
         &v3temp,
-        (FVECTOR *)(void *)pCurrentPacket->modelMatrix.t);
-    pCurrentPacket->geometry = sr->node->pGeomData;
-    pCurrentPacket->sceneObjectIndex = sr->sceneObjectIndex;
+        (FVECTOR *)(void *)pCurrentPacket->m3LocalMatrix.t);
+    pCurrentPacket->pGeomData = sr->pNode->pGeomData;
+    pCurrentPacket->modelID = sr->index;
 }
 
 /* 0x1295E0, 882 bytes, global, 2 named locals
@@ -344,44 +333,54 @@ void render_RenderModel(void)
 {
     FVECTOR v3RootTranslationTemp;
 
-    sr->matrix = &sr->scene->m3LocalModelMatrix;
-    sr->model = (modelObject *)(void *)sr->scene->pModel;
-    sr->keyFrame = sr->scene->pKeyFrameModel;
-    sr->model->eventMask = 0;
-    sr->model->effectMask = 0;
-    sr->model->flags &= ~UINT32_C(0x20);
+    sr->m3LocalModelMatrix =
+        &sr->pCurrentSceneModel->m3LocalModelMatrix;
+    sr->pRoot =
+        (modelObject *)(void *)sr->pCurrentSceneModel->pModel;
+    sr->pAnimFrame = sr->pCurrentSceneModel->pKeyFrameModel;
+    sr->pRoot->eventMask = 0;
+    sr->pRoot->effectMask = 0;
+    sr->pRoot->flags &= ~UINT32_C(0x20);
 
     render_MakeRotation(
-        &sr->scene->v3WorldAngle, sr->matrix, 0);
-    render_ScaleRotation(sr->matrix, &sr->model->v3Scale);
-    sr->matrix->t[0] = (float)sr->scene->v3WorldPosition.vx;
-    sr->matrix->t[1] = (float)sr->scene->v3WorldPosition.vy;
-    sr->matrix->t[2] = (float)sr->scene->v3WorldPosition.vz;
+        &sr->pCurrentSceneModel->v3WorldAngle,
+        sr->m3LocalModelMatrix,
+        0);
+    render_ScaleRotation(sr->m3LocalModelMatrix, &sr->pRoot->v3Scale);
+    sr->m3LocalModelMatrix->t[0] =
+        (float)sr->pCurrentSceneModel->v3WorldPosition.vx;
+    sr->m3LocalModelMatrix->t[1] =
+        (float)sr->pCurrentSceneModel->v3WorldPosition.vy;
+    sr->m3LocalModelMatrix->t[2] =
+        (float)sr->pCurrentSceneModel->v3WorldPosition.vz;
 
     v3RootTranslationTemp.vx =
-        (float)sr->keyFrame->v3RootTranslation.vx;
+        (float)sr->pAnimFrame->v3RootTranslation.vx;
     v3RootTranslationTemp.vy =
-        (float)sr->keyFrame->v3RootTranslation.vy;
+        (float)sr->pAnimFrame->v3RootTranslation.vy;
     v3RootTranslationTemp.vz =
-        (float)sr->keyFrame->v3RootTranslation.vz;
+        (float)sr->pAnimFrame->v3RootTranslation.vz;
     render_ApplyMatrix(
-        sr->matrix,
+        sr->m3LocalModelMatrix,
         &v3RootTranslationTemp,
-        &sr->transformedTranslation);
-    sr->matrix->t[0] += sr->transformedTranslation.vx;
-    sr->matrix->t[1] += sr->transformedTranslation.vy;
-    sr->matrix->t[2] += sr->transformedTranslation.vz;
-    sr->scene->v3SnapShotPosition.vx = (int32_t)sr->matrix->t[0];
-    sr->scene->v3SnapShotPosition.vy = (int32_t)sr->matrix->t[1];
-    sr->scene->v3SnapShotPosition.vz = (int32_t)sr->matrix->t[2];
+        &sr->mv3TempPivot);
+    sr->m3LocalModelMatrix->t[0] += sr->mv3TempPivot.vx;
+    sr->m3LocalModelMatrix->t[1] += sr->mv3TempPivot.vy;
+    sr->m3LocalModelMatrix->t[2] += sr->mv3TempPivot.vz;
+    sr->pCurrentSceneModel->v3SnapShotPosition.vx =
+        (int32_t)sr->m3LocalModelMatrix->t[0];
+    sr->pCurrentSceneModel->v3SnapShotPosition.vy =
+        (int32_t)sr->m3LocalModelMatrix->t[1];
+    sr->pCurrentSceneModel->v3SnapShotPosition.vz =
+        (int32_t)sr->m3LocalModelMatrix->t[2];
 
-    sr->matrixStack[sr->matrixStackLevel] = *sr->matrix;
-    sr->matrixStack[sr->matrixStackLevel + 1] =
-        sr->matrixStack[sr->matrixStackLevel];
-    ++sr->matrixStackLevel;
+    sr->mm3MatrixArray[sr->mMatrixLevel] = *sr->m3LocalModelMatrix;
+    sr->mm3MatrixArray[sr->mMatrixLevel + 1] =
+        sr->mm3MatrixArray[sr->mMatrixLevel];
+    ++sr->mMatrixLevel;
     drawme = 1;
-    sr->model->flags &= ~UINT32_C(0x4);
-    render_RenderNode(sr->model->pRootNode);
+    sr->pRoot->flags &= ~UINT32_C(0x4);
+    render_RenderNode(sr->pRoot->pRootNode);
 }
 
 /* 0x129960, 2854 bytes, global, 12 named locals
@@ -392,46 +391,49 @@ void render_RenderModel(void)
 void render_RenderNode(Mnode *pNode)
 {
     FVECTOR pos;
-    _svector currentRotation;
     uint32_t nodeIndex;
     uint32_t flag;
     int i;
 
-    sr->node = pNode;
+    sr->pNode = pNode;
     pos.vx = (float)pNode->v3Translation.vx;
     pos.vy = (float)pNode->v3Translation.vy;
     pos.vz = (float)pNode->v3Translation.vz;
     render_ApplyMatrix(
-        &sr->matrixStack[sr->matrixStackLevel],
+        &sr->mm3MatrixArray[sr->mMatrixLevel],
         &pos,
-        &sr->transformedTranslation);
+        &sr->mv3TempPivot);
 
     nodeIndex = (uint32_t)pNode->id & NODE_INDEX_MASK;
     if ((((uint32_t)pNode->id & NODE_STATIC) == 0) &&
         (((uint32_t)pNode->id & NODE_VIRTUAL) == 0)) {
-        currentRotation = sr->keyFrame->av3JointAngle[nodeIndex];
+        pNode->v3CurrentRotation =
+            sr->pAnimFrame->av3JointAngle[nodeIndex];
     } else {
-        memset(&currentRotation, 0, sizeof(currentRotation));
+        memset(
+            &pNode->v3CurrentRotation,
+            0,
+            sizeof(pNode->v3CurrentRotation));
     }
 
     if ((pNode->flags &
          (RENDER_NODE_USE_ABSOLUTE_ROTATION |
           RENDER_NODE_ROTATION_ABS_DIRTY)) != 0) {
-        currentRotation = pNode->v3RotationAbs;
+        pNode->v3CurrentRotation = pNode->v3RotationAbs;
         pNode->flags &= ~RENDER_NODE_ROTATION_ABS_DIRTY;
     }
 
     if ((pNode->flags &
          (RENDER_NODE_EXPLODING | RENDER_NODE_HIDDEN)) ==
         RENDER_NODE_EXPLODING) {
-        physicsObject *physics =
-            (physicsObject *)(void *)sr->scene->pPhysics;
+        physicsObject *physics = (physicsObject *)(void *)
+            sr->pCurrentSceneModel->pPhysics;
 
-        sr->matrixStack[sr->matrixStackLevel].t[0] =
+        sr->mm3MatrixArray[sr->mMatrixLevel].t[0] =
             (float)pNode->v3Translation2.vx;
-        sr->matrixStack[sr->matrixStackLevel].t[1] =
+        sr->mm3MatrixArray[sr->mMatrixLevel].t[1] =
             (float)pNode->v3Translation2.vy;
-        sr->matrixStack[sr->matrixStackLevel].t[2] =
+        sr->mm3MatrixArray[sr->mMatrixLevel].t[2] =
             (float)pNode->v3Translation2.vz;
         pNode->v3Translation2.vx = (int16_t)(
             pNode->v3Translation2.vx + pNode->v3Velocity2.vx);
@@ -444,23 +446,20 @@ void render_RenderNode(Mnode *pNode)
 
         if ((pNode->flags & RENDER_NODE_EXPLOSION_STARTED) == 0 &&
             (pNode->time > 0x800 ||
-             (physics != NULL &&
-              (float)pNode->v3Translation2.vy <= physics->airGround))) {
+             (float)pNode->v3Translation2.vy <= physics->airGround)) {
             if (pNode->time < 0x1000) {
                 int effectIndex = nodeIndex == 8 ? 71 : 83;
                 EffectHeader *effect = paEffects[effectIndex];
                 VECTOR soundPosition;
 
-                if (effect != NULL) {
-                    (void)sprite_AddSpriteEffectAtNode(
-                        effect->aEffects,
-                        (int)effect->num,
-                        sr->scene->sceneRoot.objectID,
-                        (int)nodeIndex);
-                }
+                (void)sprite_AddSpriteEffectAtNode(
+                    effect->aEffects,
+                    (int)effect->num,
+                    sr->pCurrentSceneModel->sceneRoot.objectID,
+                    (int)nodeIndex);
                 memcpy(
                     &soundPosition,
-                    sr->matrixStack[sr->matrixStackLevel].t,
+                    sr->mm3MatrixArray[sr->mMatrixLevel].t,
                     3U * sizeof(int32_t));
                 soundPosition.pad = 0;
                 (void)sound_Play(
@@ -472,66 +471,67 @@ void render_RenderNode(Mnode *pNode)
             }
         }
     } else if (nodeIndex != 0) {
-        sr->matrixStack[sr->matrixStackLevel].t[0] +=
-            sr->transformedTranslation.vx;
-        sr->matrixStack[sr->matrixStackLevel].t[1] +=
-            sr->transformedTranslation.vy;
-        sr->matrixStack[sr->matrixStackLevel].t[2] +=
-            sr->transformedTranslation.vz;
+        sr->mm3MatrixArray[sr->mMatrixLevel].t[0] +=
+            sr->mv3TempPivot.vx;
+        sr->mm3MatrixArray[sr->mMatrixLevel].t[1] +=
+            sr->mv3TempPivot.vy;
+        sr->mm3MatrixArray[sr->mMatrixLevel].t[2] +=
+            sr->mv3TempPivot.vz;
     }
 
-    render_MakeRotation(&currentRotation, &sr->nodeMatrix, 1);
+    render_MakeRotation(
+        &pNode->v3CurrentRotation, &sr->mm3TempPSXMatrix, 1);
     if ((pNode->flags & RENDER_NODE_SCALE) != 0) {
-        render_ScaleRotation(&sr->nodeMatrix, &pNode->v3Scale);
+        render_ScaleRotation(&sr->mm3TempPSXMatrix, &pNode->v3Scale);
     }
     render_MultiplyRotation(
-        &sr->matrixStack[sr->matrixStackLevel],
-        &sr->nodeMatrix);
+        &sr->mm3MatrixArray[sr->mMatrixLevel],
+        &sr->mm3TempPSXMatrix);
 
     pNode->v3Velocity.vx = (int16_t)(
-        (int32_t)sr->matrixStack[sr->matrixStackLevel].t[0] -
+        (int32_t)sr->mm3MatrixArray[sr->mMatrixLevel].t[0] -
         pNode->v3RotCenter.vx);
     pNode->v3Velocity.vy = (int16_t)(
-        (int32_t)sr->matrixStack[sr->matrixStackLevel].t[1] -
+        (int32_t)sr->mm3MatrixArray[sr->mMatrixLevel].t[1] -
         pNode->v3RotCenter.vy);
     pNode->v3Velocity.vz = (int16_t)(
-        (int32_t)sr->matrixStack[sr->matrixStackLevel].t[2] -
+        (int32_t)sr->mm3MatrixArray[sr->mMatrixLevel].t[2] -
         pNode->v3RotCenter.vz);
     pNode->v3RotCenter.vx =
-        (int32_t)sr->matrixStack[sr->matrixStackLevel].t[0];
+        (int32_t)sr->mm3MatrixArray[sr->mMatrixLevel].t[0];
     pNode->v3RotCenter.vy =
-        (int32_t)sr->matrixStack[sr->matrixStackLevel].t[1];
+        (int32_t)sr->mm3MatrixArray[sr->mMatrixLevel].t[1];
     pNode->v3RotCenter.vz =
-        (int32_t)sr->matrixStack[sr->matrixStackLevel].t[2];
+        (int32_t)sr->mm3MatrixArray[sr->mMatrixLevel].t[2];
 
     if (nodeIndex == 0) {
         FVECTOR rootPosition = {
-            sr->matrixStack[sr->matrixStackLevel].t[0],
-            sr->matrixStack[sr->matrixStackLevel].t[1],
-            sr->matrixStack[sr->matrixStackLevel].t[2]};
+            sr->mm3MatrixArray[sr->mMatrixLevel].t[0],
+            sr->mm3MatrixArray[sr->mMatrixLevel].t[1],
+            sr->mm3MatrixArray[sr->mMatrixLevel].t[2]};
 
-        if (sr->sceneObjectIndex < 2) {
-            sr->model->clipBits = (int16_t)cliptofrustrum(
+        if (sr->index < 2) {
+            sr->pRoot->clipBits = (int16_t)cliptofrustrum(
                 clippingfrustrum,
                 &rootPosition,
                 0x80,
-                screenborders[sr->sceneObjectIndex]);
+                screenborders[sr->index]);
         } else {
-            if ((sr->model->flags & UINT32_C(0x8)) == 0) {
-                sr->model->clipBits = (int16_t)cliptofrustrum(
+            if ((sr->pRoot->flags & UINT32_C(0x8)) == 0) {
+                sr->pRoot->clipBits = (int16_t)cliptofrustrum(
                     clippingfrustrum,
                     &rootPosition,
-                    sr->model->clipradius,
+                    sr->pRoot->clipradius,
                     NULL);
             }
-            if (sr->model->clipBits != 0) {
-                sr->model->flags |= UINT32_C(0x4);
+            if (sr->pRoot->clipBits != 0) {
+                sr->pRoot->flags |= UINT32_C(0x4);
                 ++modelsclipped;
             }
         }
     }
 
-    if ((sr->model->flags & UINT32_C(0x10)) != 0) {
+    if ((sr->pRoot->flags & UINT32_C(0x10)) != 0) {
         drawme = 0;
     }
     flag = pNode->flags;
@@ -540,19 +540,19 @@ void render_RenderNode(Mnode *pNode)
         pNode->flags = flag | RENDER_NODE_HIDDEN;
     }
     if (drawme != 0) {
-        pNode->ZBufferOffset = (int16_t)(render_OtagPosition(
-            (int)((float)sr->otagCameraLocation.vx -
-                  sr->matrixStack[sr->matrixStackLevel].t[0]),
-            (int)((float)sr->otagCameraLocation.vy -
-                  sr->matrixStack[sr->matrixStackLevel].t[1]),
-            (int)((float)sr->otagCameraLocation.vz -
-                  sr->matrixStack[sr->matrixStackLevel].t[2])) << 2);
-        sr->model->flags |= UINT32_C(0x20);
+        pNode->ZBufferOffset = (int16_t)(jon_otagpos(
+            (int)((float)sr->mCameraLocation.vx -
+                  sr->mm3MatrixArray[sr->mMatrixLevel].t[0]),
+            (int)((float)sr->mCameraLocation.vy -
+                  sr->mm3MatrixArray[sr->mMatrixLevel].t[1]),
+            (int)((float)sr->mCameraLocation.vz -
+                  sr->mm3MatrixArray[sr->mMatrixLevel].t[2])) << 2);
+        sr->pRoot->flags |= UINT32_C(0x20);
     }
 
     pNode->flags =
         ((uint32_t)(int32_t)(int8_t)
-             sr->keyFrame->event[nodeIndex] & UINT32_C(0x0b)) |
+             sr->pAnimFrame->event[nodeIndex] & UINT32_C(0x0b)) |
         (pNode->flags & UINT32_C(0xffffff04));
     flag = pNode->flags;
     if ((flag & RENDER_NODE_EVENT_FORCE_VISIBLE) != 0 &&
@@ -564,35 +564,35 @@ void render_RenderNode(Mnode *pNode)
         uint32_t nodeMask = UINT32_C(1) << (nodeIndex & 31U);
 
         if ((flag & UINT32_C(0x1)) != 0) {
-            sr->scene->sceneRoot.flags |= UINT32_C(0x10);
+            sr->pCurrentSceneModel->sceneRoot.flags |= UINT32_C(0x10);
         }
         if ((flag & UINT32_C(0x2)) != 0) {
-            sr->model->eventMask |= nodeMask;
+            sr->pRoot->eventMask |= nodeMask;
         }
         if ((flag & UINT32_C(0x8)) != 0) {
-            sr->model->effectMask |= nodeMask;
+            sr->pRoot->effectMask |= nodeMask;
         }
     }
 
     if (drawme == 0) {
-        if (sr->sceneObjectIndex > 1) {
+        if (sr->index > 1) {
             return;
         }
     } else if ((pNode->flags & RENDER_NODE_HIDDEN) == 0 &&
                pNode->pGeomData->numFaces != 0) {
         render_CreateRenderPacket(
-            &sr->matrixStack[sr->matrixStackLevel]);
+            &sr->mm3MatrixArray[sr->mMatrixLevel]);
     }
 
     pNode->flags &= ~RENDER_NODE_HIDDEN;
     for (i = 0; i < pNode->numChildNodes; ++i) {
         Mnode *child = &pNode->aChildNode[i];
 
-        sr->matrixStack[sr->matrixStackLevel + 1] =
-            sr->matrixStack[sr->matrixStackLevel];
-        ++sr->matrixStackLevel;
+        sr->mm3MatrixArray[sr->mMatrixLevel + 1] =
+            sr->mm3MatrixArray[sr->mMatrixLevel];
+        ++sr->mMatrixLevel;
         render_RenderNode(child);
-        --sr->matrixStackLevel;
+        --sr->mMatrixLevel;
     }
 }
 
@@ -609,16 +609,16 @@ void render_RenderScene(void)
     sr = &modelStack;
     mCurRendPacket = 0;
     camera_gGetLocation(&mCameraLocation);
-    sr->sceneMatrix = gSceneGeometryEnv.matrix;
-    sr->scenePosition = gSceneGeometryEnv.pos;
-    sr->sceneObjectIndex = 0;
-    sr->scene = gSceneRoot.paSceneModels;
+    sr->m3SceneMatrix = gSceneGeometryEnv.matrix;
+    sr->v3ViewPosition = gSceneGeometryEnv.pos;
+    sr->index = 0;
+    sr->pCurrentSceneModel = gSceneRoot.paSceneModels;
 
-    while (sr->sceneObjectIndex < JPB_SCENE_CAPACITY) {
+    while (sr->index < JPB_SCENE_CAPACITY) {
         physicsObject *physics =
-            &maPhysicsData[sr->sceneObjectIndex];
+            &maPhysicsData[sr->index];
 
-        sr->matrixStackLevel = 0;
+        sr->mMatrixLevel = 0;
         if ((physics->flags & UINT32_C(0x20)) != 0) {
             physicsObject *source =
                 &maPhysicsData[physics->flags & UINT32_C(0x1f)];
@@ -628,12 +628,13 @@ void render_RenderScene(void)
             physics->mov = source->mov;
             physics->mapinfo = source->mapinfo;
         }
-        if (sr->scene->sceneRoot.objectID != -1 &&
-            (sr->scene->sceneRoot.flags & UINT32_C(0x20)) == 0) {
+        if (sr->pCurrentSceneModel->sceneRoot.objectID != -1 &&
+            (sr->pCurrentSceneModel->sceneRoot.flags &
+             UINT32_C(0x20)) == 0) {
             render_RenderModel();
         }
-        ++sr->sceneObjectIndex;
-        ++sr->scene;
+        ++sr->index;
+        ++sr->pCurrentSceneModel;
     }
     if (mCurRendPacket != 0) {
         _RenderPackets(gRendPacket, mCurRendPacket);

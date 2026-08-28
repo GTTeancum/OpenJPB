@@ -1,13 +1,12 @@
 /*
- * PARTIALLY REVIEWED RECONSTRUCTION.
+ * COMPLETE REVIEWED RECONSTRUCTION.
  *
- * The reviewed presentation subset includes all three _RenderSprite paths,
- * rotated/scaled quad construction, ring lifetime/control updates, and the
- * sprite/SCB double-buffer scheduler. Names and signatures come directly
- * from the matched PDB; control flow, constants, field offsets, list order,
- * matrix construction, and draw arguments are checked against the matched
- * executable at RVAs 0xF7E60, 0xFBE50, and 0xFCA30..0xFD103. Cylinder
- * geometry remains isolated behind the renderer-neutral semantic hook.
+ * All 84 emitted procedures were checked against matched PDB symbols and
+ * types plus direct disassembly/decompilation of the shipped executable at
+ * RVAs 0xF7E60..0xFDB49. Control flow, constants, field offsets, list order,
+ * matrix-stack boundaries, draw arguments, callback timing, allocation and
+ * delayed-free behavior are restored. Rendering submission crosses the
+ * established portable wHook boundary without changing Sprite-owned state.
  * PDB module: 0081
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\sprite.obj
  * Primary source: W:\SWJediPowerBattles\Work\sprite.c
@@ -41,8 +40,6 @@
 
 List mSCBDraw[2];
 int mCurSCBList;
-uint32_t jpb_sprite_list_recovery_count;
-int32_t jpb_sprite_last_invalid_selector;
 /* Exact PDB globals at RVAs 0x4CC870, 0x945D10, and 0x945D14. */
 uint32_t cluts[32] = {
     UINT32_C(0x0030f838), UINT32_C(0x00f82030),
@@ -270,14 +267,15 @@ void drawCylinder(
     int clut,
     int tmode)
 {
-    /*
-     * The exact routine submits sixteen textured cylinder quads. Gameplay
-     * retains every authored geometric and texture-selection parameter here;
-     * the dependency-light renderer consumes the uniform-color primitive
-     * through the same cylinder boundary as drawCylinderG.
-     */
+    FVECTOR local_vertices[34];
+    FVECTOR transformed[34];
+    MATRIX local_rotation;
+    MATRIX combined;
+    _svector translated_location;
+    VECTOR camera_location;
+    int segment;
+
     (void)ratio;
-    (void)id;
     (void)clut;
     (void)tmode;
     if (jpb_sprite_cylinder_hook != NULL) {
@@ -291,6 +289,56 @@ void drawCylinder(
             height2,
             color1,
             color1);
+    }
+
+    for (segment = 0; segment < 17; ++segment) {
+        float angle =
+            (float)(((double)segment * 22.5) / 57.2957);
+        float cosine = (float)cos((double)angle);
+        float sine = (float)sin((double)angle);
+
+        local_vertices[segment].vx = cosine * radius1;
+        local_vertices[segment].vy = height1;
+        local_vertices[segment].vz = sine * radius1;
+        local_vertices[17 + segment].vx = cosine * radius2;
+        local_vertices[17 + segment].vy = height2;
+        local_vertices[17 + segment].vz = sine * radius2;
+    }
+    (void)fRotMatrixZYX(rotation, &local_rotation);
+    (void)fMulMatrix0(&CameraMatrix, &local_rotation, &combined);
+    translated_location.vx = (int16_t)(
+        (int16_t)loc->vx + gSceneGeometryEnv.pos.vx);
+    translated_location.vy = (int16_t)(
+        (int16_t)loc->vy + gSceneGeometryEnv.pos.vy);
+    translated_location.vz = (int16_t)(
+        (int16_t)loc->vz + gSceneGeometryEnv.pos.vz);
+    translated_location.pad = 0;
+    (void)fApplyMatrix(
+        &CameraMatrix, &translated_location, &camera_location);
+    combined.t[0] = camera_location.vx;
+    combined.t[1] = camera_location.vy;
+    combined.t[2] = camera_location.vz;
+    (void)RotTransPersFloat(
+        &combined, local_vertices, transformed, 34);
+
+    for (segment = 0; segment < 16; ++segment) {
+        _StartPoly(4, effects1Handle[id]);
+        _SetVert(0, transformed[segment].vx,
+                 transformed[segment].vy, transformed[segment].vz,
+                 color1, 0.0f, 0.0f);
+        _SetVert(1, transformed[segment + 1].vx,
+                 transformed[segment + 1].vy,
+                 transformed[segment + 1].vz,
+                 color1, 1.0f, 0.0f);
+        _SetVert(2, transformed[17 + segment].vx,
+                 transformed[17 + segment].vy,
+                 transformed[17 + segment].vz,
+                 color1, 0.0f, 1.0f);
+        _SetVert(3, transformed[18 + segment].vx,
+                 transformed[18 + segment].vy,
+                 transformed[18 + segment].vz,
+                 color1, 1.0f, 1.0f);
+        _NoScaleEndPoly();
     }
 }
 
@@ -323,6 +371,14 @@ void drawCylinderG(
     uint32_t color1,
     uint32_t color2)
 {
+    FVECTOR local_vertices[34];
+    FVECTOR transformed[34];
+    MATRIX local_rotation;
+    MATRIX combined;
+    _svector translated_location;
+    VECTOR camera_location;
+    int segment;
+
     if (jpb_sprite_cylinder_hook != NULL) {
         jpb_sprite_cylinder_hook(
             jpb_sprite_cylinder_user_data,
@@ -334,6 +390,56 @@ void drawCylinderG(
             h2,
             color1,
             color2);
+    }
+
+    for (segment = 0; segment < 17; ++segment) {
+        float angle =
+            (float)(((double)segment * 22.5) / 57.2957);
+        float cosine = (float)cos((double)angle);
+        float sine = (float)sin((double)angle);
+
+        local_vertices[segment].vx = cosine * radius1;
+        local_vertices[segment].vy = h1;
+        local_vertices[segment].vz = sine * radius1;
+        local_vertices[17 + segment].vx = cosine * radius2;
+        local_vertices[17 + segment].vy = h2;
+        local_vertices[17 + segment].vz = sine * radius2;
+    }
+    (void)fRotMatrixZYX(rotation, &local_rotation);
+    (void)fMulMatrix0(&CameraMatrix, &local_rotation, &combined);
+    translated_location.vx = (int16_t)(
+        (int16_t)loc->vx + gSceneGeometryEnv.pos.vx);
+    translated_location.vy = (int16_t)(
+        (int16_t)loc->vy + gSceneGeometryEnv.pos.vy);
+    translated_location.vz = (int16_t)(
+        (int16_t)loc->vz + gSceneGeometryEnv.pos.vz);
+    translated_location.pad = 0;
+    (void)fApplyMatrix(
+        &CameraMatrix, &translated_location, &camera_location);
+    combined.t[0] = camera_location.vx;
+    combined.t[1] = camera_location.vy;
+    combined.t[2] = camera_location.vz;
+    (void)RotTransPersFloat(
+        &combined, local_vertices, transformed, 34);
+
+    for (segment = 0; segment < 16; ++segment) {
+        _StartPoly(4, whitemat);
+        _SetVert(0, transformed[segment].vx,
+                 transformed[segment].vy, transformed[segment].vz,
+                 color1, 0.0f, 0.0f);
+        _SetVert(1, transformed[segment + 1].vx,
+                 transformed[segment + 1].vy,
+                 transformed[segment + 1].vz,
+                 color1, 0.0f, 0.0f);
+        _SetVert(2, transformed[17 + segment].vx,
+                 transformed[17 + segment].vy,
+                 transformed[17 + segment].vz,
+                 color2, 0.0f, 0.0f);
+        _SetVert(3, transformed[18 + segment].vx,
+                 transformed[18 + segment].vy,
+                 transformed[18 + segment].vz,
+                 color2, 0.0f, 0.0f);
+        _NoScaleEndPoly();
     }
 }
 
@@ -357,9 +463,6 @@ float getScaleAdjustmentMM(void)
     float width = (float)OptionStruct.ScreenWidth;
     float height = (float)OptionStruct.ScreenHeight;
 
-    if (height <= 0.0f) {
-        return 0.0f;
-    }
     if (width / height < (16.0f / 9.0f)) {
         return (width / (16.0f / 9.0f)) / 1080.0f;
     }
@@ -467,6 +570,52 @@ void setPivotPositionAndFixScale(
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
 
+void setPivotPositionAndFixScaleMM(
+    float *x,
+    float *y,
+    float *width,
+    float *height,
+    int pivot)
+{
+    *x *= scaleAdjustmentMM;
+    *y *= scaleAdjustmentMM;
+    *width *= scaleAdjustmentMM;
+    *height *= scaleAdjustmentMM;
+
+    switch (pivot) {
+    case 1:
+        *x += ((float)OptionStruct.ScreenWidth - *width) * 0.5f;
+        break;
+    case 2:
+        *x = (float)OptionStruct.ScreenWidth - *x - *width;
+        break;
+    case 3:
+        *y += (float)OptionStruct.ScreenHeight * 0.5f;
+        break;
+    case 4:
+        *x += ((float)OptionStruct.ScreenWidth - *width) * 0.5f;
+        *y += (float)OptionStruct.ScreenHeight * 0.5f;
+        break;
+    case 5:
+        *x = (float)OptionStruct.ScreenWidth - *x - *width;
+        *y += (float)OptionStruct.ScreenHeight * 0.5f;
+        break;
+    case 6:
+        *y = (float)OptionStruct.ScreenHeight - *y - *height;
+        break;
+    case 7:
+        *x += ((float)OptionStruct.ScreenWidth - *width) * 0.5f;
+        *y = (float)OptionStruct.ScreenHeight - *y - *height;
+        break;
+    case 8:
+        *x = (float)OptionStruct.ScreenWidth - *x - *width;
+        *y = (float)OptionStruct.ScreenHeight - *y - *height;
+        break;
+    default:
+        break;
+    }
+}
+
 /* 0xF9180, 544 bytes, global, 7 named locals
  * setPivotPositionMM
  * PDB type: void (float*, float*, int)
@@ -481,9 +630,6 @@ void setPivotPositionMM(float *x, float *y, int pivot)
     float x_offset;
     float y_offset;
 
-    if (screen_height <= 0.0f) {
-        return;
-    }
     if (screen_width / screen_height >= (16.0f / 9.0f)) {
         content_height = screen_height;
         content_width = content_height * (16.0f / 9.0f);
@@ -553,9 +699,6 @@ void setPivotPositionMM_PSX(float *x, float *y, int pivot)
     float x_offset = 0.0f;
     float y_offset = 0.0f;
 
-    if (screen_height <= 0.0f) {
-        return;
-    }
     if (screen_width / screen_height < (16.0f / 9.0f)) {
         content_width = screen_width;
         content_height = screen_width / (16.0f / 9.0f);
@@ -630,6 +773,12 @@ void setPositionOffPivot(
  * PDB type: void (float*, float*, float, flo...
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
+void setPositionOffPivotMM(
+    float *x, float *y, float pivot_x, float pivot_y)
+{
+    *x = *x * scaleAdjustmentMM + pivot_x;
+    *y = *y * scaleAdjustmentMM + pivot_y;
+}
 
 /* 0xF9630, 607 bytes, global, 3 named locals
  * sprite_AddCallBack
@@ -757,6 +906,36 @@ Sprite *sprite_AddSpriteAtLoc(Sprite *sptr, int type, VECTOR *pos)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
 
+Sprite *sprite_AddSpriteAtNode(int playernum, int nodeID, int type)
+{
+    VECTOR dummypos = {0, 0, 0, 0};
+    Sprite *sptr = NULL;
+
+    if ((unsigned)type < JPB_RESIDENT_SPRITE_COUNT) {
+        sptr = sprite_gAllocSprite(8);
+        if (sptr != NULL) {
+            sptr->sp_SCB->scb_Texture = effects1Handle[type];
+            sprite_gSetSpritePosition(sptr, 0, 0, 0);
+            sptr->sp_Time = 0;
+            sptr->sp_cScale.init = 0x1000;
+            sptr->sp_SCB->scb_vertex0.pad = 0x80;
+            sptr->sp_Num = 3;
+            sptr->sp_User = (int32_t *)(void *)&dummypos;
+            sptr->sp_Func = (SpriteFunction)(void *)sprite_Flash;
+            sptr->sp_Flags |= 4;
+            sptr->sp_Delay = 0;
+            sptr->sp_Flags |=
+                (int32_t)(((uint32_t)playernum << 8 |
+                           (uint32_t)nodeID) << 16);
+            (void)debug_printf(
+                "ADD SPRITE AT NODE %d of PLAYER %d\n",
+                nodeID,
+                playernum);
+        }
+    }
+    return sptr;
+}
+
 /* 0xF9AA0, 1581 bytes, global, 14 named locals
  * sprite_AddSpriteEffect
  * PDB type: Sprite** (EffectData*, int, VECT...
@@ -781,25 +960,14 @@ Sprite **sprite_AddSpriteEffect(
 
     memset(shot, 0, sizeof(shot));
     if (mEffectRot != 0) {
-        /*
-         * The reference brackets this local matrix construction with
-         * PushMatrix/PopMatrix. As in the reviewed vector helpers, the
-         * balanced pair has no surviving state effect in the portable
-         * renderer.
-         */
+        PushMatrix();
         fRotMatrix(&effectRotation, &m);
     }
     if (data == NULL) {
+        if (mEffectRot != 0) {
+            PopMatrix();
+        }
         return NULL;
-    }
-
-    /*
-     * EffectHeader contains exactly sixteen records. Valid asset calls
-     * therefore never exceed this bound; clamping prevents malformed host
-     * input from writing past the exact PDB `shot[16]` result object.
-     */
-    if (num > (int)(sizeof(shot) / sizeof(shot[0]))) {
-        num = (int)(sizeof(shot) / sizeof(shot[0]));
     }
 
     for (index = 0; index < num; ++index) {
@@ -929,8 +1097,10 @@ Sprite **sprite_AddSpriteEffect(
                 scb->scb_flags = 4;
                 rot.vx = (int16_t)((uint16_t)rot.vx + 0x100u);
                 rot.vz = (int16_t)((uint16_t)rot.vz + 0x100u);
+                PushMatrix();
                 fRotMatrix(&rot, &rmat);
                 fApplyMatrix(&rmat, &dir, &temp);
+                PopMatrix();
                 temp.vx += loc->vx;
                 temp.vy += loc->vy;
                 temp.vz += loc->vz;
@@ -948,10 +1118,13 @@ Sprite **sprite_AddSpriteEffect(
                 scb->scb_vertex3.vy = (float)(temp.vy + 0x30);
                 scb->scb_vertex3.vz = (float)temp.vz;
             }
-            scb->scb_cvertex.vz = (float)effect->vel.pad;
+            scb->scb_cvertex.pad = effect->vel.pad;
             scb->scb_flags |=
                 (int32_t)((uint32_t)effect->flags << 16);
         }
+    }
+    if (mEffectRot != 0) {
+        PopMatrix();
     }
     return shot;
 }
@@ -1043,8 +1216,27 @@ void sprite_ClearProjectilePool(Projectile *pool, int num)
  * sprite_CommentsCallBack
  * PDB type: void (int*)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
- * Reviewed body: sprite_comments.c
  */
+
+void sprite_CommentsCallBack(int32_t *cb)
+{
+    Sprite *sptr = (Sprite *)(void *)cb;
+
+    Draw3dText(
+        sptr->sp_Pos.vx,
+        sptr->sp_Pos.vy,
+        sptr->sp_Pos.vz,
+        1.5f,
+        (uint32_t)(uintptr_t)sptr->sp_PAnim,
+        "%s",
+        (char *)(void *)sptr->sp_Anim);
+    sptr->sp_Pos.vx += sptr->sp_Vel.vx;
+    sptr->sp_Pos.vy += sptr->sp_Vel.vy;
+    sptr->sp_Pos.vz += sptr->sp_Vel.vz;
+    if ((uint32_t)(uintptr_t)sptr->sp_User < gGlobalTimer) {
+        jpb_sprite_mark_free(sptr);
+    }
+}
 
 /* 0xFA3B0, 234 bytes, global, 7 named locals
  * sprite_DisplaySprite
@@ -1066,10 +1258,7 @@ SCB *sprite_DisplaySprite(
             return NULL;
         }
     }
-    scb->scb_Texture =
-        (unsigned)type < JPB_RESIDENT_SPRITE_COUNT
-            ? effects1Handle[type]
-            : NULL;
+    scb->scb_Texture = effects1Handle[type];
     scb->scb_cvertex.pad = (int16_t)clut;
     if (jpb_sprite_display_hook != NULL) {
         jpb_sprite_display_hook(
@@ -1107,11 +1296,39 @@ SCB *sprite_DisplaySprite(
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
 
+SCB *sprite_DisplayTpage(int tpage, int x, int y)
+{
+    SCB *scb = sprite_gAllocSCB();
+    int half_width;
+    int half_height;
+
+    (void)tpage;
+    if (scb != NULL) {
+        scb->scb_flags |= 2;
+        if (scb->scb_Texture == NULL) {
+            half_width = 64;
+            half_height = 64;
+        } else {
+            half_width = scb->scb_Texture->iw / 2;
+            half_height = scb->scb_Texture->ih / 2;
+        }
+        sprite_Set2DSCBPos(
+            scb, x, y, 0, half_width, half_height);
+    }
+    return scb;
+}
+
 /* 0xFA570, 3 bytes, global, 2 named locals
  * sprite_FireEmiter
  * PDB type: void (Emiter*, Sprite*)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
+
+void sprite_FireEmiter(Emiter *emit, Sprite *shot0)
+{
+    (void)emit;
+    (void)shot0;
+}
 
 /* 0xFA580, 633 bytes, global, 9 named locals
  * sprite_FireRing
@@ -1132,14 +1349,14 @@ Ring *sprite_FireRing(RingData *r, VECTOR *pos0)
             ring->rot.vz = r->rot.vz;
             ring->rad1 = r->r1.init;
             ring->rad2 = r->r2.init;
-            ring->rad1v = r->r1.acc;
-            ring->rad2v = r->r2.acc;
+            ring->rad1v = r->r1.vel;
+            ring->rad2v = r->r2.vel;
             ring->b1 = r->b.init;
-            ring->b1v = r->b.acc;
+            ring->b1v = r->b.vel;
             ring->h1 = r->h1.init;
             ring->h2 = r->h2.init;
-            ring->h1v = r->h1.acc;
-            ring->h2v = r->h2.acc;
+            ring->h1v = r->h1.vel;
+            ring->h2v = r->h2.vel;
             ring->time = r->time + gGlobalTimer;
         }
         return ring;
@@ -1166,14 +1383,14 @@ Ring *sprite_FireRing(RingData *r, VECTOR *pos0)
                 ring->pRingData = r;
                 ring->rad1 = (int16_t)flexmul(angle, 1);
                 ring->rad2 = (int16_t)flexmul(next_angle, 1);
-                ring->rad1v = r->r1.acc;
-                ring->rad2v = r->r2.acc;
+                ring->rad1v = r->h1.vel;
+                ring->rad2v = r->h2.vel;
                 ring->b1 = 0;
-                ring->b1v = r->b.acc;
+                ring->b1v = r->b.vel;
                 ring->h1 = (int16_t)h1;
                 ring->h2 = (int16_t)h2;
-                ring->h1v = r->h1.acc;
-                ring->h2v = r->h2.acc;
+                ring->h1v = r->r1.vel;
+                ring->h2v = r->r2.vel;
                 ring->time = r->time + gGlobalTimer;
                 if (index == 0) {
                     ring0 = ring;
@@ -1190,6 +1407,47 @@ Ring *sprite_FireRing(RingData *r, VECTOR *pos0)
  * PDB type: Ring* (RingData*, VECTOR*)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
+
+Ring *sprite_FireSphere(RingData *r, VECTOR *pos0)
+{
+    Ring *ring0 = NULL;
+    int scale = (int)r->r1.init * 4;
+    int angle_step = (int)r->r1.init * 0x40;
+    int angle = 0;
+    int index;
+
+    for (index = 0; index < 16; ++index) {
+        Ring *ring = sprite_AllocRing();
+
+        if (ring != NULL) {
+            int h1 = flexmul((int)aCircle[index], scale);
+            int h2 = flexmul((int)aCircle[index + 1], scale);
+            int next_angle = angle + angle_step;
+
+            ring->pos = *pos0;
+            ring->rot.vx = r->rot.vx;
+            ring->rot.vy = r->rot.vy;
+            ring->rot.vz = r->rot.vz;
+            ring->pRingData = r;
+            ring->rad1 = (int16_t)flexmul(angle, 1);
+            ring->rad2 = (int16_t)flexmul(next_angle, 1);
+            ring->rad1v = r->h1.vel;
+            ring->rad2v = r->h2.vel;
+            ring->b1 = 0;
+            ring->b1v = r->b.vel;
+            ring->h1 = (int16_t)h1;
+            ring->h2 = (int16_t)h2;
+            ring->h1v = r->r1.vel;
+            ring->h2v = r->r2.vel;
+            ring->time = r->time + gGlobalTimer;
+            if (index == 0) {
+                ring0 = ring;
+            }
+        }
+        angle += angle_step;
+    }
+    return ring0;
+}
 
 /* 0xFA9C0, 176 bytes, global, 3 named locals
  * sprite_Flash
@@ -1293,7 +1551,7 @@ Sprite *sprite_Get3DProjectile(
     scb->scb_vertex3.vx = 0.0f;
     scb->scb_vertex3.vy = (float)-(int)width;
     scb->scb_vertex3.vz = (float)-(int)length;
-    rotation->vy = (int16_t)(rotation->vy + 0x400);
+    rotation->vz = (int16_t)(rotation->vz + 0x400);
     sprite_Rotate3DSprite(child, rotation);
     sprite_Move3DSprite(child, &center);
     proj->pj_Child = child;
@@ -1305,6 +1563,48 @@ Sprite *sprite_Get3DProjectile(
  * PDB type: void (Sprite*, VECTOR*, int)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
+
+void sprite_Get3DShear(Sprite *sptr, VECTOR *center, int dist)
+{
+    MATRIX rmat = {
+        {
+            {1.0f, 0.0f, 0.0f},
+            {0.0f, 1.0f, 0.0f},
+            {0.0f, 0.0f, 1.0f}
+        },
+        {0, 0, 0}
+    };
+    _svector dir = {(int16_t)dist, 0, 0, 0};
+    VECTOR pos;
+    SCB *scb;
+
+    if (sptr == NULL) {
+        return;
+    }
+    scb = sptr->sp_SCB;
+    scb->scb_flags = 4;
+    rot.vx = (int16_t)(rot.vx + 0x100);
+    rot.vz = (int16_t)(rot.vz + 0x100);
+    PushMatrix();
+    fRotMatrix(&rot, &rmat);
+    fApplyMatrix(&rmat, &dir, &pos);
+    PopMatrix();
+    pos.vx += center->vx;
+    pos.vy += center->vy;
+    pos.vz += center->vz;
+    scb->scb_vertex0.vx = (float)center->vx;
+    scb->scb_vertex0.vy = (float)center->vy;
+    scb->scb_vertex0.vz = (float)center->vz;
+    scb->scb_vertex2.vx = (float)center->vx;
+    scb->scb_vertex2.vy = (float)(center->vy + 8);
+    scb->scb_vertex2.vz = (float)center->vz;
+    scb->scb_vertex1.vx = (float)pos.vx;
+    scb->scb_vertex1.vy = (float)pos.vy;
+    scb->scb_vertex1.vz = (float)pos.vz;
+    scb->scb_vertex3.vx = (float)pos.vx;
+    scb->scb_vertex3.vy = (float)(pos.vy + 0x30);
+    scb->scb_vertex3.vz = (float)pos.vz;
+}
 
 /* 0xFAEC0, 225 bytes, global, 6 named locals
  * sprite_GetBaseNodeMarker
@@ -1345,8 +1645,34 @@ Sprite *sprite_GetBaseNodeMarker(int player, int distance)
  * sprite_GetCommentsSprite
  * PDB type: Sprite* (char*, VECTOR*, _svecto...
  * Source: W:\SWJediPowerBattles\Work\sprite.c
- * Reviewed body: sprite_comments.c
  */
+
+Sprite *sprite_GetCommentsSprite(
+    char *string,
+    VECTOR *pos,
+    _svector *vel,
+    uint32_t color)
+{
+    Sprite *sptr = sprite_gAllocSprite(0);
+
+    if (sptr != NULL) {
+        sptr->sp_Pos.vx = (float)pos->vx;
+        sptr->sp_Pos.vy = (float)pos->vy + 16.0f;
+        sptr->sp_Pos.vz = (float)pos->vz;
+        sptr->sp_Pos.vx += (float)(rand() % 16 - 8);
+        sptr->sp_Pos.vz += (float)(rand() % 16 - 8);
+        sptr->sp_Vel.vx = (float)vel->vx;
+        sptr->sp_Vel.vy = (float)vel->vy;
+        sptr->sp_Vel.vz = (float)vel->vz;
+        sptr->sp_PAnim = (PalAnim *)(uintptr_t)color;
+        sptr->sp_User = (int32_t *)(uintptr_t)(
+            gGlobalTimer + UINT32_C(0x2000));
+        sptr->sp_Func =
+            (SpriteFunction)(void *)sprite_CommentsCallBack;
+        sptr->sp_Anim = (TexAnim *)(void *)string;
+    }
+    return sptr;
+}
 
 /* 0xFB0E0, 319 bytes, global, 6 named locals
  * sprite_GetPointsSprite
@@ -1389,11 +1715,59 @@ Sprite *sprite_GetPointsSprite(
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
 
+Sprite *sprite_GetSpotMarker(int playernum, int dist, VECTOR *pos)
+{
+    Sprite *sptr = sprite_gAllocSprite(8);
+
+    (void)playernum;
+    if (sptr != NULL) {
+        SCB *scb = sptr->sp_SCB;
+
+        scb->scb_Texture = effects1Handle[4];
+        sprite_gSetSpritePosition(sptr, pos->vx, pos->vy, pos->vz);
+        sptr->sp_cScale.init = 0x1000;
+        sptr->sp_Time = 0;
+        scb->scb_vertex0.pad = 0x80;
+        scb->scb_flags = 4;
+        scb->scb_cvertex.pad = 0;
+        scb->scb_vertex0.pad = 0x80;
+        scb->scb_vertex1.pad = 0x80;
+        scb->scb_vertex2.pad = 0x80;
+        sptr->sp_Func = sprite_Spot;
+        sptr->sp_Num = (int16_t)dist;
+        sptr->sp_User = (int32_t *)(void *)pos;
+    }
+    return sptr;
+}
+
 /* 0xFB2F0, 181 bytes, global, 4 named locals
  * sprite_GetSuckSpritePos
  * PDB type: void (VECTOR*, _svector*, VECTOR...
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
+
+void sprite_GetSuckSpritePos(
+    VECTOR *pos, _svector *dir, VECTOR *center)
+{
+    MATRIX rmat = {
+        {
+            {1.0f, 0.0f, 0.0f},
+            {0.0f, 1.0f, 0.0f},
+            {0.0f, 0.0f, 1.0f}
+        },
+        {0, 0, 0}
+    };
+
+    rot.vx = (int16_t)(rot.vx + 0x100);
+    rot.vz = (int16_t)(rot.vz + 0x100);
+    PushMatrix();
+    fRotMatrix(&rot, &rmat);
+    fApplyMatrix(&rmat, dir, pos);
+    PopMatrix();
+    pos->vx += center->vx;
+    pos->vy += center->vy;
+    pos->vz += center->vz;
+}
 
 /* 0xFB3B0, 148 bytes, global, 5 named locals
  * sprite_GetTargetMarker
@@ -1401,11 +1775,47 @@ Sprite *sprite_GetPointsSprite(
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
 
+Sprite *sprite_GetTargetMarker(int playernum, int dist, int type)
+{
+    playerObject *player = player_gGetPlayerPtr(playernum);
+    VECTOR *pos = physics_gGetPosition(&player->playerRoot);
+    Sprite *sptr = sprite_AddSpriteAtLoc(NULL, type, pos);
+
+    if (sptr != NULL) {
+        SCB *scb = sptr->sp_SCB;
+
+        scb->scb_flags = 0x8004;
+        scb->scb_cvertex.pad = 8;
+        scb->scb_vertex0.pad = 0x40;
+        scb->scb_vertex1.pad = 0x40;
+        scb->scb_vertex2.pad = 0x40;
+        sptr->sp_Func = sprite_Lock;
+        sptr->sp_User = (int32_t *)(void *)pos;
+        sptr->sp_Num = (int16_t)dist;
+    }
+    return sptr;
+}
+
 /* 0xFB450, 108 bytes, global, 2 named locals
  * sprite_Glow
  * PDB type: int (int*)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
+
+int sprite_Glow(int32_t *cb)
+{
+    Sprite *sptr = (Sprite *)(void *)cb;
+    SCB *scb = sptr->sp_SCB;
+    int value;
+
+    value = rand() % 128 + 0x80;
+    scb->scb_vertex0.pad = (int16_t)value;
+    value = rand() % 128 + 0x80;
+    scb->scb_vertex1.pad = (int16_t)value;
+    value = rand() % 128 + 0x80;
+    scb->scb_vertex2.pad = (int16_t)value;
+    return value;
+}
 
 /* 0xFB4C0, 170 bytes, global, 6 named locals
  * sprite_InitProjectilePool
@@ -1433,11 +1843,31 @@ void sprite_InitProjectilePool(Projectile *pool, int num)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
 
+void sprite_InitSCBPool(void)
+{
+    list_InitList(&mSCBDraw[0]);
+    list_InitList(&mSCBDraw[1]);
+    mCurSCBList = 0;
+}
+
 /* 0xFB5A0, 51 bytes, global, 1 named locals
  * sprite_LightMotion
  * PDB type: int (int*)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
+
+int sprite_LightMotion(int32_t *cb)
+{
+    Sprite *sptr = (Sprite *)(void *)cb;
+
+    sptr->sp_Rot.vx =
+        (int16_t)((sptr->sp_Rot.vx + sptr->sp_RVel.vx) & 0xfff);
+    sptr->sp_Rot.vy =
+        (int16_t)((sptr->sp_Rot.vy + sptr->sp_RVel.vy) & 0xfff);
+    sptr->sp_Rot.vz =
+        (int16_t)((sptr->sp_Rot.vz + sptr->sp_RVel.vz) & 0xfff);
+    return sptr->sp_Rot.vz;
+}
 
 /* 0xFB5E0, 221 bytes, global, 5 named locals
  * sprite_Lock
@@ -1445,11 +1875,43 @@ void sprite_InitProjectilePool(Projectile *pool, int num)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
 
+int sprite_Lock(int32_t *cb)
+{
+    Sprite *sptr = (Sprite *)(void *)cb;
+    VECTOR *pos = (VECTOR *)(void *)sptr->sp_User;
+    SCB *scb = sptr->sp_SCB;
+    int size = (int)sptr->sp_Num;
+    int y = intersec_FindWalkHeight(pos, NULL, NULL, 0);
+
+    scb->scb_vertex0.vx = (float)(pos->vx - size);
+    scb->scb_vertex0.vy = (float)y;
+    scb->scb_vertex0.vz = (float)(pos->vz + size);
+    scb->scb_vertex2.vx = (float)(pos->vx - size);
+    scb->scb_vertex2.vy = (float)y;
+    scb->scb_vertex2.vz = (float)(pos->vz - size);
+    scb->scb_vertex1.vx = (float)(pos->vx + size);
+    scb->scb_vertex1.vy = (float)y;
+    scb->scb_vertex1.vz = (float)(pos->vz + size);
+    scb->scb_vertex3.vx = (float)(pos->vx + size);
+    scb->scb_vertex3.vy = (float)y;
+    scb->scb_vertex3.vz = (float)(pos->vz - size);
+    return y;
+}
+
 /* 0xFB6C0, 49 bytes, global, 4 named locals
  * sprite_LockNode
  * PDB type: int (int*)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
+
+int sprite_LockNode(int32_t *cb)
+{
+    Sprite *sptr = (Sprite *)(void *)cb;
+    VECTOR *rpos = (VECTOR *)(void *)sptr->sp_User;
+
+    sprite_gSetSpriteCenter(sptr, rpos->vx, rpos->vy, rpos->vz);
+    return rpos->vz;
+}
 
 /* 0xFB700, 801 bytes, global, 5 named locals
  * sprite_MainCallBack
@@ -1626,6 +2088,50 @@ void sprite_Move3DSprite(Sprite *sptr, VECTOR *pos)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
 
+int sprite_OrbitNode(int32_t *cb)
+{
+    Sprite *sptr = (Sprite *)(void *)cb;
+    VECTOR *rpos = (VECTOR *)(void *)sptr->sp_User;
+    int16_t old_time = sptr->sp_Time;
+    int time_step = old_time / 8;
+    int orbit_step = 0x100;
+    _svector dir;
+    VECTOR pos;
+    MATRIX rmat;
+
+    if (time_step > 0xff) {
+        orbit_step = time_step;
+        if (time_step > 0x1000) {
+            orbit_step = 0x1000;
+        }
+    }
+    sptr->sp_Time = (int16_t)(old_time + time_step);
+    dir.vx = (int16_t)((0x800 - old_time) - orbit_step);
+    dir.vy = 0;
+    dir.vz = 0;
+    dir.pad = 0;
+    memset(&pos, 0, sizeof(pos));
+    PushMatrix();
+    fRotMatrix(&sptr->sp_Rot, &rmat);
+    fApplyMatrix(&rmat, &dir, &pos);
+    sptr->sp_Rot.vx =
+        (int16_t)(sptr->sp_Rot.vx + sptr->sp_RVel.vx);
+    sptr->sp_Rot.vy =
+        (int16_t)(sptr->sp_Rot.vy + sptr->sp_RVel.vy);
+    sptr->sp_Rot.vz =
+        (int16_t)(sptr->sp_Rot.vz + sptr->sp_RVel.vz);
+    sprite_gSetSpriteCenter(
+        sptr,
+        rpos->vx + pos.vx,
+        rpos->vy + pos.vy,
+        rpos->vz + pos.vz);
+    if (sptr->sp_Time > 0x6ff) {
+        sprite_gFreeSprite(sptr);
+    }
+    PopMatrix();
+    return sptr->sp_Time;
+}
+
 /* 0xFBC90, 305 bytes, global, 5 named locals
  * sprite_PointsCallBack
  * PDB type: void (int*)
@@ -1706,23 +2212,34 @@ int sprite_RingCallBack(Ring *ring)
         ((uint16_t)ring->rot.pad & UINT16_C(0x20)) == 0
             ? data->clut
             : (unsigned)ring->pos.pad;
-    if (color_index >= 32) {
-        color_index = 0;
-    }
     color = cluts[color_index] |
         ((uint32_t)(uint16_t)ring->b1 << 24);
-    /* A repeated color pair is the uniform-cylinder form. */
-    drawCylinderG(
-        &ring->pos,
-        &ring->rot,
-        (float)ring->rad1,
-        (float)ring->rad2,
-        (float)ring->h1,
-        (float)ring->h2,
-        color,
-        color);
+    if ((int8_t)ring->rot.pad < 0) {
+        drawCylinderG(
+            &ring->pos,
+            &ring->rot,
+            (float)ring->rad1,
+            (float)ring->rad2,
+            (float)ring->h1,
+            (float)ring->h2,
+            color,
+            color);
+    } else {
+        drawCylinder(
+            &ring->pos,
+            &ring->rot,
+            (float)ring->rad1,
+            (float)ring->rad2,
+            (float)ring->h1,
+            (float)ring->h2,
+            color,
+            data->ratio,
+            data->type,
+            0,
+            data->tmode);
+    }
 
-    ring->rot.vx = (int16_t)(ring->rot.vx + data->rvel);
+    ring->rot.vy = (int16_t)(ring->rot.vy + data->rvel);
     if (gGlobalFrameRate != 0) {
         ring->rad1 = (int16_t)(ring->rad1 + ring->rad1v);
         ring->rad2 = (int16_t)(ring->rad2 + ring->rad2v);
@@ -1796,6 +2313,7 @@ void sprite_Rotate3DSprite(Sprite *sptr, _svector *rotation)
     sptr->sp_Rot.vy = rotation->vy;
     sptr->sp_Rot.vz = rotation->vz;
 
+    PushMatrix();
     vec_IdentMatrix(&matrix);
     fRotMatrixZ((int)rotation->vz, &matrix);
     for (index = 0; index < 4; ++index) {
@@ -1811,6 +2329,7 @@ void sprite_Rotate3DSprite(Sprite *sptr, _svector *rotation)
     for (index = 0; index < 4; ++index) {
         fApplyMatrixSFV(&matrix, vertices[index], vertices[index]);
     }
+    PopMatrix();
 }
 
 /* 0xFC3F0, 281 bytes, global, 3 named locals
@@ -1819,17 +2338,80 @@ void sprite_Rotate3DSprite(Sprite *sptr, _svector *rotation)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
 
+void sprite_SCBDraw(void *matrix0)
+{
+    MATRIX *matrix = (MATRIX *)matrix0;
+    List *source = &mSCBDraw[mCurSCBList];
+    List *destination = &mSCBDraw[mCurSCBList ^ 1];
+    SCB *scb;
+
+    numSCB = 0;
+    SetRotMatrix(matrix);
+    SetTransMatrix(matrix);
+    list_InitList(destination);
+    while ((scb = (SCB *)list_RemoveHead(source)) != NULL) {
+        if ((scb->scb_flags & 1) != 0) {
+            memfree(scb);
+            continue;
+        }
+        if ((scb->scb_flags & 0x800) != 0) {
+            if (scb->scb_vertex1.pad == 0) {
+                scb->scb_flags |= 1;
+            }
+        } else if ((scb->scb_flags & 0x40) == 0) {
+            _RenderSprite(matrix, scb);
+        }
+        ++numSCB;
+        list_AddTail(destination, (Node *)scb);
+    }
+    mCurSCBList ^= 1;
+}
+
 /* 0xFC510, 109 bytes, global, 6 named locals
  * sprite_Set2DSCBPos
  * PDB type: void (SCB*, int, int, int, int, ...
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
 
+void sprite_Set2DSCBPos(
+    SCB *scb, int x, int y, int z, int w, int h)
+{
+    scb->scb_vertex0.vx = (float)x;
+    scb->scb_vertex1.vx = (float)(x + w);
+    scb->scb_vertex3.vx = (float)(x + w);
+    scb->scb_vertex2.vx = (float)x;
+    scb->scb_vertex0.vy = (float)y;
+    scb->scb_vertex1.vy = (float)y;
+    scb->scb_vertex2.vy = (float)(y + h);
+    scb->scb_vertex3.vy = (float)(y + h);
+    scb->scb_vertex0.vz = (float)z;
+    scb->scb_vertex1.vz = (float)z;
+    scb->scb_vertex2.vz = (float)z;
+    scb->scb_vertex3.vz = (float)z;
+}
+
 /* 0xFC580, 102 bytes, global, 5 named locals
  * sprite_SetColorCycle
  * PDB type: Sprite* (Sprite*, int, int, int,...
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
+
+Sprite *sprite_SetColorCycle(
+    Sprite *sptr, int type, int ps, int pe, int pr)
+{
+    PalAnim *anim = sptr->sp_PAnim;
+    ColorCycle *cycle = &anim->pal_cycle[0];
+
+    anim->pal_Data = effects1Handle[type];
+    anim->pal_flags |= 1;
+    cycle->cc_dcolor = 0;
+    cycle->cc_fcolor = (int16_t)ps;
+    cycle->cc_current = ps << 12;
+    cycle->cc_lcolor = (int16_t)pe;
+    cycle->cc_rate = pr;
+    cycle->cc_flags |= 2;
+    return sptr;
+}
 
 /* 0xFC5F0, 12 bytes, global, 3 named locals
  * sprite_SetProjectile
@@ -1851,11 +2433,54 @@ Projectile *sprite_SetProjectile(
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
 
+void sprite_SetSpriteEffect(
+    Sprite *sptr, int effect, int w, int h)
+{
+    int scale = 0x1000;
+
+    (void)w;
+    (void)h;
+    sptr->sp_Num = (int16_t)effect;
+    if ((effect & ~4) != 0) {
+        if (effect == 8) {
+            scale = 0x400;
+        } else if (effect == 10) {
+            sptr->sp_Time = 0x20;
+            sptr->sp_cScale.init = 0x4000;
+            return;
+        } else if (effect == 12) {
+            sptr->sp_Num = -1;
+            sptr->sp_Time = 0x80;
+            sptr->sp_cScale.init = 0x1000;
+            return;
+        }
+    }
+    sptr->sp_Time = 0x80;
+    sptr->sp_cScale.init = (int16_t)scale;
+}
+
 /* 0xFC670, 155 bytes, global, 3 named locals
  * sprite_SetTrajectory
  * PDB type: int (Sprite*, int, int)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
+
+int sprite_SetTrajectory(Sprite *sptr, int velocity, int angle)
+{
+    int component;
+
+    sptr->sp_Time = 0;
+    component = flexmul(rcos(angle), velocity);
+    sptr->sp_Vel.vx = (float)component;
+    component = flexmul(rsin(angle), velocity);
+    if (component < 0) {
+        component = -component;
+    }
+    sptr->sp_Vel.vy = (float)component;
+    component = flexmul(rcos(angle), velocity);
+    sptr->sp_Vel.vz = (float)component;
+    return component;
+}
 
 /* 0xFC710, 288 bytes, global, 5 named locals
  * sprite_SmallPointsCallBack
@@ -1905,17 +2530,75 @@ void sprite_SmallPointsCallBack(int32_t *cb)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
 
+int sprite_Sparks(int32_t *cb)
+{
+    Sprite *sptr = (Sprite *)(void *)cb;
+    SCB *scb = sptr->sp_SCB;
+
+    sptr->sp_Vel.vx -= sptr->sp_Acc.vx;
+    sptr->sp_Vel.vy -= sptr->sp_Acc.vy;
+    sptr->sp_Vel.vz -= sptr->sp_Acc.vz;
+    sprite_gMoveSpritePosition(
+        sptr, sptr->sp_Vel.vx, sptr->sp_Vel.vy, sptr->sp_Vel.vz);
+    scb->scb_vertex0.pad = 0xff;
+    scb->scb_vertex1.pad = 0xff;
+    scb->scb_vertex2.pad = 0xff;
+    sptr->sp_cScale.init =
+        (int16_t)(sptr->sp_cScale.init + 0x199);
+    if (sptr->sp_cScale.init > 0x17ff) {
+        sprite_gFreeSprite(sptr);
+    }
+    return sptr->sp_cScale.init;
+}
+
 /* 0xFC8E0, 199 bytes, global, 5 named locals
  * sprite_Spot
  * PDB type: int (int*)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
 
+int sprite_Spot(int32_t *cb)
+{
+    Sprite *sptr = (Sprite *)(void *)cb;
+    VECTOR *pos = (VECTOR *)(void *)sptr->sp_User;
+    SCB *scb = sptr->sp_SCB;
+    int size = (int)sptr->sp_Num;
+
+    scb->scb_vertex0.vx = (float)(pos->vx - size);
+    scb->scb_vertex0.vy = (float)pos->vy;
+    scb->scb_vertex0.vz = (float)(pos->vz + size);
+    scb->scb_vertex2.vx = (float)(pos->vx - size);
+    scb->scb_vertex2.vy = (float)pos->vy;
+    scb->scb_vertex2.vz = (float)(pos->vz - size);
+    scb->scb_vertex1.vx = (float)(pos->vx + size);
+    scb->scb_vertex1.vy = (float)pos->vy;
+    scb->scb_vertex1.vz = (float)(pos->vz + size);
+    scb->scb_vertex3.vx = (float)(pos->vx + size);
+    scb->scb_vertex3.vy = (float)pos->vy;
+    scb->scb_vertex3.vz = (float)(pos->vz - size);
+    return pos->vz - size;
+}
+
 /* 0xFC9B0, 119 bytes, global, 2 named locals
  * sprite_SpriteMotion
  * PDB type: int (int*)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
+
+int sprite_SpriteMotion(int32_t *cb)
+{
+    Sprite *sptr = (Sprite *)(void *)cb;
+
+    sprite_gMoveSpritePosition(
+        sptr, sptr->sp_Vel.vx, sptr->sp_Vel.vy, sptr->sp_Vel.vz);
+    sprite_SpriteRotScale(sptr, 0x18, 0, 0);
+    sptr->sp_cScale.init =
+        (int16_t)(sptr->sp_cScale.init - 0x14);
+    if (sptr->sp_cScale.init < 1) {
+        sprite_gFreeSprite(sptr);
+    }
+    return sptr->sp_cScale.init;
+}
 
 /* 0xFCA30, 714 bytes, global, 11 named locals
  * sprite_SpriteRotScale
@@ -2057,8 +2740,7 @@ static void sprite_update_attached_position(Sprite *sptr)
         ((uint32_t)sptr->sp_Flags >> 24) & 0xffu;
     int node_id = ((uint32_t)sptr->sp_Flags >> 16) & 0xffu;
 
-    if (player < JPB_SCENE_CAPACITY &&
-        maSceneData[player].sceneRoot.objectID != -1) {
+    if (maSceneData[player].sceneRoot.objectID != -1) {
         VECTOR *position = coll_GetNodeCenter((int)player, node_id);
 
         if (position != NULL) {
@@ -2072,17 +2754,11 @@ static void sprite_update_attached_position(Sprite *sptr)
 
 void sprite_SpriteWork(MATRIX *matrix)
 {
-    int sprite_list = *(volatile int *)&mCurSpriteList;
+    int sprite_list = mCurSpriteList;
     List *source_sprites;
     List *destination_sprites;
     Sprite *sptr;
 
-    if ((unsigned)sprite_list >= 2U) {
-        jpb_sprite_last_invalid_selector = sprite_list;
-        ++jpb_sprite_list_recovery_count;
-        sprite_list &= 1;
-        mCurSpriteList = sprite_list;
-    }
     source_sprites = &mSpriteWork[sprite_list];
     destination_sprites = &mSpriteWork[sprite_list ^ 1];
 
@@ -2121,44 +2797,8 @@ void sprite_SpriteWork(MATRIX *matrix)
         ++numSprite;
         list_AddTail(destination_sprites, (Node *)sptr);
     }
-    mCurSpriteList = sprite_list ^ 1;
-
-    numSCB = 0;
-    SetRotMatrix(matrix);
-    SetTransMatrix(matrix);
-    {
-        int scb_list = *(volatile int *)&mCurSCBList;
-        List *source_scbs;
-        List *destination_scbs;
-        SCB *scb;
-
-        if ((unsigned)scb_list >= 2U) {
-            jpb_sprite_last_invalid_selector = scb_list;
-            ++jpb_sprite_list_recovery_count;
-            scb_list &= 1;
-            mCurSCBList = scb_list;
-        }
-        source_scbs = &mSCBDraw[scb_list];
-        destination_scbs = &mSCBDraw[scb_list ^ 1];
-
-        list_InitList(destination_scbs);
-        while ((scb = (SCB *)list_RemoveHead(source_scbs)) != NULL) {
-            if ((scb->scb_flags & 1) != 0) {
-                memfree(scb);
-                continue;
-            }
-            if ((scb->scb_flags & 0x800) != 0) {
-                if (scb->scb_vertex1.pad == 0) {
-                    scb->scb_flags |= 1;
-                }
-            } else if ((scb->scb_flags & 0x40) == 0) {
-                _RenderSprite(matrix, scb);
-            }
-            ++numSCB;
-            list_AddTail(destination_scbs, (Node *)scb);
-        }
-        mCurSCBList = scb_list ^ 1;
-    }
+    mCurSpriteList ^= 1;
+    sprite_SCBDraw(matrix);
 }
 
 /* 0xFD100, 3 bytes, global, 1 named locals
@@ -2177,17 +2817,69 @@ void sprite_SwapData(SCB *scb)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
 
+int sprite_TrackNode(int32_t *cb)
+{
+    Sprite *sptr = (Sprite *)(void *)cb;
+    VECTOR *rpos = (VECTOR *)(void *)sptr->sp_User;
+    const float step = 32.0f;
+
+    sptr->sp_cScale.init =
+        (int16_t)(sptr->sp_cScale.init - 0x147);
+    sptr->sp_Pos.vx +=
+        sptr->sp_Pos.vx <= (float)rpos->vx ? step : -step;
+    sptr->sp_Pos.vy +=
+        sptr->sp_Pos.vy <= (float)rpos->vy ? step : -step;
+    sptr->sp_Pos.vz +=
+        sptr->sp_Pos.vz <= (float)rpos->vz ? step : -step;
+    sptr->sp_Time = (int16_t)(sptr->sp_Time - 0x10);
+    if (sptr->sp_Time < 1 || sptr->sp_cScale.init < 0x199) {
+        sprite_gFreeSprite(sptr);
+    }
+    sprite_gSetSpriteCenter(
+        sptr,
+        (int)sptr->sp_Pos.vx,
+        (int)sptr->sp_Pos.vy,
+        (int)sptr->sp_Pos.vz);
+    return (int)sptr->sp_Pos.vz;
+}
+
 /* 0xFD220, 83 bytes, global, 3 named locals
  * sprite_ViewPoint
  * PDB type: int (int*)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
 
+int sprite_ViewPoint(int32_t *cb)
+{
+    Sprite *sptr = (Sprite *)(void *)cb;
+    _svector v3Focus;
+    VECTOR v3PolarCoord;
+
+    camera_GetCamera(&v3PolarCoord, &v3Focus);
+    sprite_gSetSpritePosition(
+        sptr, (int)v3Focus.vx, (int)v3Focus.vy, (int)v3Focus.vz);
+    return (int)v3Focus.vz;
+}
+
 /* 0xFD280, 119 bytes, global, 2 named locals
  * sprite_gAllocPCB
  * PDB type: PCB* ()
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
+
+PCB *sprite_gAllocPCB(void)
+{
+    PCB *pcb = (PCB *)memalloc((unsigned)sizeof(*pcb));
+
+    if (pcb != NULL && (OptionStruct.FunFactor & 1u) == 0) {
+        memset(pcb, 0, sizeof(*pcb));
+        list_AddTail(
+            &mSCBDraw[mCurSCBList], (Node *)(void *)pcb);
+        pcb->pcb_next_PCB = NULL;
+        return pcb;
+    }
+    return NULL;
+}
 
 /* 0xFD300, 125 bytes, global, 2 named locals
  * sprite_gAllocSCB
@@ -2326,8 +3018,6 @@ void sprite_gInitSprites(void)
     list_InitList(&mSpriteWork[0]);
     list_InitList(&mSpriteWork[1]);
     mCurSpriteList = 0;
-    jpb_sprite_list_recovery_count = 0;
-    jpb_sprite_last_invalid_selector = 0;
 }
 
 /* 0xFD580, 172 bytes, global, 4 named locals
@@ -2335,6 +3025,29 @@ void sprite_gInitSprites(void)
  * PDB type: void (SCB*, float, float, float)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
+
+void sprite_gMoveSCBPosition(
+    SCB *scb, float dx, float dy, float dz)
+{
+    if (dx != 0.0f) {
+        scb->scb_vertex0.vx += dx;
+        scb->scb_vertex1.vx += dx;
+        scb->scb_vertex2.vx += dx;
+        scb->scb_vertex3.vx += dx;
+    }
+    if (dy != 0.0f) {
+        scb->scb_vertex0.vy += dy;
+        scb->scb_vertex1.vy += dy;
+        scb->scb_vertex2.vy += dy;
+        scb->scb_vertex3.vy += dy;
+    }
+    if (dz != 0.0f) {
+        scb->scb_vertex0.vz += dz;
+        scb->scb_vertex1.vz += dz;
+        scb->scb_vertex2.vz += dz;
+        scb->scb_vertex3.vz += dz;
+    }
+}
 
 /* 0xFD630, 306 bytes, global, 11 named locals
  * sprite_gMoveSpritePosition
@@ -2386,11 +3099,70 @@ void sprite_gMoveSpritePosition(
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
 
+void sprite_gSetBillBrd(Sprite *sptr)
+{
+    SCB *scb = sptr->sp_SCB;
+    _Material *texture = scb->scb_Texture;
+    int half_width;
+    int half_height;
+    int width;
+    int height;
+    uint16_t flags =
+        (uint16_t)((uint32_t)sptr->sp_Flags >> 16);
+
+    if (texture == NULL) {
+        half_width = 64;
+        half_height = 64;
+    } else {
+        half_width = texture->iw / 2;
+        half_height = texture->ih / 2;
+    }
+    width = flexmul(sptr->sp_cScale.init * half_width * 4, 1);
+    height = flexmul(sptr->sp_cScale.init * half_height * 4, 1);
+    if ((flags & 1) != 0) {
+        if (mDrawingSurfaceId == 0) {
+            height = -height;
+        } else {
+            width = -width;
+        }
+    }
+    if ((flags & 2) != 0 && mDrawingSurfaceId != 0) {
+        width = -width;
+    }
+    if ((flags & 4) != 0 && mDrawingSurfaceId != 0) {
+        height = -height;
+    }
+    scb->scb_vertex0.vx = (float)-width;
+    scb->scb_vertex0.vy = (float)-height;
+    scb->scb_vertex0.vz = 0.0f;
+    scb->scb_vertex1.vx = (float)width;
+    scb->scb_vertex1.vy = (float)-height;
+    scb->scb_vertex1.vz = 0.0f;
+    scb->scb_vertex2.vx = (float)-width;
+    scb->scb_vertex2.vy = (float)height;
+    scb->scb_vertex2.vz = 0.0f;
+    scb->scb_vertex3.vx = (float)width;
+    scb->scb_vertex3.vy = (float)height;
+    scb->scb_vertex3.vz = 0.0f;
+    scb->scb_cvertex.vx = sptr->sp_Pos.vx;
+    scb->scb_cvertex.vy = sptr->sp_Pos.vy;
+    scb->scb_cvertex.vz = sptr->sp_Pos.vz;
+}
+
 /* 0xFD8A0, 31 bytes, global, 3 named locals
  * sprite_gSetLineColor
  * PDB type: void (Sprite*, CVECTOR*)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
+
+void sprite_gSetLineColor(Sprite *sptr, CVECTOR *color)
+{
+    SCB *scb = sptr->sp_SCB;
+
+    scb->scb_vertex0.pad = color->r;
+    scb->scb_vertex1.pad = color->g;
+    scb->scb_vertex2.pad = color->b;
+}
 
 /* 0xFD8C0, 84 bytes, global, 4 named locals
  * sprite_gSetLinePosition
@@ -2398,11 +3170,31 @@ void sprite_gMoveSpritePosition(
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
 
+void sprite_gSetLinePosition(
+    Sprite *sptr, VECTOR *p0, VECTOR *p1)
+{
+    SCB *scb = sptr->sp_SCB;
+
+    scb->scb_vertex0.vx = (float)p0->vx;
+    scb->scb_vertex0.vy = (float)p0->vy;
+    scb->scb_vertex0.vz = (float)p0->vz;
+    scb->scb_vertex1.vx = (float)p1->vx;
+    scb->scb_vertex1.vy = (float)p1->vy;
+    scb->scb_vertex1.vz = (float)p1->vz;
+}
+
 /* 0xFD920, 24 bytes, global, 4 named locals
  * sprite_gSetRGB
  * PDB type: void (SCB*, char, char, char)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
+
+void sprite_gSetRGB(SCB *scb, char r, char g, char b)
+{
+    scb->scb_vertex0.pad = (int16_t)r;
+    scb->scb_vertex1.pad = (int16_t)g;
+    scb->scb_vertex2.pad = (int16_t)b;
+}
 
 /* 0xFD940, 163 bytes, global, 6 named locals
  * sprite_gSetSCBPosition
@@ -2410,11 +3202,38 @@ void sprite_gMoveSpritePosition(
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
 
+void sprite_gSetSCBPosition(
+    SCB *scb, int x, int y, int z, int w, int h)
+{
+    _Material *texture = scb->scb_Texture;
+    int half_width;
+    int half_height;
+
+    (void)w;
+    (void)h;
+    if (texture == NULL) {
+        half_width = 64;
+        half_height = 64;
+    } else {
+        half_width = texture->iw / 2;
+        half_height = texture->ih / 2;
+    }
+    sprite_Set2DSCBPos(
+        scb, x, y, z, half_width, half_height);
+}
+
 /* 0xFD9F0, 39 bytes, global, 4 named locals
  * sprite_gSetSpriteCenter
  * PDB type: void (Sprite*, int, int, int)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
+
+void sprite_gSetSpriteCenter(Sprite *sptr, int x, int y, int z)
+{
+    sptr->sp_Pos.vx = (float)x;
+    sptr->sp_Pos.vy = (float)y;
+    sptr->sp_Pos.vz = (float)z;
+}
 
 /* 0xFDA20, 239 bytes, global, 7 named locals
  * sprite_gSetSpritePosition
@@ -2445,16 +3264,16 @@ void sprite_gSetSpritePosition(
     sptr->sp_Pos.vz = (float)z;
     scb->scb_vertex0.vy = (float)(y - h2);
     scb->scb_vertex1.vy = (float)(y - h2);
-    scb->scb_vertex0.vz = (float)z;
-    scb->scb_vertex1.vz = (float)z;
-    scb->scb_vertex2.vz = (float)z;
-    scb->scb_vertex3.vz = (float)z;
-    scb->scb_vertex0.vx = (float)(x - w2);
-    scb->scb_vertex1.vx = (float)(x + w2);
-    scb->scb_vertex2.vx = (float)(x - w2);
-    scb->scb_vertex3.vx = (float)(x + w2);
+    scb->scb_vertex0.vz = (float)(x - w2);
+    scb->scb_vertex1.vz = (float)(x + w2);
+    scb->scb_vertex2.vz = (float)(x - w2);
+    scb->scb_vertex3.vz = (float)(x + w2);
     scb->scb_vertex2.vy = (float)(y + h2);
     scb->scb_vertex3.vy = (float)(y + h2);
+    scb->scb_vertex0.vx = (float)z;
+    scb->scb_vertex1.vx = (float)z;
+    scb->scb_vertex2.vx = (float)z;
+    scb->scb_vertex3.vx = (float)z;
 }
 
 /* 0xFDB10, 31 bytes, global, 5 named locals
@@ -2463,11 +3282,22 @@ void sprite_gSetSpritePosition(
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
 
+void sprite_gSetSpriteRGB(
+    Sprite *sptr, char r, char g, char b)
+{
+    sprite_gSetRGB(sptr->sp_SCB, r, g, b);
+}
+
 /* 0xFDB30, 5 bytes, global, 1 named locals
  * sprite_gUnHideSCB
  * PDB type: void (SCB*)
  * Source: W:\SWJediPowerBattles\Work\sprite.c
  */
+
+void sprite_gUnHideSCB(SCB *scb)
+{
+    scb->scb_flags &= ~INT32_C(0x40);
+}
 
 /* 0xFDB40, 9 bytes, global, 2 named locals
  * sprite_gUnHideSprite

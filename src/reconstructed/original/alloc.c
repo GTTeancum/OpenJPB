@@ -1,10 +1,11 @@
 /*
- * Reviewed reconstruction of W:\SWJediPowerBattles\Work\alloc.c.
+ * COMPLETE REVIEWED RECONSTRUCTION of
+ * W:\SWJediPowerBattles\Work\alloc.c.
  *
  * Provenance:
- *   direct     - API signatures, local names, code extents, heap size, and
- *                header constants from the exact PDB / executable pair.
- *   decompiled - boundary-tag behavior checked against Ghidra and x64
+ *   direct     - API signatures, local names, code extents, heap size, exact
+ *                global names/types, and header constants from the PDB.
+ *   assembly   - every branch and boundary-tag mutation checked against x64
  *                instructions at RVAs 0x17470 through 0x1763B.
  *
  * Blocks are measured in 32-bit words and include their header word. Header
@@ -21,12 +22,8 @@
 #define MEM_LENGTH_MASK 0x7fffu
 #define MEM_ALLOCATED 0x8000u
 
-/*
- * Two boundary words reproduce the writable location immediately following
- * the 0x4000-word heap in the reference BSS without exposing it as payload.
- */
-static uint32_t mem_blob[MEM_HEAP_WORDS + 2];
-static uint32_t mem_heap_words;
+unsigned mem_heaplen;
+unsigned localheap[MEM_HEAP_WORDS + 1];
 uint32_t *mem_heap;
 uint32_t *mem_heapend;
 
@@ -51,8 +48,9 @@ void *memalloc(unsigned size)
 
             preceding_length = requested_words | MEM_ALLOCATED;
             if ((int32_t)spare > 0) {
-                if (next < mem_heap_words) {
-                    mem_heap[next] = (requested_words << 16) | spare;
+                if (next < mem_heaplen) {
+                    mem_heap[next] =
+                        ((requested_words | MEM_ALLOCATED) << 16) | spare;
                 }
                 following = next + spare;
                 preceding_length = spare;
@@ -60,7 +58,7 @@ void *memalloc(unsigned size)
                 following = next;
             }
 
-            if (following < mem_heap_words) {
+            if (following < mem_heaplen) {
                 mem_heap[following] =
                     (preceding_length << 16)
                     | (mem_heap[following] & 0xffffu);
@@ -69,7 +67,7 @@ void *memalloc(unsigned size)
         }
 
         current += length;
-        if (current >= mem_heap_words) {
+        if (current >= mem_heaplen) {
             return 0;
         }
     }
@@ -95,7 +93,7 @@ void memfree(void *ptr)
         start = current;
     }
 
-    if (next < mem_heap_words) {
+    if (next < mem_heaplen) {
         uint32_t next_header = mem_heap[next];
         uint32_t following = next;
 
@@ -115,9 +113,9 @@ void memfree(void *ptr)
 /* Reference RVA 0x175F0, 49 bytes. */
 void meminit(void)
 {
-    mem_heap_words = MEM_HEAP_WORDS;
-    mem_heap = mem_blob;
-    mem_heapend = mem_blob + MEM_HEAP_WORDS;
+    mem_heaplen = MEM_HEAP_WORDS;
+    mem_heap = localheap;
+    mem_heapend = localheap + MEM_HEAP_WORDS;
     mem_heap[0] = MEM_HEAP_WORDS;
 }
 

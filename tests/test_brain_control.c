@@ -24,6 +24,20 @@ static int feedback_last_effect;
 static int callback_calls;
 static int callback_result;
 static int chord_pressed;
+static uint32_t test_pose_words[3];
+
+static void init_test_animations(void)
+{
+    int index;
+
+    (anim_InitAnimations)(0);
+    for (index = 0; index < JPB_ANIMATION_CAPACITY; ++index) {
+        maAnimationData[index].depack_context.huffdataorigin =
+            test_pose_words;
+        maAnimationData[index].depack_context3.huffdataorigin =
+            test_pose_words;
+    }
+}
 
 #define CHECK(condition) \
     do { \
@@ -136,7 +150,7 @@ static void init_fixture(ControlFixture *fixture)
     int i;
 
     memset(fixture, 0, sizeof(*fixture));
-    anim_InitAnimations(0);
+    init_test_animations();
     fixture->animation = &maAnimationData[0];
     fixture->player.playerRoot.pParent =
         &fixture->scene.sceneRoot;
@@ -546,8 +560,7 @@ static void test_jump_launch(void)
 {
     ControlFixture fixture;
     int32_t cpad[2] = {0x20, 0};
-    JPBPlayerCallback old_callback =
-        jpb_TrajectoryCallbackSlot;
+    JPBPlayerCallback old_callback = funcArray[6];
 
     reset_traces();
     init_fixture(&fixture);
@@ -557,7 +570,7 @@ static void test_jump_launch(void)
     fixture.player.pSettings.RunningJumpAngle = 0x444;
     fixture.player.pFlags = UINT32_C(0x2000);
     fixture.physics.reversoi = 7;
-    jpb_TrajectoryCallbackSlot = trace_callback;
+    funcArray[6] = trace_callback;
     brain_ControlPlayer(cpad, &fixture.player, 0);
     CHECK(fixture.player.currentMotion == 4);
     CHECK(fixture.player.pMotionCallBack ==
@@ -565,7 +578,7 @@ static void test_jump_launch(void)
     CHECK(fixture.physics.reversoi == 0);
     CHECK(fixture.physics.airspeed == -100);
     CHECK(fixture.physics.trajectory == 0x400);
-    jpb_TrajectoryCallbackSlot = old_callback;
+    funcArray[6] = old_callback;
 }
 
 static void test_running_jump_launch(void)
@@ -575,8 +588,7 @@ static void test_running_jump_launch(void)
         INT32_C(0x20),
         INT32_C(0x1020),
     };
-    JPBPlayerCallback old_callback =
-        jpb_TrajectoryCallbackSlot;
+    JPBPlayerCallback old_callback = funcArray[6];
 
     reset_traces();
     init_fixture(&fixture);
@@ -585,14 +597,14 @@ static void test_running_jump_launch(void)
     fixture.player.pSettings.RunningJumpVel = 222;
     fixture.player.pSettings.RunningJumpAngle = 0x444;
     fixture.physics.reversoi = 7;
-    jpb_TrajectoryCallbackSlot = trace_callback;
+    funcArray[6] = trace_callback;
     brain_ControlPlayer(cpad, &fixture.player, 0);
     CHECK(fixture.player.currentMotion == 4);
     CHECK(fixture.player.pMotionCallBack == trace_callback);
     CHECK(fixture.physics.reversoi == 0);
     CHECK(fixture.physics.airspeed == 222);
     CHECK(fixture.physics.trajectory == 0x444);
-    jpb_TrajectoryCallbackSlot = old_callback;
+    funcArray[6] = old_callback;
 }
 
 static void test_run_stop_and_run_block(void)

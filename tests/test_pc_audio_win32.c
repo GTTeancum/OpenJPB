@@ -228,13 +228,13 @@ static size_t test_exact_bank_path_corpus(const char *sound_directory)
     size_t count = 0;
 
     for (bank_index = 0;
-         bank_index < JPB_SOUND_BANK_TABLE_COUNT;
+         bank_index < AUDIO_SFX_BANK_COUNT;
          ++bank_index) {
-        const JPBSoundBankData *bank =
-            &jpb_soundBankTable[bank_index];
+        const tAudioSFX_Bank *bank =
+            &audioSFX_aSFXBanks[bank_index];
         int path_index;
 
-        for (path_index = 0; path_index < bank->count; ++path_index) {
+        for (path_index = 0; path_index < bank->numSFXs; ++path_index) {
             JPBPCAudioWavInfo info;
             char path[2048];
             char *cursor;
@@ -243,7 +243,7 @@ static size_t test_exact_bank_path_corpus(const char *sound_directory)
                 sizeof(path),
                 "%s\\sfx\\final\\%s",
                 sound_directory,
-                bank->paths[path_index]);
+                bank->ptrSFXNames[path_index]);
 
             if (written < 0 || (size_t)written >= sizeof(path)) {
                 ++failures;
@@ -259,7 +259,7 @@ static size_t test_exact_bank_path_corpus(const char *sound_directory)
                     stderr,
                     "missing/invalid exact bank WAV: %s (%s)\n",
                     path,
-                    bank->directory);
+                    bank->bankName);
                 ++failures;
             }
             ++count;

@@ -22,6 +22,7 @@
 #include "jpb/model.h"
 
 #include "jpb/bmd.h"
+#include "jpb/console.h"
 #include "jpb/globalarrays.h"
 #include "jpb/level_world.h"
 #include "jpb/loader.h"
@@ -58,11 +59,58 @@ static int32_t jediloading;
 static uint8_t *jpb_model_geometry_base;
 static size_t jpb_model_geometry_size;
 static int jpb_model_build_failed;
+typedef struct JPBModelGeometryBounds {
+    uint8_t *base;
+    size_t size;
+} JPBModelGeometryBounds;
+static JPBModelGeometryBounds
+    jpb_model_geometry_bounds[JPB_MODEL_REGISTRY_CAPACITY];
+static size_t jpb_model_geometry_bounds_count;
 
 void jpb_ModelSetGeometryBounds(void *base, size_t size)
 {
+    size_t index;
+
     jpb_model_geometry_base = (uint8_t *)base;
     jpb_model_geometry_size = size;
+    if (base == NULL || size == 0) {
+        return;
+    }
+    for (index = 0; index < jpb_model_geometry_bounds_count; ++index) {
+        if (jpb_model_geometry_bounds[index].base == base) {
+            jpb_model_geometry_bounds[index].size = size;
+            return;
+        }
+    }
+    if (jpb_model_geometry_bounds_count <
+        JPB_MODEL_REGISTRY_CAPACITY) {
+        jpb_model_geometry_bounds[jpb_model_geometry_bounds_count].base =
+            (uint8_t *)base;
+        jpb_model_geometry_bounds[jpb_model_geometry_bounds_count].size =
+            size;
+        ++jpb_model_geometry_bounds_count;
+    }
+}
+
+static int model_select_geometry_bounds(const geomData *root)
+{
+    size_t index;
+
+    if ((const uint8_t *)root == jpb_model_geometry_base &&
+        jpb_model_geometry_size != 0) {
+        return 1;
+    }
+    for (index = 0; index < jpb_model_geometry_bounds_count; ++index) {
+        if (jpb_model_geometry_bounds[index].base ==
+            (const uint8_t *)root) {
+            jpb_model_geometry_base =
+                jpb_model_geometry_bounds[index].base;
+            jpb_model_geometry_size =
+                jpb_model_geometry_bounds[index].size;
+            return 1;
+        }
+    }
+    return jpb_model_geometry_base == NULL;
 }
 
 static int model_geometry_record_valid(const geomData *record)
@@ -253,7 +301,57 @@ void addTexTrack(
     tt[1].th = NULL;
 }
 
-/* RVA 0xD9830 remains a debug-console-only gap: console_NodeCommand. */
+/* Reference RVA 0xD9830, 584 bytes. */
+int console_NodeCommand(
+    int narg, char **arg_str, int *arg_int, float *arg_float)
+{
+    Mnode *node;
+
+    (void)arg_str;
+    (void)arg_int;
+    if (narg == 3) {
+        int scale;
+
+        node = coll_GetNode((int)arg_float[0], (unsigned)arg_float[1]);
+        if (node == NULL) {
+            return 0;
+        }
+        node->flags |= JPB_COLLISION_FLAG_SCALE_OVERRIDE;
+        scale = (int)(arg_float[2] * 4096.0f);
+        node->v3Scale.vx = scale;
+        node->v3Scale.vy = (int)(arg_float[2] * 4096.0f);
+        node->v3Scale.vz = (int)(arg_float[2] * 4096.0f);
+        return node->v3Scale.vz;
+    }
+    if (narg == 2) {
+        node = coll_GetNode((int)arg_float[0], (unsigned)arg_float[1]);
+        if (node == NULL) {
+            return 0;
+        }
+        return console_Printf("node %s\n", (char *)(void *)node->pGeomData);
+    }
+    if (narg == 1) {
+        Mnode temporary;
+        Mnode *head = coll_GetNode(0, 8);
+        Mnode *source;
+
+        if (head == NULL) {
+            return 0;
+        }
+        source = coll_GetNode((int)arg_float[0], 8);
+        if (source == NULL) {
+            return 0;
+        }
+        temporary = *head;
+        *head = *source;
+        *source = temporary;
+        return (int)(uintptr_t)source;
+    }
+    console_Printf("node: builtin\n");
+    console_Printf("node object nodeid scalar \t- scales part\n");
+    console_Printf("node object nodeid\t\t\t- show part name\n");
+    return console_Printf("node object\t\t\t\t\t- steal head\n");
+}
 
 /* Reference RVA 0xD9A80, 404 bytes. */
 unsigned levTexParseFarce(unsigned char *name)
@@ -356,6 +454,13 @@ void model_InitModels(void)
     mReuseModel = 0;
     mpGeomArray = NULL;
     mObject = NULL;
+    jpb_model_geometry_base = NULL;
+    jpb_model_geometry_size = 0;
+    jpb_model_geometry_bounds_count = 0;
+    memset(
+        jpb_model_geometry_bounds,
+        0,
+        sizeof(jpb_model_geometry_bounds));
     packFlag = 1;
     resetTexturePacker();
 }
@@ -477,6 +582,9 @@ int jpb_ModelPrepareRegisteredGeometry(
     if (pRoot == NULL || name == NULL) {
         return 0;
     }
+    if (!model_select_geometry_bounds(pRoot)) {
+        return 0;
+    }
     for (index = 0; index < mNumRegisteredModels; ++index) {
         if (strcmp(name, maRegisteredModels[index]) == 0) {
             return 1;
@@ -511,6 +619,9 @@ modelObject *model_gInitModelRoot(
     if (pRoot == NULL || name == NULL ||
         (id >= 0 &&
          (unsigned)id >= JPB_MODEL_REGISTRY_CAPACITY)) {
+        return NULL;
+    }
+    if (!model_select_geometry_bounds(pRoot)) {
         return NULL;
     }
     mModelID = id;

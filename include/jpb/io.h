@@ -20,6 +20,12 @@ enum {
     JPB_FILE_READ_ALL = 2
 };
 
+#if defined(JPB_IO_TESTING)
+typedef void *(*JPBFileAppendOpenTestHook)(
+    const char *name, const char *mode);
+void jpb_IOSetFileAppendOpenTestHook(JPBFileAppendOpenTestHook hook);
+#endif
+
 uint64_t file_AppendFile(char *name, char *buf, int32_t size);
 int file_CLOSE(JPBFileHandle *fd);
 uint64_t file_GETSIZE(JPBFileHandle *fd);

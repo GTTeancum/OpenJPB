@@ -15,9 +15,57 @@ typedef enum JPBSaveResult {
     JPB_SAVE_BAD_ARGUMENT = 4
 } JPBSaveResult;
 
+/* Exact PDB types used by the legacy three-slot memory-card owner. */
+typedef struct miscSaveGameStruct {
+    uint8_t pos[16][16];
+} miscSaveGameStruct;
+
+typedef struct MEMFILEHEADER {
+    uint32_t saveChecksum;
+    uint32_t optionChecksum;
+    optionstruct OptionStruct;
+    miscSaveGameStruct msg;
+} MEMFILEHEADER;
+
+typedef struct SAVEGAMEBLOCK {
+    MEMFILEHEADER header;
+    saveGameStruct saveGame[3];
+} SAVEGAMEBLOCK;
+
+extern SAVEGAMEBLOCK cardLoadBuffer;
+
+#if defined(__cplusplus)
+#define JPB_SAVEGAME_STATIC_ASSERT static_assert
+#else
+#define JPB_SAVEGAME_STATIC_ASSERT _Static_assert
+#endif
+
+JPB_SAVEGAME_STATIC_ASSERT(
+    sizeof(miscSaveGameStruct) == 256,
+    "miscSaveGameStruct must match the PDB layout");
+JPB_SAVEGAME_STATIC_ASSERT(
+    sizeof(MEMFILEHEADER) == 320,
+    "MEMFILEHEADER must match the PDB layout");
+JPB_SAVEGAME_STATIC_ASSERT(
+    offsetof(MEMFILEHEADER, OptionStruct) == 8,
+    "MEMFILEHEADER.OptionStruct offset changed");
+JPB_SAVEGAME_STATIC_ASSERT(
+    offsetof(MEMFILEHEADER, msg) == 64,
+    "MEMFILEHEADER.msg offset changed");
+JPB_SAVEGAME_STATIC_ASSERT(
+    sizeof(SAVEGAMEBLOCK) == 14192,
+    "SAVEGAMEBLOCK must match PDB type 0x7585");
+JPB_SAVEGAME_STATIC_ASSERT(
+    offsetof(SAVEGAMEBLOCK, saveGame) == 320,
+    "SAVEGAMEBLOCK.saveGame offset changed");
+
+#undef JPB_SAVEGAME_STATIC_ASSERT
+
 /* Exact PDB-named raw-payload helpers at RVAs 0x127C70/0x128580. */
 void deserializeGameStruct(const void *data);
 void *serializeGameStruct(void);
+void deserializeOptionStruct(const void *data, optionstruct *options);
+void *serializeOptionsStruct(const optionstruct *options);
 
 /*
  * Portable file boundary for the matched PC payloads. Game is exactly one

@@ -34,13 +34,6 @@ typedef struct physicsObject physicsObject;
 
 typedef void (*JPBSceneMiddleRenderStageHook)(
     void *user_data, MATRIX *matrix);
-typedef void (*JPBSceneLevelOwnerHook)(
-    void *user_data,
-    int level,
-    int argument0,
-    int argument1,
-    int argument2);
-
 /*
  * Renderer-neutral stage seams inside the exact scene_middleRender owner.
  * They publish completed original-engine stages to the portable PC renderer
@@ -61,7 +54,6 @@ typedef struct JPBSceneMiddleRenderHooks {
     JPBSceneMiddleRenderStageHook afterBackdrop;
     JPBSceneMiddleRenderStageHook afterPhysics;
     JPBSceneMiddleRenderStageHook afterLevelOwner;
-    JPBSceneLevelOwnerHook levelOwner;
 } JPBSceneMiddleRenderHooks;
 
 /*
@@ -214,8 +206,20 @@ JPB_SCENE_STATIC_ASSERT(
     sizeof(sceneObject) == 152,
     "sceneObject must match PDB type 0x11A8");
 JPB_SCENE_STATIC_ASSERT(
+    offsetof(sceneObject, pScene) == 24,
+    "sceneObject.pScene x64 offset changed");
+JPB_SCENE_STATIC_ASSERT(
+    offsetof(sceneObject, pModel) == 32,
+    "sceneObject.pModel x64 offset changed");
+JPB_SCENE_STATIC_ASSERT(
     offsetof(sceneObject, pPhysics) == 40,
     "sceneObject.pPhysics x64 offset changed");
+JPB_SCENE_STATIC_ASSERT(
+    offsetof(sceneObject, pAnim) == 48,
+    "sceneObject.pAnim x64 offset changed");
+JPB_SCENE_STATIC_ASSERT(
+    offsetof(sceneObject, pPlayer) == 56,
+    "sceneObject.pPlayer x64 offset changed");
 JPB_SCENE_STATIC_ASSERT(
     offsetof(sceneObject, v3WorldPosition) == 72,
     "sceneObject.v3WorldPosition x64 offset changed");

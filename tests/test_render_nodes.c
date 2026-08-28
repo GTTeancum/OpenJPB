@@ -26,6 +26,7 @@
 typedef struct RenderTrace {
     int calls;
     _Material *material;
+    uint32_t materialFlags;
     int vertexCount;
     int noScale;
     JPBScreenPolyVertex vertices[4];
@@ -41,6 +42,7 @@ static uint32_t pack_vertex(int x, int y, int z)
 static void capture_polygon(
     void *user_data,
     _Material *material,
+    uint32_t material_flags,
     int vertex_count,
     const JPBScreenPolyVertex *vertices,
     int no_scale)
@@ -49,6 +51,7 @@ static void capture_polygon(
 
     ++trace->calls;
     trace->material = material;
+    trace->materialFlags = material_flags;
     trace->vertexCount = vertex_count;
     trace->noScale = no_scale;
     memcpy(
@@ -80,6 +83,7 @@ int main(void)
     CVECTOR colors[3] = {
         {1, 2, 3, 0}, {0x40, 0x50, 0x60, 0}, {7, 8, 9, 0}};
     _Material material = {0};
+    int texture_token;
     geomData geometry = {0};
     geomData sharedGeometry;
     primRendPacket packets[2] = {0};
@@ -94,6 +98,8 @@ int main(void)
 
     pointerRegistry_Reset();
     material.colorOverride = -1;
+    material.texture = &texture_token;
+    material.flags = JPB_MATERIAL_MODE_TWO_SIDED;
     geometry.numFaces = 1;
     geometry.numVerts = 1;
     geometry.pVertex = addPtr(
@@ -111,6 +117,7 @@ int main(void)
               &geometry, &matrix, &matrix, pointCache) == 1);
     CHECK(trace.calls == 1);
     CHECK(trace.material == &material);
+    CHECK(trace.materialFlags == JPB_MATERIAL_MODE_TWO_SIDED);
     CHECK(trace.vertexCount == 3);
     CHECK(trace.noScale == 1);
     CHECK(trace.vertices[0].x == 11.0f);
@@ -143,15 +150,15 @@ int main(void)
     CHECK(trace.vertices[2].argb == UINT32_C(0xff808080));
 
     material.colorOverride = -1;
-    packets[0].geometry = &geometry;
+    packets[0].pGeomData = &geometry;
     geometry.numFaces = 0;
-    set_identity(&packets[0].modelMatrix, 100.0f, 200.0f, 300.0f);
+    set_identity(&packets[0].m3LocalMatrix, 100.0f, 200.0f, 300.0f);
     sharedGeometry = geometry;
     sharedGeometry.numFaces = 1;
     sharedGeometry.numVerts = 0;
     sharedGeometry.numShareVerts = 3;
-    packets[1].geometry = &sharedGeometry;
-    set_identity(&packets[1].modelMatrix, 0.0f, 0.0f, 0.0f);
+    packets[1].pGeomData = &sharedGeometry;
+    set_identity(&packets[1].m3LocalMatrix, 0.0f, 0.0f, 0.0f);
     trace.calls = 0;
     _RenderPackets(packets, 2);
     CHECK(trace.calls == 1);
@@ -241,11 +248,11 @@ int main(void)
     CHECK(scenes[0].v3SnapShotPosition.vz == 303);
     CHECK(hierarchy[0].v3RotCenter.vx == 101);
     CHECK(hierarchy[1].v3RotCenter.vx == 111);
-    CHECK(gRendPacket[0].sceneObjectIndex == 0);
-    CHECK(gRendPacket[0].geometry == &geometry);
-    CHECK(gRendPacket[0].modelMatrix.t[0] == 91.0f);
-    CHECK(gRendPacket[1].modelMatrix.t[0] == 101.0f);
-    CHECK(gRendPacket[1].modelMatrix.m[0][0] == 2.0f);
+    CHECK(gRendPacket[0].modelID == 0);
+    CHECK(gRendPacket[0].pGeomData == &geometry);
+    CHECK(gRendPacket[0].m3LocalMatrix.t[0] == 91.0f);
+    CHECK(gRendPacket[1].m3LocalMatrix.t[0] == 101.0f);
+    CHECK(gRendPacket[1].m3LocalMatrix.m[0][0] == 2.0f);
     CHECK(trace.vertices[0].x == 103.0f);
     CHECK(trace.vertices[0].y == 184.0f);
     CHECK(trace.vertices[0].z == 276.0f);
@@ -259,9 +266,29 @@ int main(void)
     CHECK(maPhysicsData[5].mapinfo.poly ==
           maPhysicsData[3].mapinfo.poly);
 
-    mCurRendPacket = JPB_RENDER_PACKET_CAPACITY;
+    frame.av3JointAngle[1].vx = 123;
+    frame.av3JointAngle[1].vy = -456;
+    frame.av3JointAngle[1].vz = 789;
+    render_RenderScene();
+    CHECK(hierarchy[1].v3CurrentRotation.vx == 123);
+    CHECK(hierarchy[1].v3CurrentRotation.vy == -456);
+    CHECK(hierarchy[1].v3CurrentRotation.vz == 789);
+
+    hierarchy[1].flags |=
+        UINT32_C(0x20000000) | UINT32_C(0x00800000);
+    hierarchy[1].v3RotationAbs.vx = -321;
+    hierarchy[1].v3RotationAbs.vy = 654;
+    hierarchy[1].v3RotationAbs.vz = -987;
+    render_RenderScene();
+    CHECK(hierarchy[1].v3CurrentRotation.vx == -321);
+    CHECK(hierarchy[1].v3CurrentRotation.vy == 654);
+    CHECK(hierarchy[1].v3CurrentRotation.vz == -987);
+    CHECK((hierarchy[1].flags & UINT32_C(0x00800000)) == 0);
+    CHECK((hierarchy[1].flags & UINT32_C(0x20000000)) != 0);
+
+    mCurRendPacket = JPB_RENDER_PACKET_WRITE_LIMIT + 1;
     render_CreateRenderPacket(&matrix);
-    CHECK(mCurRendPacket == JPB_RENDER_PACKET_CAPACITY);
+    CHECK(mCurRendPacket == JPB_RENDER_PACKET_WRITE_LIMIT + 1);
 
     jpb_WHookSetScreenPolyHook(NULL, NULL);
     pointerRegistry_Reset();

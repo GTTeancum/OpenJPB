@@ -8,11 +8,15 @@
 #include "jpb/enemy.h"
 #include "jpb/game.h"
 #include "jpb/force.h"
+#include "jpb/filesys.h"
 #include "jpb/globalarrays.h"
+#include "jpb/loader.h"
+#include "jpb/memory.h"
 #include "jpb/model.h"
 #include "jpb/objroot.h"
 #include "jpb/physics.h"
 #include "jpb/player.h"
+#include "jpb/resources.h"
 #include "jpb/scene.h"
 #include "jpb/shaolin.h"
 #include "jpb/vectors.h"
@@ -20,9 +24,10 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 /*
- * PARTIAL REVIEWED RECONSTRUCTION.
+ * REVIEWED RECONSTRUCTION.
  * PDB module: 0001
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\ai.obj
  * Primary source: W:\SWJediPowerBattles\Work\ai.c
@@ -34,9 +39,11 @@
  * the no-op ai_Main procedures are integrated. The dependency-free
  * jpb_AiLoadDataFile boundary validates caller-owned WAI storage used by the
  * portable runtime. Unrepresented procedures remain explicit in this
- * module-shaped source rather than being replaced with inferred behavior.
+ * module-shaped source rather than being replaced with invented behavior.
  *
- * Use inventory/function_map.tsv with ExportReconstruction.java.
+ * All gameplay procedures emitted by this module have been audited against
+ * the matched PDB/export and are represented below. UCRT helper records are
+ * intentionally supplied by the host toolchain.
  */
 
 /*
@@ -479,12 +486,9 @@ int ai_HthAttack(
     move += player->subOffset;
     if (move <= player->maxMotions) {
         pEnemy->kungfu = NULL;
-        physics_gTurnToFace(
+        (void)physics_gForceFaceTarget(
             &player->playerRoot,
-            physics_gFaceTarget(
-                &player->playerRoot,
-                &player->target->playerRoot),
-            4);
+            &player->target->playerRoot);
         if ((model->flags & UINT32_C(4)) == 0 ||
             (player->pFlags &
              UINT32_C(0x2000)) != 0) {
@@ -511,11 +515,37 @@ int ai_HthAttack(
  * Source: W:\SWJediPowerBattles\Work\ai.c
  */
 
-/* 0x16780, 3 bytes, global, 2 named locals
- * ai_Main
- * PDB type: void (long*, playerObject*)
- * Source: W:\SWJediPowerBattles\Work\ai.c
- */
+int ai_LoadAI(int modelID, char *name)
+{
+    char filename[JPB_RESOURCE_PATH_CAPACITY];
+    int level;
+
+    for (level = 1; level <= JPB_AI_LEVEL_CAPACITY; ++level) {
+        const char *path;
+        uint64_t file_size;
+        unsigned allocation_size;
+
+        memset(filename, 0, sizeof(filename));
+        sprintf(filename, "%s.0%d", name, level);
+        path = resource_getPath(filename, JPB_RESOURCE_AI);
+        file_size = file_getFileSize((char *)(void *)path);
+        if (file_size == 0) {
+            path = resource_getPath("dummy.wai", JPB_RESOURCE_AI);
+            file_size = file_getFileSize((char *)(void *)path);
+            if (file_size == 0) {
+                exit(1);
+            }
+        }
+        allocation_size =
+            ((unsigned)file_size + 3U) & ~UINT32_C(3);
+        maAiData[modelID][level - 1] =
+            (aiData *)memory_gCallocAnyMemory(1, allocation_size);
+        (void)file_LoadFile(
+            (char *)(void *)path,
+            maAiData[modelID][level - 1]);
+    }
+    return 0;
+}
 aiData *ai_GetAIHandle(int modelID, int level)
 {
     return maAiData[modelID][level];
@@ -533,6 +563,12 @@ int jpb_AiRegisterData(
     maAiData[modelID][level] = data;
     return 1;
 }
+
+/* 0x16780, 3 bytes, global, 2 named locals
+ * ai_Main
+ * PDB type: void (long*, playerObject*)
+ * Source: W:\SWJediPowerBattles\Work\ai.c
+ */
 void ai_Main(
     int32_t *cpad, playerObject *player)
 {
@@ -986,6 +1022,16 @@ int ai_Throw(
  * PDB type: char (playerObject*)
  * Source: W:\SWJediPowerBattles\Work\ai.c
  */
+char ai_ValidateData(playerObject *player)
+{
+    int16_t player_id = player->playerID;
+
+    (void)loader_GetModelName(player_id);
+    if (player_id == 0x48 || player_id > 0x4f) {
+        player_id = (int16_t)(player_id & (int16_t)0xff00);
+    }
+    return (char)player_id;
+}
 
 /* 0x16E20, 436 bytes, global, 10 named locals
  * ai_WalkToPoint

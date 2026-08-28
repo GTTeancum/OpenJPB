@@ -1,5 +1,5 @@
 /*
- * PARTIAL REVIEWED RECONSTRUCTION of
+ * COMPLETE REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\Work\game.c.
  *
  * Provenance:
@@ -21,22 +21,36 @@
  */
 
 #include "jpb/game.h"
+#include "jpb/achievement.h"
 #include "jpb/ai.h"
+#include "jpb/alltext.h"
+#include "jpb/alloc.h"
+#include "jpb/anim.h"
 #include "jpb/audio_stream.h"
 #include "jpb/boss.h"
 #include "jpb/brain.h"
 #include "jpb/braindmg.h"
 #include "jpb/brainutl.h"
+#include "jpb/bullet.h"
 #include "jpb/camera.h"
+#include "jpb/collision.h"
 #include "jpb/combo.h"
+#include "jpb/console.h"
 #include "jpb/cube.h"
 #include "jpb/debugtext.h"
+#include "jpb/enemy.h"
 #include "jpb/extracharacters.h"
 #include "jpb/force.h"
 #include "jpb/generic_hook.h"
+#include "jpb/globalarrays.h"
 #include "jpb/jedi.h"
 #include "jpb/jonny.h"
+#include "jpb/linkstubs.h"
+#include "jpb/loader.h"
+#include "jpb/input.h"
+#include "jpb/memory.h"
 #include "jpb/menu.h"
+#include "jpb/model.h"
 #include "jpb/objroot.h"
 #include "jpb/physics.h"
 #include "jpb/player.h"
@@ -45,9 +59,14 @@
 #include "jpb/sound.h"
 #include "jpb/sprite.h"
 #include "jpb/text.h"
+#include "jpb/texture.h"
 #include "jpb/vehicle.h"
+#include "jpb/vram.h"
+#include "jpb/win_memcard.h"
+#include "jpb/whook.h"
 #include "jpb/world.h"
 
+#include <stdio.h>
 #include <string.h>
 
 /* Exact matched-PC globals at RVAs 0x537E00..0x537F0F and 0x539EC8. */
@@ -62,7 +81,6 @@ int32_t refreshHUDCounter;
 static int32_t glow;
 static SCB *itemScb[2];
 static SCB *rescueScb;
-static int32_t deadline;
 static SCB *creditScb[16];
 static SCB *scoreScb[2];
 static int32_t b[16];
@@ -88,16 +106,6 @@ static void game_hide_overlay_scb(SCB *scb)
 /* Exact PDB global at matched-PC RVA 0x10EFB80. */
 JPBPlayerCallback
     funcArray[JPB_PLAYER_CALLBACK_CAPACITY];
-
-static JPBGameBarHook jpb_game_bar_hook;
-static void *jpb_game_bar_user_data;
-
-void jpb_GameSetBarHook(
-    JPBGameBarHook hook, void *user_data)
-{
-    jpb_game_bar_hook = hook;
-    jpb_game_bar_user_data = user_data;
-}
 
 void jpb_GameResetOverlayScbs(void)
 {
@@ -180,30 +188,26 @@ int8_t *initialJediCombos[9] = {
     kiadiInitCombos
 };
 
-int jpb_game_ApplyLevelDifficulty(
-    unsigned level, int difficulty)
+void jpb_game_ApplyLevelDifficulty(unsigned level)
 {
-    const int8_t (*table)[5];
     const int8_t *row;
+    int level_row = (int)(int8_t)level;
 
-    if (difficulty == 0) {
-        table = aEasyDifficulty;
-    } else if (difficulty == 1) {
-        table = aNormalDifficulty;
-    } else {
-        return 0;
+    if (level_row > 15) {
+        level_row = 0;
     }
-    if (level > 15u) {
-        level = 0;
+    if (GameStruct.difficulty == 0) {
+        row = aEasyDifficulty[level_row];
+        abGlobalBits[2] |= UINT8_C(2);
+    } else if (GameStruct.difficulty == 1) {
+        row = aNormalDifficulty[level_row];
+        abGlobalBits[2] &= UINT8_C(0xfd);
     }
-    row = table[level];
     GameStruct.AIDamage = (char)row[0];
     GameStruct.JediDamage = (char)row[1];
     GameStruct.HTHRate = (char)row[2];
     GameStruct.RangedRate = (char)row[3];
     GameStruct.BlockRate = (char)row[4];
-    GameStruct.difficulty = (char)difficulty;
-    return 1;
 }
 
 /* 0xA5620, 2533 bytes, global, 2 named locals
@@ -252,7 +256,7 @@ void ApplySaveGameData(void)
     memcpy(abGlobalBits, SaveGameStruct.abGlobalBits,
            sizeof(abGlobalBits));
     memcpy(jediUpgrades, SaveGameStruct.jediUpgrades,
-           sizeof(jediUpgrades));
+           sizeof(SaveGameStruct.jediUpgrades));
     for (index = 0; index < ExtraCharactersSize; ++index) {
         ExtraCharacters[index].Unlocked =
             (SaveGameStruct.unlockedExtraCharacters &
@@ -265,30 +269,139 @@ void ApplySaveGameData(void)
  * PDB type: void (<no type>)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+void ForceClearPlayerCPad(void)
+{
+    int player;
+
+    for (player = 0; player < 2; ++player) {
+        memset(gaPlayerData[player].bheld, 0,
+               sizeof(gaPlayerData[player].bheld));
+        gaPlayerData[player].chainSlack = 0;
+        gaPlayerData[player].playerPad.oldbits0 = 0;
+        gaPlayerData[player].playerPad.oldbits1 = 0;
+        gaPlayerData[player].hitMask = 0;
+    }
+}
 
 /* 0xA6060, 42 bytes, global, 1 named locals
  * InitGameResolution
  * PDB type: void (<no type>)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+void InitGameResolution(void)
+{
+    OptionStruct.ScreenWidth = (uint32_t)g_resolutions[0].width;
+    OptionStruct.ScreenHeight = (uint32_t)g_resolutions[0].height;
+    OptionStruct.ResolutionChanged = 0;
+    UpdateResolution(
+        (int)OptionStruct.ScreenWidth,
+        (int)OptionStruct.ScreenHeight,
+        0);
+}
 
 /* 0xA6090, 289 bytes, global, 4 named locals
  * LoadPlayerPos
  * PDB type: void (char*)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+void LoadPlayerPos(char *filename)
+{
+    char path[512];
+    unsigned char *data;
+    unsigned long size;
+    int32_t *positions;
+
+    if (filename == NULL) {
+        filename = loader_GetLevelName();
+    }
+    sprintf(path, "%s.wpp", filename);
+    memcard_on();
+    if (memcard_LoadFile(-1, path, &data, &size) == 0) {
+        positions = (int32_t *)data;
+        maPhysicsData[0].pos.vx = (float)positions[0];
+        maPhysicsData[0].pos.vy = (float)positions[1];
+        maPhysicsData[0].pos.vz = (float)positions[2];
+        maPhysicsData[1].pos.vx = (float)positions[4];
+        maPhysicsData[1].pos.vy = (float)positions[5];
+        maPhysicsData[1].pos.vz = (float)positions[6];
+        scene_gSetSceneModelMatrixFV(
+            0, &maPhysicsData[0].angle, &maPhysicsData[0].pos);
+        scene_gSetSceneModelMatrixFV(
+            1, &maPhysicsData[1].angle, &maPhysicsData[1].pos);
+    } else {
+        console_Printf("Error loading %s\n", path);
+    }
+    memcard_off();
+}
 
 /* 0xA61C0, 299 bytes, global, 3 named locals
  * LoadSettingsData
  * PDB type: void (optionstruct)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+void LoadSettingsData(optionstruct options)
+{
+    OptionStruct.Music = options.Music;
+    OptionStruct.Stereo = options.Stereo;
+    OptionStruct.musicVolume = options.musicVolume;
+    OptionStruct.SFXVolume = options.SFXVolume;
+    setMusicVol((int)options.musicVolume);
+    OptionStruct.ControllerConfig[0] = options.ControllerConfig[0];
+    OptionStruct.overlayMode = options.overlayMode;
+    OptionStruct.Language = options.Language;
+    OptionStruct.WalkLimit[0] = options.WalkLimit[0];
+    OptionStruct.RunLimit[0] = options.RunLimit[0];
+    OptionStruct.ShockFlag[0] = options.ShockFlag[0];
+    OptionStruct.ControllerConfig[1] = options.ControllerConfig[1];
+    OptionStruct.WalkLimit[1] = options.WalkLimit[1];
+    OptionStruct.RunLimit[1] = options.RunLimit[1];
+    OptionStruct.ShockFlag[1] = options.ShockFlag[1];
+    OptionStruct.EULAaccepted = options.EULAaccepted;
+
+    lastUsedInputType = options.overlayMode == 0 ? 2 : 0;
+    generateAllText((int)options.Language);
+    OptionStruct.ResolutionChanged = options.ResolutionChanged;
+    if (OptionStruct.ResolutionChanged == 0 ||
+        (uint32_t)options.ScreenWidth >
+            (uint32_t)g_resolutions[0].width ||
+        (uint32_t)options.ScreenHeight >
+            (uint32_t)g_resolutions[0].height) {
+        OptionStruct.ResolutionChanged = 0;
+        OptionStruct.ScreenWidth = (uint32_t)g_resolutions[0].width;
+        OptionStruct.ScreenHeight = (uint32_t)g_resolutions[0].height;
+    } else {
+        OptionStruct.ScreenWidth = options.ScreenWidth;
+        OptionStruct.ScreenHeight = options.ScreenHeight;
+    }
+    OptionStruct.WindowMode = options.WindowMode;
+    UpdateResolution(
+        (int)OptionStruct.ScreenWidth,
+        (int)OptionStruct.ScreenHeight,
+        (int)OptionStruct.WindowMode);
+    OptionStruct.PadAudioEnabled = options.PadAudioEnabled;
+}
 
 /* 0xA62F0, 141 bytes, global, 3 named locals
  * SavePlayerPos
  * PDB type: void (char*)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+void SavePlayerPos(char *filename)
+{
+    VECTOR positions[2];
+    char path[512];
+
+    if (filename == NULL) {
+        filename = loader_GetLevelName();
+    }
+    sprintf(path, "%s.wpp", filename);
+    positions[0] = maPhysicsData[0].vpos;
+    positions[1] = maPhysicsData[1].vpos;
+    memcard_on();
+    memcard_SaveFile(
+        -1, path, (unsigned char *)positions, (unsigned long)sizeof(positions));
+    memcard_off();
+}
 
 /* 0xA6380, 242 bytes, global, 4 named locals
  * UpdateBright
@@ -405,20 +518,18 @@ void UpdateSaveGameStruct(void)
 void _AddBar(
     int x, int y, int width, int height, int32_t color)
 {
-    /*
-     * The matched body forwards these values to _DrawTile2D after forcing
-     * alpha 0x7f. A platform renderer can consume the same authored solid
-     * rectangle without adding a graphics dependency to gameplay code.
-     */
-    if (jpb_game_bar_hook != NULL) {
-        jpb_game_bar_hook(
-            jpb_game_bar_user_data,
-            x,
-            y,
-            width,
-            height,
-            (uint32_t)color | UINT32_C(0x7f000000));
-    }
+    FVECTOR position = {
+        (float)x,
+        (float)y,
+        0.0f
+    };
+
+    _DrawTile2D(
+        &position,
+        (float)width,
+        (float)height,
+        (uint32_t)color | UINT32_C(0x7f000000),
+        0);
 }
 
 /* 0xA6ED0, 561 bytes, global, 13 named locals
@@ -494,54 +605,226 @@ void _AddLifeTile2D(
  * PDB type: void (<no type>)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+void checkResetAbort(void)
+{
+}
 
 /* 0xA7120, 71 bytes, global, 5 named locals
  * console_DecCommand
  * PDB type: int (int, char**, int*, float*)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+static int game_setvar_residue(int index, int value);
+
+int console_DecCommand(
+    int narg, char **arg_str, int *arg_int, float *arg_float)
+{
+    int index;
+
+    (void)arg_int;
+    (void)arg_float;
+    if (narg == 1 && arg_str[0][0] != '?') {
+        index = findvar(arg_str[0]);
+        return game_setvar_residue(index, getvar(index) - 1);
+    }
+    return console_Printf(
+        "decrement (dec)\nSubtract 1 from a var!\nUsage: decrement var\n");
+}
 
 /* 0xA7170, 71 bytes, global, 5 named locals
  * console_IncCommand
  * PDB type: int (int, char**, int*, float*)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+int console_IncCommand(
+    int narg, char **arg_str, int *arg_int, float *arg_float)
+{
+    int index;
+
+    (void)arg_int;
+    (void)arg_float;
+    if (narg == 1 && arg_str[0][0] != '?') {
+        index = findvar(arg_str[0]);
+        return game_setvar_residue(index, getvar(index) + 1);
+    }
+    return console_Printf(
+        "increment (inc)\nAdd 1 to a var!\nUsage: increment var\n");
+}
 
 /* 0xA71C0, 384 bytes, global, 7 named locals
  * console_LoadPlayerPosCommand
  * PDB type: int (int, char**, int*, float*)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+int console_LoadPlayerPosCommand(
+    int narg, char **arg_str, int *arg_int, float *arg_float)
+{
+    char path[512];
+    unsigned char *data;
+    unsigned long size;
+    int32_t *positions;
+    char *filename;
+
+    (void)arg_int;
+    (void)arg_float;
+    if (narg > 1 || (narg == 1 && arg_str[0][0] == '?')) {
+        console_Printf("savepos: Load player positions\n");
+        console_Printf("usage: loadpos filename\n");
+        return 0;
+    }
+    if (narg == 1 && arg_str[0] != NULL) {
+        filename = arg_str[0];
+    } else {
+        filename = loader_GetLevelName();
+    }
+    sprintf(path, "%s.wpp", filename);
+    memcard_on();
+    if (memcard_LoadFile(-1, path, &data, &size) == 0) {
+        positions = (int32_t *)data;
+        maPhysicsData[0].pos.vx = (float)positions[0];
+        maPhysicsData[0].pos.vy = (float)positions[1];
+        maPhysicsData[0].pos.vz = (float)positions[2];
+        maPhysicsData[1].pos.vx = (float)positions[4];
+        maPhysicsData[1].pos.vy = (float)positions[5];
+        maPhysicsData[1].pos.vz = (float)positions[6];
+        scene_gSetSceneModelMatrixFV(
+            0, &maPhysicsData[0].angle, &maPhysicsData[0].pos);
+        scene_gSetSceneModelMatrixFV(
+            1, &maPhysicsData[1].angle, &maPhysicsData[1].pos);
+    } else {
+        console_Printf("Error loading %s\n", path);
+    }
+    memcard_off();
+    return 0;
+}
 
 /* 0xA7340, 201 bytes, global, 6 named locals
  * console_SavePlayerPosCommand
  * PDB type: int (int, char**, int*, float*)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+int console_SavePlayerPosCommand(
+    int narg, char **arg_str, int *arg_int, float *arg_float)
+{
+    VECTOR positions[2];
+    char path[512];
+    char *filename;
+
+    (void)arg_int;
+    (void)arg_float;
+    if (narg > 1 || (narg == 1 && arg_str[0][0] == '?')) {
+        console_Printf("savepos: Save player positions\n");
+        console_Printf(
+            "usage: savepos filename (.wpp will be appended)\n");
+        return 0;
+    }
+    if (narg == 1 && arg_str[0] != NULL) {
+        filename = arg_str[0];
+    } else {
+        filename = loader_GetLevelName();
+    }
+    sprintf(path, "%s.wpp", filename);
+    positions[0] = maPhysicsData[0].vpos;
+    positions[1] = maPhysicsData[1].vpos;
+    memcard_on();
+    memcard_SaveFile(
+        -1, path, (unsigned char *)positions, (unsigned long)sizeof(positions));
+    memcard_off();
+    return 0;
+}
 
 /* 0xA7410, 257 bytes, global, 6 named locals
  * console_SetCommand
  * PDB type: int (int, char**, int*, float*)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+int console_SetCommand(
+    int narg, char **arg_str, int *arg_int, float *arg_float)
+{
+    int index;
+
+    (void)arg_float;
+    if (narg == 2) {
+        index = findvar(arg_str[0]);
+        if (index != -1) {
+            return game_setvar_residue(index, arg_int[1]);
+        }
+    } else if (narg == 1) {
+        if (_stricmp(arg_str[0], "?") == 0) {
+            (void)console_Printf("SET - set variable values\n");
+            return console_Printf(
+                "Usage: set [[variablename] value]\n");
+        }
+        index = findvar(arg_str[0]);
+        if (index >= 0) {
+            return console_Printf(
+                "%s = %d (range %d to %d)\n",
+                arg_str[0],
+                getvar(index),
+                modVars[index].min,
+                modVars[index].max);
+        }
+    } else {
+        if (narg == 0) {
+            return console_Printf(
+                "set - set console variables\n"
+                "usage set [var] [value]\n"
+                "eg: set dimscreen 128\n");
+        }
+        return 0;
+    }
+    return console_Printf("no such var: %s\n", arg_str[0]);
+}
 
 /* 0xA7520, 106 bytes, global, 6 named locals
  * console_ToggleCommand
  * PDB type: int (int, char**, int*, float*)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+int console_ToggleCommand(
+    int narg, char **arg_str, int *arg_int, float *arg_float)
+{
+    int index;
+    int value;
+
+    (void)arg_int;
+    (void)arg_float;
+    if (narg == 1 && arg_str[0][0] != '?') {
+        index = findvar(arg_str[0]);
+        value = getvar(index);
+        return game_setvar_residue(
+            index, value != 0 ? 0 : modVars[index].max);
+    }
+    return console_Printf(
+        "toggle (tog)\nSet var to 0 or MAX!\nUsage: toggle var\n");
+}
 
 /* 0xA7590, 3 bytes, global, 0 named locals
  * continueGameGameInit
  * PDB type: void (<no type>)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+void continueGameGameInit(void)
+{
+}
 
 /* 0xA75A0, 109 bytes, global, 2 named locals
  * findvar
  * PDB type: int (char*)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+int findvar(char *name)
+{
+    int index = 0;
+
+    while (modVarNames[index] != NULL) {
+        if (_stricmp(modVarNames[index], name) == 0) {
+            return index;
+        }
+        ++index;
+    }
+    return -1;
+}
 
 /* 0xA7610, 28 bytes, global, 1 named locals
  * game_CLR_GLOBALBIT
@@ -809,7 +1092,7 @@ void game_DisplayOverlay(void)
                 (int)text_y,
                 1.8f,
                 2,
-                L"%d",
+                "%d",
                 gPilotDeathCount);
         } else {
             text_x = 153.0f;
@@ -824,7 +1107,7 @@ void game_DisplayOverlay(void)
                 (int)text_y,
                 1.5f,
                 2,
-                L"%d",
+                "%d",
                 gPilotDeathCount);
         }
     }
@@ -1006,7 +1289,7 @@ void game_DrawScore(unsigned player)
             (int)text_y,
             3.24f,
             2,
-            L"%07d",
+            "%07d",
             GameStruct.aCharacterData[player].Score);
     }
 }
@@ -1048,6 +1331,34 @@ char game_GetGameMode(void)
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+void game_InitGameSystems(void)
+{
+    texture_Flush(UINT32_C(0xF80));
+    memset(gpWorld, 0, sizeof(*gpWorld));
+    scene_gInitRoot();
+    scene_gInitScenes(0);
+    model_InitModels();
+    player_gInitPlayers(0);
+    physics_gInitObjects(0);
+    physics_InitPhysics();
+    anim_InitAnimations(0);
+    enemy_InitEnemies();
+    coll_ResetCollisionSystem();
+    bullet_InitProjectilePool();
+    vram_gResetVram();
+    initXAstuff();
+    memory_FlushMemoryPool(1);
+    memory_FlushMemoryPool(2);
+    memory_FlushMemoryPool(3);
+    meminit();
+    physics_gInitObjects(0);
+    game_setFuncArray();
+    initArrays();
+    clearzerobss();
+    zerobss_levelReset = 1;
+    zerobss_ResetBoss = 1;
+    *(uint8_t *)&menuVars.fcount = 0;
+}
 
 /* 0xA8B30, 15 bytes, global, 2 named locals
  * game_ModGameCounter
@@ -1063,12 +1374,6 @@ char game_ModGameCounter(int amount)
     GameStruct.Counter = (int32_t)counter;
     return (char)counter;
 }
-
-/* 0xA8B40, 351 bytes, global, 4 named locals
- * game_OneGameLoop
- * PDB type: void ()
- * Source: W:\SWJediPowerBattles\Work\game.c
- */
 
 /* 0xA8CA0, 769 bytes, global, 3 named locals
  * game_ProcessStatus
@@ -1113,7 +1418,7 @@ void game_ProcessStatus(void)
         if ((state & UINT32_C(0x00010000)) == 0) {
             return;
         }
-        /* platform_completeLevel is an exact no-op linkstub in this build. */
+        (void)platform_completeLevel(LevelSelect);
         GameStruct.GameState &= ~UINT32_C(0x80);
         GameStruct.StageExit = 1;
         return;
@@ -1191,7 +1496,7 @@ void game_ResetGameSystems(void)
     braindmg_ResetDamageTracker(0);
     braindmg_ResetDamageTracker(1);
     afterLife = NULL;
-    /* clearzerobss tail-calls the matched no-op _clearzerobss. */
+    clearzerobss();
     zerobss_levelReset = 1;
     zerobss_ResetBoss = 1;
     cube_InitVisibility();
@@ -1223,12 +1528,103 @@ void game_SET_GLOBALBIT(unsigned bit)
  * PDB type: void (<no type>)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+void game_checkCompleteAchievements(void)
+{
+    static const int level_achievement[16] = {
+        0, 7, 8, 9, 10, 11, 0, 13,
+        14, 15, 16, 17, 18, 19, 20, 12
+    };
+    static const int score_threshold[16] = {
+        0, 24000, 24000, 36000, 30000, 30000, 0, 30000,
+        36000, 12000, 15000, 0, 0, 0, 0, 36000
+    };
+    static const int score_achievement[16] = {
+        0, 21, 22, 23, 24, 25, 0, 27,
+        28, 29, 30, 0, 0, 0, 0, 26
+    };
+    unsigned level = GameStruct.CurrentLevel;
+    unsigned levels_complete = 0;
+    unsigned stage;
+
+    if (level != 6) {
+        playerObject *player = gpWorld->player0;
+
+        if (player->playernum == 0) {
+            switch (player->playerID) {
+            case maul_p_model:
+                achievement_complete(38);
+                break;
+            case mace_model:
+                achievement_complete(40);
+                break;
+            case plo_model:
+                achievement_complete(41);
+                break;
+            case panaka_model:
+                achievement_complete(42);
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    if (level < 16 && level_achievement[level] != 0) {
+        achievement_complete(level_achievement[level]);
+        if (score_achievement[level] != 0 &&
+            GameStruct.aCharacterData[0].Score >= score_threshold[level]) {
+            achievement_complete(score_achievement[level]);
+        }
+    }
+    for (stage = 1; stage <= 10; ++stage) {
+        unsigned model;
+
+        for (model = 0; model < JPB_GAME_JEDI_MODEL_CAPACITY; ++model) {
+            if (GameStruct.jediLevelPlayed[model][stage] == 1) {
+                ++levels_complete;
+                break;
+            }
+        }
+    }
+    if (levels_complete > 9) {
+        if (GameStruct.difficulty == 0) {
+            achievement_complete(43);
+        } else if (GameStruct.difficulty == 1) {
+            achievement_complete(6);
+        }
+    }
+}
 
 /* 0xA94A0, 162 bytes, global, 0 named locals
  * game_checkNextLevel
  * PDB type: void (<no type>)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+void game_checkNextLevel(void)
+{
+    if (nextLevel != 0 && GameStruct.Mode == 6) {
+        (void)platform_completeLevel(LevelSelect);
+        stop_all_looped_sounds();
+        GameStruct.Mode = 5;
+        if (LevelSelect == 6) {
+            reStartScore[0] =
+                (uint32_t)GameStruct.aCharacterData[0].Score;
+            reStartScore[1] =
+                (uint32_t)GameStruct.aCharacterData[1].Score;
+            LevelSelect = 15;
+            nextLevel = 0;
+            return;
+        }
+        if (LevelSelect == 15) {
+            LevelSelect = 7;
+        } else {
+            ++LevelSelect;
+        }
+        if (OptionStruct.Music != 0) {
+            playXA(4, (int)OptionStruct.musicVolume * 2, 0);
+        }
+    }
+    nextLevel = 0;
+}
 
 /* 0xA9550, 3 bytes, global, 0 named locals
  * game_clearLetterBox
@@ -1521,12 +1917,6 @@ int game_gModScore(int player, int level)
     return score;
 }
 
-/* 0xA98F0, 1328 bytes, global, 4 named locals
- * game_gPlayTheGame
- * PDB type: int (<no type>)
- * Source: W:\SWJediPowerBattles\Work\game.c
- */
-
 /* 0xA9E20, 187 bytes, global, 3 named locals
  * game_gSetEnergy
  * PDB type: int (int, int)
@@ -1785,12 +2175,6 @@ void game_initEnergy(void)
     }
 }
 
-/* 0xAA4F0, 780 bytes, global, 6 named locals
- * game_initPerLevel
- * PDB type: void (<no type>)
- * Source: W:\SWJediPowerBattles\Work\game.c
- */
-
 /* 0xAA800, 200 bytes, global, 5 named locals
  * game_initPlayerStartCombos
  * PDB type: void (unsigned)
@@ -1823,18 +2207,6 @@ void game_initPlayerStartCombos(uint32_t player)
     }
 }
 
-/* 0xAA8D0, 1151 bytes, global, 1 named locals
- * game_initVar
- * PDB type: void (unsigned)
- * Source: W:\SWJediPowerBattles\Work\game.c
- */
-
-/* 0xAAD50, 36 bytes, global, 0 named locals
- * game_loadLevelMode
- * PDB type: void (<no type>)
- * Source: W:\SWJediPowerBattles\Work\game.c
- */
-
 /* 0xAAD80, 453 bytes, global, 1 named locals
  * game_runStage
  * PDB type: void (<no type>)
@@ -1850,7 +2222,7 @@ void game_runStage(void)
         GameStruct.GameState &= ~UINT32_C(0xe0);
         GameStruct.StageExit = 0;
         GameStruct.LevelExit = 0;
-    } else if ((int32_t)GameStruct.GameState >= 0) {
+    } else if ((int8_t)GameStruct.GameState >= 0) {
         game_ProcessStatus();
     }
 
@@ -1872,7 +2244,7 @@ void game_runStage(void)
         GameStruct.StageExit = 0;
     }
     if (GameStruct.LevelExit != 0) {
-        GameStruct.StageExit = 0;
+        GameStruct.LevelExit = 0;
         GameStruct.gameMode = 9;
         stop_all_looped_sounds();
         if (GameStruct.mNumContinues < 5) {
@@ -1943,7 +2315,7 @@ void game_setFuncArray(void)
      * Exact callback indexes come from the stores at RVA 0xAB030. Keep
      * slot zero intentionally null, matching the retail initialization.
      */
-    memset(funcArray, 0, sizeof(funcArray));
+    funcArray[0] = NULL;
     funcArray[1] = ai_FireWeapon;
     funcArray[2] = ai_Throw;
     funcArray[3] = brain_HangCallback;
@@ -1994,9 +2366,6 @@ void game_setFuncArray(void)
     funcArray[48] =
         brainutil_PlotMaulTrajectory;
     funcArray[49] = tusken_stab;
-
-    jpb_TrajectoryCallbackSlot = funcArray[6];
-    jpb_MaulTrajectoryCallbackSlot = funcArray[48];
 }
 
 /* 0xAB2F0, 3 bytes, global, 0 named locals
@@ -2013,6 +2382,30 @@ void game_setLetterBox(void)
  * PDB type: int (int)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+int getvar(int index)
+{
+    void *source = modVars[index].src;
+    int value;
+
+    if (source == NULL) {
+        return 0;
+    }
+    switch ((uint8_t)modVars[index].type) {
+    case 0:
+        return *(int8_t *)source;
+    case 1:
+        return *(uint8_t *)source;
+    case 2:
+        return *(int16_t *)source;
+    case 3:
+        return *(uint16_t *)source;
+    case 4:
+    case 5:
+        return *(int32_t *)source;
+    default:
+        return value;
+    }
+}
 
 /* 0xAB370, 142 bytes, global, 0 named locals
  * newGameGameInit
@@ -2038,7 +2431,7 @@ void newGameGameInit(void)
     GameStruct.Continuing = 0;
     secretBits = 0;
     game_initEnergy();
-    memset(jediUpgrades, 0, sizeof(jediUpgrades));
+    memset(jediUpgrades, 0, sizeof(SaveGameStruct.jediUpgrades));
     GameStruct.gameCompleted = 0;
     GameStruct.ModelSelect[0] = 0;
     GameStruct.ModelSelect[1] = 1;
@@ -2049,3 +2442,45 @@ void newGameGameInit(void)
  * PDB type: void (int, int)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+static int game_setvar_residue(int index, int value)
+{
+    MDEF_MOD *mod = &modVars[index];
+    void *source = mod->src;
+    int residue = mod->type;
+
+    if (source == NULL) {
+        return console_Printf("modVar[%d].src == NULL!\n", index);
+    }
+    if (value > mod->max) {
+        value = mod->max;
+        residue = console_Printf(
+            "Too high - clamped to %d\n", mod->max);
+    }
+    if (value < mod->min) {
+        value = mod->min;
+        residue = console_Printf(
+            "Too low - clamped to %d\n", mod->min);
+    }
+    switch ((uint8_t)mod->type) {
+    case 0:
+    case 1:
+        *(uint8_t *)source = (uint8_t)value;
+        break;
+    case 2:
+    case 3:
+        *(uint16_t *)source = (uint16_t)value;
+        break;
+    case 4:
+    case 5:
+        *(int32_t *)source = value;
+        break;
+    default:
+        break;
+    }
+    return residue;
+}
+
+void setvar(int index, int value)
+{
+    (void)game_setvar_residue(index, value);
+}

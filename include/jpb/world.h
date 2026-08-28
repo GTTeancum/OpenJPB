@@ -61,6 +61,78 @@ typedef union UDATA {
     char b[4];
 } UDATA;
 
+/* Direct PDB map records consumed by wRender.c. */
+typedef union CDATA {
+    int32_t *p;
+    uint8_t b[4];
+} CDATA;
+
+struct wsl_fatPoly {
+    uint16_t tagIndex;
+    int16_t textureID;
+    int32_t n;
+    int16_t centerPoint;
+    uint16_t entryNum;
+    _svector verts[4];
+};
+
+struct wsl_thinPoly {
+    uint16_t tagIndex;
+    int16_t textureID;
+    int32_t n;
+    int16_t centerPoint;
+    uint16_t pad;
+    uint16_t verts[4];
+};
+
+struct wsl_mapSlot {
+    int32_t entryID;
+};
+
+struct wsl_entryTags {
+    uint8_t animFlags;
+    uint8_t animNode;
+    uint8_t animNum;
+    uint8_t hideMask;
+    uint8_t trigAnim[2];
+    uint16_t pad;
+};
+
+struct wsl_mapEntry {
+    uint8_t flags;
+    uint8_t height;
+    uint16_t libPart;
+    uint8_t tagIndex;
+    uint8_t camera;
+    uint8_t showMask;
+    uint8_t maxView;
+    CDATA color;
+};
+
+struct wsl_libTags {
+    uint16_t gmi1;
+    uint8_t flip;
+    uint8_t flags;
+    uint8_t alpha;
+    uint8_t bSide;
+    uint8_t event;
+    int8_t zAdjust;
+    uint16_t bgi1;
+    uint8_t bgi2;
+    int8_t xLight;
+};
+
+typedef struct TVECTOR {
+    uint8_t u;
+    uint8_t v;
+} TVECTOR;
+
+struct wsl_BAP_TEXTURE {
+    TVECTOR c[4];
+    int32_t matID;
+    uint32_t texwin;
+};
+
 struct BAP_AINODE {
     int16_t iParent;
     int16_t iChild;
@@ -191,6 +263,61 @@ struct wsl_BT_ANIMDEF {
     int32_t pad[8];
     wsl_BT_ANIMNODE aNodes[1];
 };
+
+/* Direct PDB types 0x6F2B, 0x6F1A, 0x6F48, and 0x6F37. */
+typedef struct wsl_BTPOINT3 {
+    int32_t x;
+    int32_t y;
+    int32_t z;
+    int32_t w;
+} wsl_BTPOINT3;
+
+typedef struct wsl_BT_PARTENTRY {
+    uint16_t flags;
+    uint16_t partNum;
+    wsl_BTPOINT3 xyz;
+} wsl_BT_PARTENTRY;
+
+typedef union wsl_BT_PARTMATRIX {
+    float values[4][3];
+    MATRIX matrix;
+} wsl_BT_PARTMATRIX;
+
+typedef struct wsl_BT_PARTNODE {
+    int32_t num;
+    int32_t used;
+    uint32_t flags;
+    rdVECTOR pivot;
+    wsl_BT_PARTMATRIX mat;
+    uint8_t numEntries;
+    uint8_t pad;
+    int16_t soundCall;
+    int32_t currFrame;
+    int32_t radius;
+    wsl_BT_PARTENTRY aEntry[128];
+} wsl_BT_PARTNODE;
+
+typedef struct wsl_BT_ANIMMAP {
+    int32_t type;
+    int32_t num;
+    int32_t bSize;
+    int32_t defNum;
+    uint32_t flags;
+    int32_t currFrame;
+    int32_t fps;
+    int32_t orient;
+    int32_t numNodes;
+    int32_t totalNodes;
+    int32_t kDTime;
+    int32_t delayTime;
+    int32_t enemyNum;
+    int32_t state;
+    int32_t timer1;
+    int32_t on;
+    int32_t numFrames;
+    int32_t pad[1];
+    wsl_BT_PARTNODE aNodes[1];
+} wsl_BT_ANIMMAP;
 
 /* Exact matched-PC PDB type 0x10DF. */
 struct wsl_BAPAI_DEFAULTS {
@@ -375,6 +502,28 @@ JPB_WORLD_STATIC_ASSERT(
 JPB_WORLD_STATIC_ASSERT(
     sizeof(wsl_BT_ANIMDEF) == 496, "wsl_BT_ANIMDEF size changed");
 JPB_WORLD_STATIC_ASSERT(
+    sizeof(wsl_BTPOINT3) == 16, "wsl_BTPOINT3 size changed");
+JPB_WORLD_STATIC_ASSERT(
+    sizeof(wsl_BT_PARTENTRY) == 20, "wsl_BT_PARTENTRY size changed");
+JPB_WORLD_STATIC_ASSERT(
+    sizeof(wsl_BT_PARTMATRIX) == 48,
+    "wsl_BT_PARTMATRIX size changed");
+JPB_WORLD_STATIC_ASSERT(
+    offsetof(wsl_BT_PARTNODE, mat) == 24,
+    "wsl_BT_PARTNODE.mat offset changed");
+JPB_WORLD_STATIC_ASSERT(
+    offsetof(wsl_BT_PARTNODE, aEntry) == 84,
+    "wsl_BT_PARTNODE.aEntry offset changed");
+JPB_WORLD_STATIC_ASSERT(
+    sizeof(wsl_BT_PARTNODE) == 2644,
+    "wsl_BT_PARTNODE size changed");
+JPB_WORLD_STATIC_ASSERT(
+    offsetof(wsl_BT_ANIMMAP, aNodes) == 72,
+    "wsl_BT_ANIMMAP.aNodes offset changed");
+JPB_WORLD_STATIC_ASSERT(
+    sizeof(wsl_BT_ANIMMAP) == 2716,
+    "wsl_BT_ANIMMAP size changed");
+JPB_WORLD_STATIC_ASSERT(
     sizeof(wsl_BAPAI_DEFAULTS) == 164,
     "wsl_BAPAI_DEFAULTS size changed");
 JPB_WORLD_STATIC_ASSERT(
@@ -384,6 +533,14 @@ JPB_WORLD_STATIC_ASSERT(
     sizeof(wsl_BAP_PLACEMENT) == 252,
     "wsl_BAP_PLACEMENT size changed");
 JPB_WORLD_STATIC_ASSERT(sizeof(wsl_libPoly) == 8, "wsl_libPoly size changed");
+JPB_WORLD_STATIC_ASSERT(sizeof(CDATA) == 8, "CDATA size changed");
+JPB_WORLD_STATIC_ASSERT(sizeof(wsl_fatPoly) == 44, "wsl_fatPoly size changed");
+JPB_WORLD_STATIC_ASSERT(sizeof(wsl_thinPoly) == 20, "wsl_thinPoly size changed");
+JPB_WORLD_STATIC_ASSERT(sizeof(wsl_mapSlot) == 4, "wsl_mapSlot size changed");
+JPB_WORLD_STATIC_ASSERT(sizeof(wsl_entryTags) == 8, "wsl_entryTags size changed");
+JPB_WORLD_STATIC_ASSERT(sizeof(wsl_mapEntry) == 16, "wsl_mapEntry size changed");
+JPB_WORLD_STATIC_ASSERT(sizeof(wsl_libTags) == 12, "wsl_libTags size changed");
+JPB_WORLD_STATIC_ASSERT(sizeof(wsl_BAP_TEXTURE) == 16, "wsl_BAP_TEXTURE size changed");
 JPB_WORLD_STATIC_ASSERT(
     offsetof(wsl_libPart, animstuff) == sizeof(void *) * 2,
     "wsl_libPart pointer prefix changed");

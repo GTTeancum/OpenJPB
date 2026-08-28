@@ -1,5 +1,5 @@
 /*
- * REVIEWED RECONSTRUCTION of
+ * COMPLETE REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\Work\anim.c.
  *
  * The reviewed surface establishes the exact motion/frame records, fixed
@@ -39,8 +39,10 @@
 #include "jpb/brainutl.h"
 #include "jpb/camera.h"
 #include "jpb/combo.h"
+#include "jpb/console.h"
+#include "jpb/filesys.h"
 #include "jpb/game.h"
-#include "jpb/huffman.h"
+#include "jpb/jonny.h"
 #include "jpb/physics.h"
 #include "jpb/player.h"
 #include "jpb/resources.h"
@@ -50,6 +52,7 @@
 #include "jpb/world.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -57,15 +60,11 @@
 animObject maAnimationData[JPB_ANIMATION_CAPACITY];
 static animListNode
     aAnimListNodes[JPB_ANIMATION_CAPACITY][JPB_ANIM_QUEUE_NODE_CAPACITY];
-static JPBHuffmanTableSet animationHuffmanTables;
+static uint32_t hufftable[2048];
+static uint16_t huffvals[2048];
+static _optab huffopt[2048];
 static JPBAnimForceProfile jpb_anim_force_profile;
 static int jpb_anim_force_profile_enabled;
-
-/*
- * Exact PDB global name at RVA 0x538390. Its PDB type is unresolved; this
- * reviewed use covers the 33 _svector entries required by animation decode.
- */
-static _svector gaScratch[JPB_ANIM_JOINT_CAPACITY + 1];
 
 static int anim_CreateTweenFrame(animObject *animation);
 static int anim_GoNextAnimFrame(animObject *animation);
@@ -245,13 +244,8 @@ animObject *anim_CreateObject(
                     break;
                 }
             }
-            /*
-             * The reference terminates the process when the pool is full.
-             * Return NULL at this library boundary so a portable host can
-             * report exhaustion without corrupting or killing its process.
-             */
             if (animation == NULL) {
-                return NULL;
+                _Exit(1);
             }
         }
         animation->paMotions =
@@ -494,7 +488,7 @@ static int anim_MotionRecovery(animObject *animation)
     }
 
     motion = &player->paMotions[move];
-    if ((int)motion->Seq >= player->oldmaxCMotions &&
+    if ((int)motion->Seq >= player->maxMotions &&
         (motion->motionFlags & UINT32_C(0x20)) == 0) {
         return 1;
     }
@@ -524,85 +518,88 @@ static int anim_MotionRecovery(animObject *animation)
  */
 int anim_ForceNextAnimSeq(animObject *animation, int IsTween)
 {
-    JPBAnimPartialResult result;
-    double force_started;
-    double stage_started;
-    int tween_requested;
-    int return_value;
+    animListNode *next;
+    Motion *motion;
+    sceneObject *scene;
+    playerObject *player;
+    int32_t rate;
+    int32_t product;
 
     (void)IsTween;
-    jpb_anim_profile_begin_force();
-    force_started = jpb_anim_profile_seconds();
-    if (animation == NULL) {
-        jpb_anim_profile_record_force_total(
-            animation,
-            jpb_anim_profile_seconds() - force_started);
-        return 1;
-    }
     if (animation->pCurrentAnimSeq != NULL &&
-        animation->pCurrentAnimSeq->pMotion != NULL &&
         (animation->pCurrentAnimSeq->pMotion->motionFlags &
-         UINT32_C(0x20000000)) != 0) {
+         UINT32_C(0x20000000)) != 0 &&
+        (animation->animFlags & UINT32_C(0x20000000)) == 0) {
         animation->animFlags |= UINT32_C(0x20000000);
     }
-    animation->animFlags |= UINT32_C(0x20);
+    if ((animation->animFlags & UINT32_C(0x20)) == 0) {
+        animation->animFlags |= UINT32_C(0x20);
+    }
 
-    if (animation->animList.head == NULL) {
-        stage_started = jpb_anim_profile_seconds();
-        return_value = anim_MotionRecovery(animation);
-        jpb_anim_profile_record(
-            &jpb_anim_force_profile.lastRecoverySeconds,
-            &jpb_anim_force_profile.maxRecoverySeconds,
-            jpb_anim_profile_seconds() - stage_started);
-        if (return_value != 0) {
-            jpb_anim_profile_record_force_total(
-                animation,
-                jpb_anim_profile_seconds() - force_started);
+    if (list_IsListEmpty(&animation->animList) != 0) {
+        if (anim_MotionRecovery(animation) != 0) {
             return 1;
         }
     }
-    stage_started = jpb_anim_profile_seconds();
-    result = jpb_AnimActivateQueuedMotionState(animation);
-    jpb_anim_profile_record(
-        &jpb_anim_force_profile.lastActivateSeconds,
-        &jpb_anim_force_profile.maxActivateSeconds,
-        jpb_anim_profile_seconds() - stage_started);
-    if (result == JPB_ANIM_PARTIAL_EMPTY) {
-        jpb_anim_profile_record_force_total(
-            animation,
-            jpb_anim_profile_seconds() - force_started);
+
+    if (animation->pCurrentAnimSeq != NULL) {
+        if ((uint16_t)(animation->pCurrentAnimSeq->Speed + 1) > 1) {
+            physics_gModFacing(
+                &animation->animRoot,
+                animation->pCurrentAnimSeq->Speed);
+        }
+        list_AddTail(
+            &animation->animFreeList,
+            &animation->pCurrentAnimSeq->anm_Node);
+    }
+
+    next = (animListNode *)list_RemoveHead(&animation->animList);
+    animation->pCurrentAnimSeq = next;
+    if (next == NULL) {
         return 0;
     }
-    if (result != JPB_ANIM_PARTIAL_OK ||
-        animation->pMotion == NULL) {
-        jpb_anim_profile_record_force_total(
-            animation,
-            jpb_anim_profile_seconds() - force_started);
-        return 1;
+
+    animation->animFrameIndex =
+        (int32_t)((uint32_t)(int32_t)
+                      next->pAnimTemplate->Fframe
+                  << JPB_FIXED_SHIFT);
+    if (animation->pMotion != NULL &&
+        (next->pMotion->motionFlags & UINT32_C(1)) != 0) {
+        animation->tweenLevel = animation->pMotion->twout;
+    } else {
+        animation->tweenLevel = (uint8_t)next->tweenLevel;
     }
-    tween_requested =
-        animation->tweenLevel != 0 &&
-        (animation->pMotion->motionFlags &
-         UINT32_C(0x10000000)) == 0;
-    if (tween_requested &&
-        (animation->animFlags & UINT32_C(0x40)) != 0 &&
-        animation->pCurrentAnimFrame ==
-            &animation->tweenAnimFrame) {
-        jpb_anim_profile_record_force_total(
-            animation,
-            jpb_anim_profile_seconds() - force_started);
-        return 0;
+    animation->dispIn = 0;
+
+    rate = (int32_t)((float)next->Speed * 1.1f);
+    motion = next->pMotion;
+    if (motion->Damage != 0) {
+        rate = (int32_t)((float)rate * 1.1f);
     }
-    stage_started = jpb_anim_profile_seconds();
-    return_value = anim_GoNextAnimFrame(animation);
-    jpb_anim_profile_record(
-        &jpb_anim_force_profile.lastDecodeStepSeconds,
-        &jpb_anim_force_profile.maxDecodeStepSeconds,
-        jpb_anim_profile_seconds() - stage_started);
-    jpb_anim_profile_record_force_total(
-        animation,
-        jpb_anim_profile_seconds() - force_started);
-    return return_value;
+    animation->animFrameRate = rate;
+    product =
+        (int32_t)((uint32_t)rate * (uint32_t)gGlobalFrameRate);
+    animation->animFrameAcc = anim_arithmetic_shift12(product);
+    animation->Lock = (uint16_t)next->Lock;
+    animation->pMotion = motion;
+    animation->tweenFramesLeft = 0;
+
+    scene = (sceneObject *)animation->animRoot.pParent;
+    player = (playerObject *)scene->pPlayer;
+    jpb_AnimApplyMotionPhysics(player, motion);
+    player->previousMotion = player->currentMotion;
+    player->currentMotion = (int16_t)motion->Seq;
+    if (shouldPlayAnimSound(player->playerID, animation) != 0) {
+        anim_SoundStart(player, animation, 0);
+        anim_SoundStart(player, animation, 1);
+    }
+    player->pMotionCallBack = funcArray[motion->FunctPtr];
+
+    if (animation->tweenLevel != 0 &&
+        (motion->motionFlags & UINT32_C(0x10000000)) == 0) {
+        return anim_CreateTweenFrame(animation);
+    }
+    return anim_GoNextAnimFrame(animation);
 }
 
 JPBAnimPartialResult jpb_AnimAdvanceQueuedMotionAtEnd(
@@ -644,11 +641,19 @@ JPBAnimPartialResult jpb_AnimAdvanceQueuedMotionAtEnd(
             : NULL;
 
         animation->animFrameIndex =
-            (int32_t)sequence->Fframe *
-            JPB_FIXED_ONE;
+            (int32_t)sequence->Fframe * JPB_FIXED_ONE -
+            (int32_t)sequence->Lframe * JPB_FIXED_ONE +
+            animation->animFrameIndex;
+        if (animation->animFrameIndex >
+            (int32_t)sequence->Fframe * JPB_FIXED_ONE) {
+            animation->animFrameIndex =
+                (int32_t)sequence->Fframe * JPB_FIXED_ONE;
+        }
         if (player != NULL &&
             shouldReplayAnimSound(
-                player->playerID, animation)) {
+                player->playerID, animation) &&
+            player->playerID != 87 &&
+            player->playerID != 94) {
             anim_SoundStart(player, animation, 0);
             anim_SoundStart(player, animation, 1);
         }
@@ -681,22 +686,15 @@ JPBAnimPartialResult jpb_AnimAdvanceQueuedMotionAtEnd(
  * Dependency-light per-object reuse seam extracted from the exact
  * anim_InitAnimations loop body. This jpb_ name is not a PDB symbol.
  */
-void jpb_AnimResetObjectSlot(int index)
+static void anim_ResetObjectSlotUnchecked(int index)
 {
     animObject *animation;
     int node_index;
 
-    if ((uint32_t)index >= JPB_ANIMATION_CAPACITY) {
-        return;
-    }
     animation = &maAnimationData[index];
     memset(animation, 0, sizeof(*animation));
     animation->animRoot.objectID = -1;
-    (void)snprintf(
-        animation->animRoot.objectName,
-        sizeof(animation->animRoot.objectName),
-        "ANIM%d",
-        index);
+    (void)sprintf(animation->animRoot.objectName, "ANIM%d", index);
     animation->pCurrentAnimFrame =
         animation->AnimFrameBuffer;
     animation->pPreviousAnimFrame =
@@ -713,19 +711,19 @@ void jpb_AnimResetObjectSlot(int index)
     }
 }
 
+void jpb_AnimResetObjectSlot(int index)
+{
+    if ((uint32_t)index < JPB_ANIMATION_CAPACITY) {
+        anim_ResetObjectSlotUnchecked(index);
+    }
+}
+
 void anim_InitAnimations(int start)
 {
     int index;
 
-    /*
-     * Valid original callers pass 0..19. Reject a negative start instead of
-     * reproducing the reference's out-of-bounds pool walk.
-     */
-    if ((uint32_t)start >= JPB_ANIMATION_CAPACITY) {
-        return;
-    }
     for (index = start; index < JPB_ANIMATION_CAPACITY; ++index) {
-        jpb_AnimResetObjectSlot(index);
+        anim_ResetObjectSlotUnchecked(index);
     }
 }
 
@@ -871,10 +869,14 @@ static void anim_SkipToStartFrame(
                 (int16_t *)gaScratch);
             if (index == 1) {
                 anim_apply_first_delta(
-                    frame, gaScratch, vector_count);
+                    frame,
+                    (const _svector *)(const void *)gaScratch,
+                    vector_count);
             } else {
                 anim_apply_later_delta(
-                    frame, gaScratch, vector_count);
+                    frame,
+                    (const _svector *)(const void *)gaScratch,
+                    vector_count);
             }
         }
         animation->animFrameIndex += JPB_FIXED_ONE;
@@ -892,18 +894,11 @@ static _dpcontext *anim_GetDecodeContext(animObject *animation)
         return &animation->depack_context;
     }
     scene = (sceneObject *)animation->animRoot.pParent;
-    player = scene != NULL
-        ? (playerObject *)scene->pPlayer
-        : NULL;
-    target_scene = player != NULL && player->target != NULL
-        ? (sceneObject *)player->target->playerRoot.pParent
-        : NULL;
-    target_animation = target_scene != NULL
-        ? (animObject *)target_scene->pAnim
-        : NULL;
-    return target_animation != NULL
-        ? &target_animation->depack_context3
-        : NULL;
+    player = (playerObject *)scene->pPlayer;
+    target_scene =
+        (sceneObject *)player->target->playerRoot.pParent;
+    target_animation = (animObject *)target_scene->pAnim;
+    return &target_animation->depack_context3;
 }
 
 static _animFrame *anim_GetAnimFrame(animObject *anim)
@@ -973,10 +968,14 @@ static _animFrame *anim_GetAnimFrame(animObject *anim)
                 (int16_t *)gaScratch);
             if (frame == 1) {
                 anim_apply_first_delta(
-                    pNewFrame, gaScratch, vector_count);
+                    pNewFrame,
+                    (const _svector *)(const void *)gaScratch,
+                    vector_count);
             } else {
                 anim_apply_later_delta(
-                    pNewFrame, gaScratch, vector_count);
+                    pNewFrame,
+                    (const _svector *)(const void *)gaScratch,
+                    vector_count);
             }
         }
         anim->animFrameIndex += JPB_FIXED_ONE;
@@ -1050,7 +1049,7 @@ static void anim_advance_tween_pose(animObject *animation)
             animation->tweenAnimFrame.v3RootTranslation.vz,
             animation->tweenDeltaTranslation.vz);
     for (part = 0;
-         part < animation->pCurrentAnimSeq->pAnimTemplate->parts;
+         part < animation->depack_context.numparts;
          ++part) {
         _svector *pose =
             &animation->tweenAnimFrame.av3JointAngle[part];
@@ -1085,11 +1084,9 @@ static int anim_CreateTweenFrame(animObject *animation)
     fraction = tween_fraction[animation->tweenLevel];
     destination = anim_GetAnimFrame(animation);
     source = animation->pPreviousAnimFrame;
-    if (destination == NULL || source == NULL) {
-        return 1;
+    if ((animation->animFlags & UINT32_C(0x40)) == 0) {
+        animation->animFlags |= UINT32_C(0x40);
     }
-
-    animation->animFlags |= UINT32_C(0x40);
     animation->tweenDeltaTranslation.vx = anim_tween_delta(
         destination->v3RootTranslation.vx,
         source->v3RootTranslation.vx,
@@ -1118,7 +1115,7 @@ static int anim_CreateTweenFrame(animObject *animation)
         destination->v3RootTranslation.pad;
 
     for (part = 0;
-         part < animation->pCurrentAnimSeq->pAnimTemplate->parts;
+         part < animation->depack_context.numparts;
          ++part) {
         const _svector *to = &destination->av3JointAngle[part];
         const _svector *from = &source->av3JointAngle[part];
@@ -1225,91 +1222,99 @@ JPBAnimPartialResult jpb_AnimDecodeFrameState(
  */
 static int anim_GoNextAnimFrame(animObject *animation)
 {
-    JPBAnimPartialResult result;
-    _animFrame *published_frame = NULL;
-    int32_t increment;
-
-    if (animation == NULL ||
-        animation->pCurrentAnimSeq == NULL ||
-        animation->pCurrentAnimSeq->pAnimTemplate == NULL ||
-        animation->pMotion == NULL) {
-        return JPB_ANIM_PARTIAL_INVALID_ARGUMENT;
-    }
-
-    animation->animFlags &= ~UINT32_C(8);
-    if (animation->tweenFramesLeft != 0) {
-        if (anim_CheckSlack(
-                animation,
-                animation->pCurrentAnimSeq) == 0) {
-            --animation->tweenFramesLeft;
-            if (animation->tweenFramesLeft == 0) {
-                animation->animFlags &= ~UINT32_C(0x40);
-            }
-            anim_advance_tween_pose(animation);
-            animation->pCurrentAnimFrame =
-                &animation->tweenAnimFrame;
-            return JPB_ANIM_PARTIAL_OK;
-        }
-        if (animation->animList.head == NULL &&
-            anim_MotionRecovery(animation) != 0) {
-            return JPB_ANIM_PARTIAL_EMPTY;
-        }
-        result = jpb_AnimActivateQueuedMotionState(animation);
-        if (result != JPB_ANIM_PARTIAL_OK) {
-            return result;
-        }
-        return animation->pCurrentAnimFrame != NULL
-            ? JPB_ANIM_PARTIAL_OK
-            : JPB_ANIM_PARTIAL_EMPTY;
-    }
-
-    result = jpb_AnimAdvanceQueuedMotionAtEnd(animation);
-    if (result != JPB_ANIM_PARTIAL_OK &&
-        result != JPB_ANIM_PARTIAL_EMPTY) {
-        return result;
-    }
-    if (animation->tweenFramesLeft != 0) {
-        return animation->pCurrentAnimFrame != NULL
-            ? JPB_ANIM_PARTIAL_OK
-            : JPB_ANIM_PARTIAL_EMPTY;
-    }
-
-    result = jpb_AnimDecodeFrameState(
-        animation, &published_frame);
-    if (result != JPB_ANIM_PARTIAL_OK ||
-        published_frame == NULL) {
-        return result;
-    }
-    animation->pCurrentAnimFrame = published_frame;
-    increment = anim_arithmetic_shift12(
+    animListNode *sequence = animation->pCurrentAnimSeq;
+    int32_t frame_rate = anim_arithmetic_shift12(
         (int32_t)((uint32_t)gGlobalFrameRate *
                   (uint32_t)animation->animFrameRate));
-    animation->animFrameAcc += increment;
 
-    if (anim_CheckSlack(
-            animation,
-            animation->pCurrentAnimSeq) != 0) {
-        if (animation->animList.head == NULL &&
-            anim_MotionRecovery(animation) != 0) {
-            return JPB_ANIM_PARTIAL_EMPTY;
+    if (sequence == NULL) {
+        return -1;
+    }
+    animation->animFlags &= ~UINT32_C(8);
+    if (animation->tweenFramesLeft == 0) {
+        _animFrame *next_frame = NULL;
+        int32_t first_frame =
+            (int32_t)sequence->pAnimTemplate->Fframe;
+        int32_t last_frame =
+            (int32_t)sequence->pAnimTemplate->Lframe;
+
+        animation->pPreviousAnimFrame =
+            animation->pCurrentAnimFrame;
+        if (animation->animFrameIndex >=
+            first_frame * JPB_FIXED_ONE) {
+            if (anim_arithmetic_shift12(
+                    animation->animFrameIndex) <
+                last_frame - (int32_t)animation->pMotion->cutout) {
+                next_frame = anim_GetAnimFrame(animation);
+                animation->animFrameAcc += frame_rate;
+            } else if ((sequence->pMotion->motionFlags &
+                        UINT32_C(0x04000000)) == 0) {
+                if ((int32_t)sequence->pMotion->motionFlags < 0) {
+                    sceneObject *scene;
+                    playerObject *player;
+
+                    animation->animFrameIndex =
+                        first_frame * JPB_FIXED_ONE -
+                        last_frame * JPB_FIXED_ONE +
+                        animation->animFrameIndex;
+                    if (animation->animFrameIndex >
+                        first_frame * JPB_FIXED_ONE) {
+                        animation->animFrameIndex =
+                            first_frame * JPB_FIXED_ONE;
+                    }
+                    next_frame = anim_GetAnimFrame(animation);
+                    animation->animFrameAcc += frame_rate;
+                    scene =
+                        (sceneObject *)animation->animRoot.pParent;
+                    player = (playerObject *)scene->pPlayer;
+                    if (shouldReplayAnimSound(
+                            player->playerID, animation) != 0 &&
+                        player->playerID != 87 &&
+                        player->playerID != 94) {
+                        anim_SoundStart(player, animation, 0);
+                        anim_SoundStart(player, animation, 1);
+                    }
+                }
+            } else {
+                animation->animFrameIndex =
+                    last_frame * JPB_FIXED_ONE;
+                next_frame = anim_GetAnimFrame(animation);
+                animation->animFrameAcc = 0;
+                if ((animation->animFlags & UINT32_C(8)) == 0) {
+                    animation->animFlags |= UINT32_C(8);
+                }
+            }
         }
-        result = jpb_AnimActivateQueuedMotionState(animation);
-        if (result != JPB_ANIM_PARTIAL_OK) {
-            return result;
+
+        if (anim_CheckSlack(animation, sequence) != 0) {
+            next_frame = NULL;
         }
+        if (animation->animFrameRate > JPB_FIXED_ONE &&
+            animation->pMotion->SpeedAcc != 0) {
+            animation->animFrameRate -=
+                animation->pMotion->SpeedAcc;
+            if (animation->animFrameRate < JPB_FIXED_ONE) {
+                animation->animFrameRate = JPB_FIXED_ONE;
+            }
+        }
+        if (next_frame == NULL) {
+            animation->tweenFramesLeft = 0;
+            animation->Lock = 0;
+            return anim_ForceNextAnimSeq(animation, 1);
+        }
+        animation->pCurrentAnimFrame = next_frame;
+        return 0;
     }
 
-    if (animation->animFrameRate > JPB_FIXED_ONE &&
-        animation->pMotion->SpeedAcc != 0) {
-        animation->animFrameRate -=
-            animation->pMotion->SpeedAcc;
-        if (animation->animFrameRate < JPB_FIXED_ONE) {
-            animation->animFrameRate = JPB_FIXED_ONE;
-        }
+    if (anim_CheckSlack(animation, sequence) != 0) {
+        return anim_ForceNextAnimSeq(animation, 1) != 0 ? 1 : 0;
     }
-    return animation->pCurrentAnimFrame != NULL
-        ? JPB_ANIM_PARTIAL_OK
-        : JPB_ANIM_PARTIAL_EMPTY;
+    --animation->tweenFramesLeft;
+    if (animation->tweenFramesLeft == 0) {
+        animation->animFlags &= ~UINT32_C(0x40);
+    }
+    anim_advance_tween_pose(animation);
+    return 0;
 }
 
 JPBAnimPartialResult jpb_AnimStepFrameState(
@@ -1347,22 +1352,15 @@ static void anim_HandleSound(
     char sound[9];
     int bank;
 
-    if (animation == NULL ||
-        (unsigned)channel >= JPB_ANIM_SOUND_CHANNELS ||
-        animation->soundTimer[channel] == 0 ||
+    if (animation->soundTimer[channel] == 0 ||
         LevelSelect == 0 ||
-        (float)animation->soundTimer[channel] >
+        (float)animation->soundTimer[channel] * 0.5f >
             (float)gGlobalTimer) {
         return;
     }
     motion = animation->pMotion;
     scene = (sceneObject *)animation->animRoot.pParent;
-    player = scene != NULL
-        ? (playerObject *)scene->pPlayer
-        : NULL;
-    if (motion == NULL || player == NULL) {
-        return;
-    }
+    player = (playerObject *)scene->pPlayer;
     memcpy(sound, motion->snd[channel], 8);
     sound[8] = '\0';
     if (sound[0] == '#') {
@@ -1409,11 +1407,7 @@ static void anim_SoundStart(
     char sound[9];
     int bank;
 
-    if (LevelSelect == 0 ||
-        player == NULL ||
-        animation == NULL ||
-        animation->pMotion == NULL ||
-        (unsigned)channel >= JPB_ANIM_SOUND_CHANNELS) {
+    if (LevelSelect == 0) {
         return;
     }
     motion = animation->pMotion;
@@ -1432,40 +1426,62 @@ static void anim_SoundStart(
             if (handle != 0) {
                 sound_StopSound(handle);
             }
-            if (LevelSelect == 2 &&
-                player->playerID == 45 &&
-                player->target != NULL &&
-                (player->target->pFlags &
-                 UINT32_C(0x400)) == 0) {
-                animation->soundTimer[channel] =
-                    animation->animFrameAcc == 800
-                        ? (int32_t)(gGlobalTimer + 25256u)
-                        : 0;
-                return;
-            }
-            bank = player->playernum + 1;
-            if (bank > 3) {
-                bank = 3;
-            }
-            handle = sound_Play(
-                physics_gGetPosition(&player->playerRoot),
-                bank,
-                sound,
-                0);
-            if (handle == 0) {
+            if (LevelSelect == 2 && player->playerID == 45) {
+                if ((gpWorld->aDolly[gpWorld->currentDolly].flags &
+                     UINT32_C(0x400)) == 0) {
+                    animation->soundTimer[channel] =
+                        animation->animFrameAcc == 800
+                            ? (int32_t)(
+                                  (float)(uint64_t)gGlobalTimer +
+                                  256.0f + 25000.0f)
+                            : 0;
+                    return;
+                }
+                if (animation->animFrameAcc != 800) {
+                    animation->loopHandle[channel] = handle;
+                    return;
+                }
+                bank = player->playernum + 1;
+                if (bank > 3) {
+                    bank = 3;
+                }
                 handle = sound_Play(
                     physics_gGetPosition(&player->playerRoot),
-                    0,
+                    bank,
                     sound,
                     0);
-            }
-            if (delay < 0 && handle != 0) {
-                sound_SetLoopingFadeTime(
-                    handle,
-                    gGlobalTimer +
-                        (uint32_t)(-(int32_t)delay) *
-                            JPB_FIXED_ONE);
-                animation->soundTimer[channel] = 0;
+                if (handle == 0) {
+                    (void)sound_Play(
+                        physics_gGetPosition(&player->playerRoot),
+                        0,
+                        sound,
+                        0);
+                }
+            } else {
+                bank = player->playernum + 1;
+                if (bank > 3) {
+                    bank = 3;
+                }
+                handle = sound_Play(
+                    physics_gGetPosition(&player->playerRoot),
+                    bank,
+                    sound,
+                    0);
+                if (handle == 0) {
+                    (void)sound_Play(
+                        physics_gGetPosition(&player->playerRoot),
+                        0,
+                        sound,
+                        0);
+                }
+                if (delay < 0 && handle != 0) {
+                    sound_SetLoopingFadeTime(
+                        handle,
+                        gGlobalTimer +
+                            (uint32_t)(-(int32_t)delay) *
+                                JPB_FIXED_ONE);
+                    animation->soundTimer[channel] = 0;
+                }
             }
         } else {
             animation->soundTimer[channel] =
@@ -1506,14 +1522,17 @@ int shouldReplayAnimSound(
 {
     const char *sound =
         (const char *)animation->pMotion->snd[0];
-
-    if (player_id == 26 &&
+    int isTankDroidekaOnTheed =
+        player_id == 26 &&
         LevelSelect == 3 &&
         strncmp(sound, "dstroll1", 8) == 0 &&
-        playertankindex != 0) {
+        playertankindex != 0;
+
+    if (strncmp(sound, "taxiaway", 8) == 0 ||
+        isTankDroidekaOnTheed) {
         return 0;
     }
-    return strncmp(sound, "taxiaway", 8) != 0;
+    return 1;
 }
 
 void jpb_AnimHandleSoundState(animObject *animation)
@@ -1529,40 +1548,23 @@ void jpb_AnimHandleSoundState(animObject *animation)
  */
 void anim_GlobalInit(void)
 {
-    char table_path[JPB_RESOURCE_PATH_CAPACITY];
-    char value_path[JPB_RESOURCE_PATH_CAPACITY];
-    char option_path[JPB_RESOURCE_PATH_CAPACITY];
-    const char *resolved_path;
+    const char *huffmanTabFullPath =
+        resource_getPath("huffman.tab", JPB_RESOURCE_ANIMATION);
+    int32_t table_size = file_LoadFile(
+        (char *)huffmanTabFullPath, hufftable);
+    const char *huffmanValFullPath =
+        resource_getPath("huffman.val", JPB_RESOURCE_ANIMATION);
+    const char *huffmanOptFullPath;
 
-    resolved_path = resource_getPath(
-        "huffman.tab", JPB_RESOURCE_ANIMATION);
-    if (resolved_path == NULL) {
-        return;
-    }
-    (void)snprintf(
-        table_path, sizeof(table_path), "%s", resolved_path);
-    resolved_path = resource_getPath(
-        "huffman.val", JPB_RESOURCE_ANIMATION);
-    if (resolved_path == NULL) {
-        return;
-    }
-    (void)snprintf(
-        value_path, sizeof(value_path), "%s", resolved_path);
-    resolved_path = resource_getPath(
-        "huffman.opt", JPB_RESOURCE_ANIMATION);
-    if (resolved_path == NULL) {
-        return;
-    }
-    (void)snprintf(
-        option_path, sizeof(option_path), "%s", resolved_path);
-
-    if (jpb_HuffmanLoadFiles(
-            table_path,
-            value_path,
-            option_path,
-            &animationHuffmanTables) == JPB_HUFFMAN_OK) {
-        jpb_HuffmanUseTables(&animationHuffmanTables);
-    }
+    (void)file_LoadFile((char *)huffmanValFullPath, huffvals);
+    huffmanOptFullPath =
+        resource_getPath("huffman.opt", JPB_RESOURCE_ANIMATION);
+    (void)file_LoadFile((char *)huffmanOptFullPath, huffopt);
+    unpack_init(
+        huffopt,
+        huffvals,
+        hufftable,
+        (int32_t)((uint64_t)(int64_t)table_size >> 2));
 }
 
 /* 0x18D40, 98 bytes, global, 1 named locals
@@ -1594,9 +1596,6 @@ static int anim_ascii_equal_ignore_case(
     unsigned char a;
     unsigned char b;
 
-    if (left == NULL || right == NULL) {
-        return 0;
-    }
     do {
         a = (unsigned char)*left++;
         b = (unsigned char)*right++;
@@ -1629,58 +1628,55 @@ int console_AnimCommand(
     int index;
 
     (void)float_arguments;
-    if (argument_count <= 1 || string_arguments == NULL ||
-        integer_arguments == NULL || gpWorld == NULL ||
-        gpWorld->player0 == NULL) {
-        return 0;
-    }
-    player = gpWorld->player0;
-    if (anim_ascii_equal_ignore_case(
-            string_arguments[0], "play")) {
-        count = argument_count - 1;
-        if (count > JPB_ANIM_QUEUE_NODE_CAPACITY) {
+    if (argument_count > 1) {
+        if (anim_ascii_equal_ignore_case(
+                string_arguments[0], "play")) {
+            count = argument_count - 1;
+            player = gpWorld->player0;
+            if (count > 7) {
+                (void)console_Printf(
+                    "anim play error: too many anims %d\n",
+                    count);
+                return 0;
+            }
+            for (index = 1; index <= count; ++index) {
+                Motion *motion =
+                    &player->paMotions[integer_arguments[index]];
+
+                if (index == 1) {
+                    (void)animctrl_MotionLock(
+                        &player->playerRoot, motion);
+                } else {
+                    (void)animctrl_MotionChain(
+                        &player->playerRoot, motion);
+                }
+            }
             return 0;
         }
-        for (index = 1; index <= count; ++index) {
-            int motion_index = integer_arguments[index];
+        if (anim_ascii_equal_ignore_case(
+                string_arguments[0], "fx")) {
+            int motion_index = integer_arguments[1];
+            int effect = integer_arguments[2];
 
-            if (motion_index < 0 ||
-                motion_index >= player->maxMotions) {
-                continue;
+            player = gpWorld->player0;
+            if (motion_index < 0) {
+                motion_index = 0;
+            } else if (motion_index > player->maxMotions) {
+                motion_index = player->maxMotions;
             }
-            if (index == 1) {
-                (void)animctrl_MotionLock(
-                    &player->playerRoot,
-                    &player->paMotions[motion_index]);
-            } else {
-                (void)animctrl_MotionChain(
-                    &player->playerRoot,
-                    &player->paMotions[motion_index]);
+            if (effect < 0) {
+                effect = 0;
+            } else if (effect > 0x54) {
+                effect = 0x54;
             }
+            player->paMotions[motion_index].fx1 =
+                (uint8_t)effect;
+            return 0;
         }
-        return 0;
     }
-    if (anim_ascii_equal_ignore_case(
-            string_arguments[0], "fx") &&
-        argument_count > 2 && player->paMotions != NULL &&
-        player->maxMotions >= 0) {
-        int motion_index = integer_arguments[1];
-        int effect = integer_arguments[2];
-
-        if (motion_index < 0) {
-            motion_index = 0;
-        }
-        if (motion_index > player->maxMotions) {
-            motion_index = player->maxMotions;
-        }
-        if (effect < 0) {
-            effect = 0;
-        }
-        if (effect > 0x54) {
-            effect = 0x54;
-        }
-        player->paMotions[motion_index].fx1 = (uint8_t)effect;
-    }
+    (void)console_Printf("anim: builtin\n");
+    (void)console_Printf(
+        "\tplay a b ...  - play up to 8 anims\n");
     return 0;
 }
 

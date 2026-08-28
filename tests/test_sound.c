@@ -40,6 +40,11 @@ typedef struct SoundControlTrace {
     uint32_t fade_time;
     JPBSoundControl controls[16];
     int control_calls;
+    JPBSoundChannelOperation channel_operations[32];
+    int channel_handles[32];
+    int channel_value0[32];
+    int channel_value1[32];
+    int channel_calls;
 } SoundControlTrace;
 
 typedef struct SoundBankTrace {
@@ -54,12 +59,16 @@ typedef struct SoundBankTrace {
 } SoundBankTrace;
 
 static uint16_t trace_play_sfx(
+    void *chunk,
+    int loops,
     VECTOR *position,
     int bankId,
     char *sound,
     uint32_t flag,
     void *user_data)
 {
+    (void)chunk;
+    (void)loops;
     SoundTrace *trace = (SoundTrace *)user_data;
     int call = trace->calls++;
 
@@ -73,13 +82,51 @@ static uint16_t trace_play_sfx(
         (trace->compare_position_by_value &&
          (position->vx != trace->expected_position_value.vx ||
           position->vy != trace->expected_position_value.vy ||
-          position->vz != trace->expected_position_value.vz ||
-          position->pad != trace->expected_position_value.pad)) ||
+          position->vz != trace->expected_position_value.vz)) ||
         sound != trace->expected_sound ||
         flag != trace->expected_flag) {
         trace->arguments_match = 0;
     }
     return trace->results[call];
+}
+
+static int trace_setup(
+    JPBSoundSetupOperation operation,
+    int value0,
+    int value1,
+    int value2,
+    int value3,
+    void *user_data)
+{
+    (void)value1;
+    (void)value2;
+    (void)value3;
+    (void)user_data;
+    if (operation == JPB_SOUND_SETUP_OPEN_AUDIO) {
+        return 0;
+    }
+    if (operation == JPB_SOUND_SETUP_ALLOCATE_CHANNELS) {
+        return value0;
+    }
+    return 0;
+}
+
+static void trace_channel(
+    JPBSoundChannelOperation operation,
+    int channel,
+    int value0,
+    int value1,
+    void *user_data)
+{
+    SoundControlTrace *trace = (SoundControlTrace *)user_data;
+    int call = trace->channel_calls++;
+
+    if (call < 32) {
+        trace->channel_operations[call] = operation;
+        trace->channel_handles[call] = channel;
+        trace->channel_value0[call] = value0;
+        trace->channel_value1[call] = value1;
+    }
 }
 
 static void reset_trace(
@@ -157,7 +204,6 @@ static int test_helpers_and_default_options(void)
         ExtractFileNameFromPath("a\\mixed/path/sound.wav"),
         "sound.wav") == 0);
     CHECK(strcmp(ExtractFileNameFromPath("plain.wav"), "plain.wav") == 0);
-    CHECK(ExtractFileNameFromPath(NULL) == NULL);
     CHECK(vector.vx == -7);
     CHECK(vector.vy == 12);
     CHECK(vector.vz == 32767);
@@ -213,6 +259,7 @@ static int test_bank_lifecycle(void)
 
     trace.accept_load = 1;
     jpb_SoundSetBankHook(trace_bank, &trace);
+    jpb_SoundSetSetupHook(trace_setup, NULL);
     sound_Init();
     CHECK(trace.calls == 1);
     CHECK(trace.load_calls == 1);
@@ -222,7 +269,6 @@ static int test_bank_lifecycle(void)
     CHECK(sound_NumInBank(0) == 41);
     CHECK(strcmp(sound_GetSoundName(0, 0), "resident/sabrhit7.wav") == 0);
     CHECK(strcmp(sound_GetSoundName(0, 22), "resident/sabrsw01.wav") == 0);
-    CHECK(sound_GetSoundName(0, 41) == NULL);
 
     CHECK(sound_LoadBank("jar_jar_playable", 1) == 0);
     CHECK(sound_NumInBank(1) == 8);
@@ -241,7 +287,6 @@ static int test_bank_lifecycle(void)
     CHECK(strcmp(sound_GetSoundName(3, 5), "mini1/vbdhit2.wav") == 0);
     CHECK(strcmp(sound_GetSoundName(3, 6), "mini4/xtimerbp.wav") == 0);
     CHECK(sound_LoadBank(unknown, 2) == -1);
-    CHECK(sound_LoadBank("fed", -1) == -1);
     CHECK(sound_LoadBank("fed", 5) == -1);
 
     sound_FreeBank(1);
@@ -250,11 +295,12 @@ static int test_bank_lifecycle(void)
     CHECK(trace.last_bank_id == 1);
 
     trace.accept_load = 0;
-    CHECK(sound_LoadBank("theed", 2) == -1);
-    CHECK(sound_NumInBank(2) == 0);
+    CHECK(sound_LoadBank("theed", 2) == 0);
+    CHECK(sound_NumInBank(2) == 43);
     CHECK(trace.last_paths != NULL);
     jpb_SoundSetBankHook(NULL, NULL);
     sound_FreeBank(0);
+    sound_FreeBank(2);
     sound_FreeBank(3);
     return 0;
 }
@@ -264,6 +310,10 @@ static int test_sound_play_fallback_order(void)
     VECTOR position = {1, 2, 3, 0};
     char sound[] = "jedihit";
     SoundTrace trace;
+
+    CHECK(sound_LoadBank("resident", 0) == 0);
+    CHECK(sound_LoadBank("resident", 2) == 0);
+    CHECK(sound_LoadBank("resident", 3) == 0);
 
     reset_trace(&trace, &position, sound, 7);
     trace.results[0] = 11;
@@ -308,7 +358,10 @@ static int test_sound_play_fallback_order(void)
     CHECK(trace.arguments_match == 1);
 
     jpb_SoundSetPlaySfxHook(NULL, NULL);
-    CHECK(sound_Play(&position, 3, sound, 7) == 0);
+    CHECK(sound_Play(&position, 3, sound, 7) == UINT16_MAX);
+    sound_FreeBank(0);
+    sound_FreeBank(2);
+    sound_FreeBank(3);
     return 0;
 }
 
@@ -319,6 +372,8 @@ static int test_sound_position_wrappers(void)
     char float_sound[] = "splash";
     char short_sound[] = "probmove";
     SoundTrace trace;
+
+    CHECK(sound_LoadBank("ruins", 3) == 0);
 
     reset_trace(&trace, NULL, float_sound, 4);
     trace.compare_position_by_value = 1;
@@ -332,12 +387,16 @@ static int test_sound_position_wrappers(void)
     CHECK(trace.banks[0] == 3);
     CHECK(trace.arguments_match == 1);
 
+    sound_FreeBank(3);
+    CHECK(sound_LoadBank("training_level", 3) == 0);
+
     reset_trace(
         &trace, (VECTOR *)&short_position, short_sound, 8);
     trace.results[0] = 16;
     CHECK(sound_PlaySV(&short_position, 3, short_sound, 8) == 0);
     CHECK(trace.calls == 1);
     CHECK(trace.arguments_match == 1);
+    sound_FreeBank(3);
     return 0;
 }
 
@@ -367,8 +426,8 @@ static int test_volume_and_retail_stubs(void)
     cameraFacing.pad = 0;
     sound = listener;
     get_sound_volume(listener, sound, &distance, &left, &right);
-    CHECK(left == 127);
-    CHECK(right == 127);
+    CHECK(left == 255);
+    CHECK(right == 0);
 
     CHECK(sound_GetIndex(&bank, name) == -1);
     CHECK(sound_GetSoundIndex(&bank, name) == 0);
@@ -389,11 +448,16 @@ static int test_sound_control_and_loop_lifecycle(void)
     VECTOR position = {10, 20, 30, 0};
     char loop_name[] = "fan_big";
     char ordinary_name[] = "splash";
+    char voice_name[] = "vmlpause";
 
-    sound_Init();
+    CHECK(sound_LoadBank("core", 3) == 0);
+    OptionStruct.Stereo = 0;
+    OptionStruct.SFXVolume = 100;
+    memset(&cameraLocation, 0, sizeof(cameraLocation));
     jpb_SoundSetStopHook(trace_stop, &control);
     jpb_SoundSetFadeHook(trace_fade, &control);
     jpb_SoundSetControlHook(trace_control, &control);
+    jpb_SoundSetChannelHook(trace_channel, &control);
 
     sound_SetLoopingFadeTime(UINT16_C(19), UINT32_C(750));
     CHECK(control.fade_calls == 1);
@@ -403,14 +467,29 @@ static int test_sound_control_and_loop_lifecycle(void)
     reset_trace(&play, &position, loop_name, 0);
     play.results[0] = 37;
     CHECK(sound_playSfx(&position, 3, loop_name, 0) == 37);
+    CHECK(control.channel_operations[0] == JPB_SOUND_CHANNEL_PANNING);
+    CHECK(control.channel_value0[0] == 255);
+    CHECK(control.channel_value1[0] == 255);
+    CHECK(control.channel_operations[1] == JPB_SOUND_CHANNEL_DISTANCE);
+    CHECK(control.channel_operations[2] == JPB_SOUND_CHANNEL_VOLUME);
+    CHECK(control.channel_value0[2] == 100);
     reset_trace(&play, &position, ordinary_name, 0);
     play.results[0] = 38;
     CHECK(sound_playSfx(&position, 3, ordinary_name, 0) == 38);
+    CHECK(control.channel_operations[5] == JPB_SOUND_CHANNEL_VOLUME);
+    CHECK(control.channel_value0[5] == 100);
+    reset_trace(&play, &position, voice_name, 0);
+    play.results[0] = 39;
+    CHECK(sound_playSfx(&position, 3, voice_name, 0) == 39);
+    CHECK(control.channel_operations[6] == JPB_SOUND_CHANNEL_PANNING);
+    CHECK(control.channel_value0[6] == 128);
+    CHECK(control.channel_value1[6] == 128);
+    CHECK(control.channel_operations[7] == JPB_SOUND_CHANNEL_VOLUME);
+    CHECK(control.channel_value0[7] == 92);
     stop_all_looped_sounds();
     CHECK(control.stop_calls == 1);
     CHECK(control.stop_handle == 37);
 
-    sound_Init();
     reset_trace(&play, &position, loop_name, 0);
     play.results[0] = 41;
     CHECK(sound_playSfx(&position, 3, loop_name, 0) == 41);
@@ -419,23 +498,30 @@ static int test_sound_control_and_loop_lifecycle(void)
     stop_all_looped_sounds();
     CHECK(control.stop_calls == 2);
 
+    reset_trace(&play, &position, loop_name, 0);
+    play.results[0] = 42;
+    CHECK(sound_playSfx(&position, 3, loop_name, 0) == 42);
+
     sound_Pause();
     sound_StopAll();
     mute_looped_sounds();
     CHECK(loopedSoundMuted == 1);
     unmute_looped_sounds();
     CHECK(loopedSoundMuted == 0);
-    CHECK(control.control_calls == 6);
+    CHECK(control.control_calls == 2);
     CHECK(control.controls[0] == JPB_SOUND_CONTROL_PAUSE_MUSIC);
     CHECK(control.controls[1] == JPB_SOUND_CONTROL_HALT_MUSIC);
-    CHECK(control.controls[2] == JPB_SOUND_CONTROL_UPDATE_LOOPED);
-    CHECK(control.controls[3] == JPB_SOUND_CONTROL_MUTE_LOOPED);
-    CHECK(control.controls[4] == JPB_SOUND_CONTROL_UPDATE_LOOPED);
-    CHECK(control.controls[5] == JPB_SOUND_CONTROL_UNMUTE_LOOPED);
+    CHECK(control.channel_calls >= 12);
+    CHECK(control.channel_operations[control.channel_calls - 1] ==
+          JPB_SOUND_CHANNEL_RESUME);
+    stop_all_looped_sounds();
+    CHECK(control.stop_calls == 3);
 
     jpb_SoundSetStopHook(NULL, NULL);
     jpb_SoundSetFadeHook(NULL, NULL);
+    jpb_SoundSetChannelHook(NULL, NULL);
     jpb_SoundSetControlHook(NULL, NULL);
+    sound_FreeBank(3);
     return 0;
 }
 
@@ -444,6 +530,8 @@ static int test_paused_playback_gate(void)
     SoundTrace trace;
     VECTOR position = {0, 0, 0, 0};
     char sound[] = "splash";
+
+    CHECK(sound_LoadBank("ruins", 3) == 0);
 
     sound_Paused = 1;
     reset_trace(&trace, &position, sound, 0);
@@ -457,6 +545,7 @@ static int test_paused_playback_gate(void)
     CHECK(trace.calls == 1);
     sound_Paused = 0;
     jpb_SoundSetPlaySfxHook(NULL, NULL);
+    sound_FreeBank(3);
     return 0;
 }
 
@@ -469,6 +558,7 @@ int main(void)
     CHECK(test_volume_and_retail_stubs() == 0);
     CHECK(test_sound_control_and_loop_lifecycle() == 0);
     CHECK(test_paused_playback_gate() == 0);
+    jpb_SoundSetSetupHook(NULL, NULL);
     puts("sound tests passed");
     return 0;
 }

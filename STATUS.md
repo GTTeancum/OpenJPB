@@ -1,5 +1,22 @@
 # Project status
 
+## Blanket reconstruction audit - complete (2026-08-27)
+
+- Audited all 2,018 project-owned reconstructed procedure bodies module by
+  module against the matching local PDB and shipped executable. The generated
+  coverage ledger reports 2,018/2,018 bodies present, zero partial project
+  modules, and zero project-owned comment-only shells.
+- Closed the final `wHook` platform-boundary pass by restoring direct retail
+  achievement dispatch and adding the Steam service lifetime to the visible
+  Windows host. Achievement interception remains test-only.
+- Direct executable checks confirmed that `_LoadTexture`'s `white.png` null-name
+  path and `default\\o_default.tga` retry are shipped behavior, so those two
+  texture fallbacks remain canonical rather than reconstruction substitutes.
+- The final validation state passes all 101 core tests in both Debug and Release,
+  the affected focused matrix in both configurations, and a real-asset FED
+  headless smoke. Open live-review items remain tracked independently in
+  `docs/TODO.md`.
+
 ## Milestone 0 - evidence inventory and decompiler export
 
 Completed:
@@ -931,20 +948,21 @@ Completed:
   level-15 placement 24/27/29 override. Exact `enemy_HandleMapTriggers`
   resolves both direct and leveldata-relative cube records into deferred
   placement activation, while exact `enemy_getPointerIndex` preserves its
-  level- and enemy-ID-specific archive-index adjustment. The underlying
-  1,114-byte `loader_CreateEnemy` model/animation constructor still crosses
-  unrecovered object-loader code, so a single dependency-free `jpb_` provider
-  marks that boundary rather than importing a host graphics framework or
-  pretending the constructor is complete. The live PC runtime now binds its
-  portable BMD/CAD/WAI actor owner to that provider; its battle droid reaches
-  exact `_addEnemy`, including placement state and active-list publication,
-  instead of bypassing the recovered owner with manual pool/list operations.
+  level- and enemy-ID-specific archive-index adjustment. The 1,114-byte
+  `loader_CreateEnemy` constructor is now fully reconstructed: exact
+  `loader_CreateCharacter` owns scene/model/animation/physics/player allocation,
+  and the placement supplies model, animation, WAI, transform, energy, and
+  movement state. The live PC runtime publishes immutable BMD/CAD/WAI archives
+  through the canonical globals and observes successful actors only for
+  rendering and diagnostics. Its battle droid reaches exact `_addEnemy`,
+  including placement state and active-list publication, without a parallel
+  manual pool/list path.
   Asset loading itself no longer preselects and force-spawns the nearest
   placement: the first simulation frame reaches exact
   `enemy_HandleEnemies` -> `_checkForNewEnemies`, so only authored
   `activeFlags`/`aRange` placements enter the active list.
 - Removed the PC runtime's remaining single-enemy and single-class host
-  ownership. The persistent loader provider now resolves FED actor names
+  ownership. The persistent archive owner now resolves FED actor names
   against the matched executable's BAF/model/animation tables at RVAs
   `0x4BD2B0`, `0x4BCF10`, and `0x4BD730`. It connects `baron` to model 17
   `battle_d`/`battle_d`, `21b` to model 15 `pilot`/`pilot_d`, and
@@ -1263,30 +1281,30 @@ Completed:
   wave/UV math, 48-polygon two-layer traversal, triangle-strip rasterization,
   and both restart scores; the installed Theed gate publishes 208 completed
   immediate polygons over three frames.
-- Replaced the live installed-game HUD's compact 5x7 text substitution with
-  a platform-neutral TrueType realization of the matched PC boundary. Exact
+- Replaced the live installed-game HUD's compact text substitution with the
+  matched SDL_ttf boundary. Exact
   `getFontFile` at RVA `0x176E0`, `LoadFont` at RVA `0xFDC90`, and
   `SDLTextWriteScale` at RVA `0xFDF40` establish the language/style NotoSans
   filenames, lower-seven-bit alignment mode,
   `trunc(scale * scaleAdjustment * 24)` point size, measured advances, alpha,
-  and the 17-entry tint table at RVA `0x4CD100`. The adapter consumes the
-  shipped `res/font` files and draws antialiased glyphs directly into the
-  software framebuffer. Vendored stb_truetype source adds no runtime DLL;
-  the old compact glyphs remain only as a bounded missing-asset fallback.
+  and the 17-entry tint table at RVA `0x4CD100`. The adapter dynamically loads
+  the shipped SDL2/SDL2_ttf DLLs, consumes the shipped `res/font` files, and
+  draws antialiased glyphs directly into the software framebuffer. No
+  synthetic missing-font fallback remains.
   Focused tests cover every recovered file-selection branch, exact point/tint
   constants, and real `NotoSansSC-Bold.ttf` rasterization. A 117-frame field
   capture verifies the score and item count through that path while authored
   Obi-Wan movement and attack rendering remain active.
-- Recovered the complete display-text portion of exact initialized PDB global
-  `allTextEverything` at RVA `0x4A1000`: seven language blocks, 498 published
-  slots per language, and 68,317 verified UTF-8 bytes across slots 2..497.
-  The original name is retained in readable source. Slots 0 and 1 are proven
-  pointer aggregates rather than strings and remain explicitly non-text.
+- Recovered the complete display-text corpus behind initialized PDB global
+  `allTextEverything` at RVA `0x4A1000`: 127 shared pointers, seven 371-entry
+  language tails, and 68,317 verified UTF-8 bytes. Source now retains the exact
+  compact `[2725]` storage, including the shared model/level-name pointers and
+  terminal empty pointer.
   Exact `generateAllText`, `UpdateCurrentlyLoadedFont`, and
-  `MarkFontAtlasForRefresh` leaves now publish the selected language during
-  PC game initialization; a dependency-free cached UTF-8 widening boundary
-  adapts the retail byte strings to the portable renderer. The unit gate hashes
-  the entire corpus and directly checks English, German, Italian, and Chinese.
+  `MarkFontAtlasForRefresh` leaves now publish retail byte pointers during PC
+  game initialization, and each `SDLTextWrite*` path performs the recovered
+  per-draw `ConvertToUTF16` conversion. The unit gate hashes the entire corpus
+  and directly checks English, German, Italian, and Chinese.
 - Recovered the matched title-menu state foundation instead of introducing a
   separate front-end. Exact PDB type `MENUVARS` now retains its named 984-byte
   x64 layout and portable field ownership, including the eight-entry menu
@@ -1691,10 +1709,10 @@ Completed:
   B/X/Y to north/west/south attacks; classic gameplay retains A/X/Y attacks
   and B jump, and menus force classic A-confirm/B-back semantics. The host no
   longer imposes a generic 24-percent XInput deadzone. It uses each player's
-  `OptionStruct.WalkLimit` and `RunLimit` with the original strict percentage
+  `OptionStruct.WalkLimit` and `RunLimit` with the original strict byte-derived
   thresholds, preserves unscaled stick axes, keeps D-pad movement digital and
   non-running, adds simultaneous D-pad/stick contributions, clamps configured
-  percentages at 100, and accepts the original nonzero trigger range.
+  limit bytes at 127, and accepts the original nonzero trigger range.
 - Audited controller identity through exact `ReadJoystickInput` and the PC
   XInput adapter. The executable compares and stores physical SDL controller
   objects; the adapter's ownership helper likewise returns a physical XInput
@@ -1745,8 +1763,10 @@ Completed:
   `6530987CE7AD791D5D0F4C778ADFBE0C570BCCD70DA3C8087780B16E40C72402`.
 - Continued the source-driven control audit through the analog and contextual
   paths. Signed XInput axes now use the executable's exact 32767 divisor,
-  preserving its positive/negative full-scale asymmetry and strict 100-percent
-  threshold. The secondary-player directional gate reads the recovered P2
+  preserving its positive/negative full-scale asymmetry. Direct instructions
+  also prove that walk/run limit bytes are capped and divided by 127, not 100;
+  the default thresholds are therefore exactly `36/127` and `106/127`. The
+  secondary-player directional gate reads the recovered P2
   input-type global instead of P1's, and Arena publishes the same signed camera
   destination consumed by `brain_ControlPlayer`. Real-asset gates cover exact
   camera-relative axes, desired facing, walk/run selection, and independent

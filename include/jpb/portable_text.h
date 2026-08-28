@@ -28,6 +28,11 @@ typedef struct JPBPortableTextControlGlyph {
     int y;
 } JPBPortableTextControlGlyph;
 
+typedef void (*JPBPortableText3DGlyphHook)(
+    void *user_data,
+    _Material *material,
+    const JPBScreenPolyVertex *vertices);
+
 /*
  * Exact matched-PC font selection performed by getFontFile. Language 6 uses
  * the three Simplified-Chinese faces; the remaining languages use the shared
@@ -49,7 +54,7 @@ uint32_t jpb_PortableTextTint(int tint);
  * renderer's SizeText -> DrawUITextUTF16 call order.
  */
 int jpb_PortableTextPrepareControlGlyphs(
-    wchar_t *text,
+    uint16_t *text,
     size_t text_capacity,
     int mode,
     int x,
@@ -59,16 +64,19 @@ int jpb_PortableTextPrepareControlGlyphs(
     int language,
     float scale_adjustment,
     int *origin_x,
+    int *text_width_out,
     JPBPortableTextControlGlyph *glyphs,
     size_t glyph_capacity);
 
+/* Install the SDL_ttf font and metric owners used by the reconstructed API. */
+void jpb_PortableTextInstallHooks(void);
+
 /*
- * Dependency-light realization of the matched SDL_ttf/FontAtlas boundary.
- * It consumes the shipped fonts through the recovered resource owner and
- * rasterizes directly into the caller-owned software framebuffer.
+ * SDL_ttf realization of the matched font boundary. A missing SDL_ttf/font
+ * resource is a hard draw failure; there is no substitute glyph renderer.
  */
 int jpb_PortableTextDraw(
-    const wchar_t *text,
+    const uint16_t *text,
     int tint,
     int alpha,
     int mode,
@@ -85,6 +93,49 @@ int jpb_PortableTextDraw(
     int clip_bottom,
     JPBSoftwareFramebuffer *framebuffer,
     JPBPortableTextMetrics *metrics);
+
+int jpb_PortableTextDrawPointSize(
+    const uint16_t *text,
+    uint32_t color,
+    int mode,
+    int x,
+    int y,
+    int point_size,
+    int font_style,
+    int language,
+    int clip_enabled,
+    int clip_left,
+    int clip_top,
+    int clip_right,
+    int clip_bottom,
+    JPBSoftwareFramebuffer *framebuffer,
+    JPBPortableTextMetrics *metrics);
+
+int jpb_PortableTextEmit3D(
+    const uint16_t *text,
+    uint32_t color,
+    int mode,
+    float x,
+    float y,
+    float z,
+    float scale,
+    int font_style,
+    int language,
+    JPBPortableText3DGlyphHook glyph_hook,
+    void *user_data);
+
+int jpb_PortableTextEmit3DPointSize(
+    const uint16_t *text,
+    uint32_t color,
+    int mode,
+    float x,
+    float y,
+    float z,
+    int point_size,
+    int font_style,
+    int language,
+    JPBPortableText3DGlyphHook glyph_hook,
+    void *user_data);
 
 void jpb_PortableTextShutdown(void);
 

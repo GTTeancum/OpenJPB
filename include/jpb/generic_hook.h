@@ -2,6 +2,7 @@
 #define JPB_GENERIC_HOOK_H
 
 #include "jpb/material.h"
+#include "jpb/whook.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -18,6 +19,12 @@ int IsBusTextureForCorus2(
 int IsCoffinTextureForPalace(
     int level, const char *filename, int texture_index);
 void SetTextureColorOverride(int level, _Material *material);
+void _DrawUIText(
+    const char *text,
+    SCREENRECT destination,
+    int font_style,
+    int point_size,
+    CVECTOR color);
 
 #ifdef __cplusplus
 }

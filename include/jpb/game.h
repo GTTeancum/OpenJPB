@@ -116,14 +116,6 @@ typedef struct saveGameStruct {
     uint16_t unlockedExtraCharacters;
 } saveGameStruct;
 
-typedef void (*JPBGameBarHook)(
-    void *user_data,
-    int x,
-    int y,
-    int width,
-    int height,
-    uint32_t color);
-
 /* Exact matched-PC PDB type 0x9ADA. */
 typedef struct gamestruct {
     int8_t Mode;
@@ -210,7 +202,8 @@ extern uint32_t secretBits;
 extern int32_t zerobss_levelReset;
 extern int32_t zerobss_ResetBoss;
 extern uint8_t abGlobalBits[16];
-extern Upgrades jediUpgrades[9];
+/* The executable addresses sparse model slot 17; only slots 0..8 serialize. */
+extern Upgrades jediUpgrades[JPB_GAME_JEDI_MODEL_CAPACITY];
 extern saveGameStruct SaveGameStruct;
 extern int32_t numPlayers;
 extern float deltaTime;
@@ -223,11 +216,39 @@ extern int32_t refreshHUDCounter;
 extern uint16_t charStuff[10];
 
 void game_CLR_GLOBALBIT(unsigned bit);
+void game_checkCompleteAchievements(void);
+void game_checkNextLevel(void);
 int game_GET_GLOBALBIT(unsigned bit);
 void game_SET_GLOBALBIT(unsigned bit);
+void game_InitGameSystems(void);
+void game_OneGameLoop(void);
+int game_gPlayTheGame(void);
+void game_initPerLevel(void);
+void game_initVar(unsigned mode);
+void game_loadLevelMode(void);
+void ForceClearPlayerCPad(void);
+void InitGameResolution(void);
+void LoadSettingsData(optionstruct options);
+void LoadPlayerPos(char *filename);
+void SavePlayerPos(char *filename);
+void checkResetAbort(void);
+void continueGameGameInit(void);
+int console_DecCommand(
+    int narg, char **arg_str, int *arg_int, float *arg_float);
+int console_IncCommand(
+    int narg, char **arg_str, int *arg_int, float *arg_float);
+int console_LoadPlayerPosCommand(
+    int narg, char **arg_str, int *arg_int, float *arg_float);
+int console_SavePlayerPosCommand(
+    int narg, char **arg_str, int *arg_int, float *arg_float);
+int console_SetCommand(
+    int narg, char **arg_str, int *arg_int, float *arg_float);
+int console_ToggleCommand(
+    int narg, char **arg_str, int *arg_int, float *arg_float);
+int findvar(char *name);
+int getvar(int index);
+void setvar(int index, int value);
 
-void jpb_GameSetBarHook(
-    JPBGameBarHook hook, void *user_data);
 void jpb_GameResetOverlayScbs(void);
 void _AddBar(
     int x, int y, int width, int height, int32_t color);
@@ -248,13 +269,8 @@ void game_DrawScore(unsigned player);
 char game_GetGameCounter(int index);
 char game_GetGameMode(void);
 
-/*
- * Inferred portable boundary around the five-byte difficulty copy performed
- * inside exact PDB procedure game_initPerLevel. Difficulty 0 is easy and 1
- * is normal; the original clamps authored level indexes above 15 to row 0.
- */
-int jpb_game_ApplyLevelDifficulty(
-    unsigned level, int difficulty);
+/* Shared realization of game_initPerLevel's exact five-byte table copy. */
+void jpb_game_ApplyLevelDifficulty(unsigned level);
 
 int game_gGetEnergy(int player);
 int game_gGetForce(int player);

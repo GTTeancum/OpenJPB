@@ -9,8 +9,8 @@
  * are claimed as original symbols.
  *
  * The Windows build queried SDL_GetKeyboardState directly for a hidden
- * five-key cheat. jpb_InputPowerBattleChordPressed is the sole portability
- * substitution: the PC adapter may expose that chord, while nxdk can leave
+ * five-key cheat. jpb_InputPowerBattleChordPressed is the platform input
+ * boundary: the PC adapter may expose that chord, while nxdk can leave
  * the optional provider unset without importing SDL into gameplay code.
  */
 
@@ -76,7 +76,7 @@ static int brain_control_start_jump(
     brain_SetJumpTrajectory(
         player,
         ((uint32_t)cpad[1] & UINT32_C(0xf000)) == 0);
-    player->pMotionCallBack = jpb_TrajectoryCallbackSlot;
+    player->pMotionCallBack = funcArray[6];
     brain_SetTrajectory(
         player,
         player->airVelocity,
@@ -103,7 +103,7 @@ static void brain_control_start_alternate_jump(
     }
 
     brain_SetJumpTrajectory(player, 0);
-    player->pMotionCallBack = jpb_TrajectoryCallbackSlot;
+    player->pMotionCallBack = funcArray[6];
     brain_SetTrajectory(
         player,
         player->airVelocity,

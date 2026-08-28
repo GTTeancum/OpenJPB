@@ -9,6 +9,7 @@
 #include "jpb/physics.h"
 #include "jpb/platform.h"
 #include "jpb/scene.h"
+#include "jpb/whook.h"
 #include "jpb/world.h"
 
 #include <stdio.h>
@@ -26,6 +27,21 @@
             return 1;                                                        \
         }                                                                    \
     } while (0)
+
+static uint32_t test_pose_words[3];
+
+static void init_test_animations(void)
+{
+    int index;
+
+    (anim_InitAnimations)(0);
+    for (index = 0; index < JPB_ANIMATION_CAPACITY; ++index) {
+        maAnimationData[index].depack_context.huffdataorigin =
+            test_pose_words;
+        maAnimationData[index].depack_context3.huffdataorigin =
+            test_pose_words;
+    }
+}
 
 typedef struct AchievementTrace {
     int complete_calls;
@@ -53,6 +69,33 @@ static int trace_get_complete_achievement(int id, void *user_data)
 static uint32_t test_cheat_chord_provider(void *user_data)
 {
     return *(const uint32_t *)user_data;
+}
+
+static int test_pause_control(void)
+{
+    playerObject player;
+    int32_t cpad[2] = {0, 0};
+
+    memset(&player, 0, sizeof(player));
+    player.playernum = 0;
+    GameStruct.GameState = 0;
+    jpb_WHookClearKeyState();
+    jpb_WHookHandleKeyEvent(0x20, 0, 1);
+    CHECK(brainutil_PauseControl(cpad, &player) == 0);
+    CHECK((GameStruct.GameState & UINT32_C(0x1000)) != 0);
+
+    GameStruct.GameState = 0;
+    player.playernum = 1;
+    CHECK(brainutil_PauseControl(cpad, &player) == 0);
+    CHECK((GameStruct.GameState & UINT32_C(0x2000)) == 0);
+
+    GameStruct.GameState = 0;
+    cpad[1] = INT32_C(0x900);
+    CHECK(brainutil_PauseControl(cpad, &player) == 0);
+    CHECK((GameStruct.GameState & UINT32_C(0x400000)) != 0);
+    CHECK((GameStruct.GameState & UINT32_C(0x2000)) != 0);
+    jpb_WHookClearKeyState();
+    return 0;
 }
 
 static void reset_conform_cheats(void)
@@ -213,7 +256,7 @@ static animObject *prepare_landing_actor(
     memset(physics, 0, sizeof(*physics));
     memset(motions, 0, sizeof(Motion) * 80);
     memset(templates, 0, sizeof(_animTemplate) * 80);
-    anim_InitAnimations(0);
+    init_test_animations();
     animation = &maAnimationData[0];
 
     player->playerRoot.pParent = &scene->sceneRoot;
@@ -229,6 +272,7 @@ static animObject *prepare_landing_actor(
     for (index = 0; index < 80; ++index) {
         motions[index].Seq = (uint16_t)index;
         motions[index].Speed = -1;
+        templates[index].Lframe = 10;
     }
     return animation;
 }
@@ -575,10 +619,16 @@ static int test_maul_trajectory_callback(void)
 static int test_jedi_player_settings(void)
 {
     playerObject player;
+    sceneObject scene;
+    modelObject model;
 
     memset(&player, 0, sizeof(player));
-    CHECK(jpb_jedi_ApplyPlayerSettings(
-              &player) == 1);
+    memset(&scene, 0, sizeof(scene));
+    memset(&model, 0, sizeof(model));
+    player.pSettings.dblgravity = UINT16_C(0x4242);
+    player.playerRoot.pParent = (objectRoot *)&scene;
+    scene.pModel = (objectRoot *)&model;
+    (void)jedi_InitPlayer(&player);
     CHECK(player.pSettings.JumpVel == 0x7a);
     CHECK(player.pSettings.RunningJumpVel == 0x73);
     CHECK(player.pSettings.dblJumpVel == 0x73);
@@ -588,13 +638,14 @@ static int test_jedi_player_settings(void)
     CHECK(player.pSettings.bkJumpAngle == 0x555);
     CHECK(player.pSettings.gravity ==
           UINT16_C(0xe314));
-    CHECK(player.pSettings.dblgravity == 0);
+    CHECK(player.pSettings.dblgravity == UINT16_C(0x4242));
     CHECK(player.pSettings.minClosingDist == 0x14);
     return 0;
 }
 
 int main(void)
 {
+    CHECK(test_pause_control() == 0);
     CHECK(test_lsb_and_saber_edge_helpers() == 0);
     CHECK(test_conform_geom_nodes() == 0);
     CHECK(test_basic_landing_motion() == 0);

@@ -305,12 +305,9 @@ void shaolin_Attack(kfNode *n)
             if (move > player->maxMotions) {
                 return;
             }
-            physics_gTurnToFace(
+            (void)physics_gForceFaceTarget(
                 &player->playerRoot,
-                physics_gFaceTarget(
-                    &player->playerRoot,
-                    &player->target->playerRoot),
-                4);
+                &player->target->playerRoot);
             if ((player->paMotions[move].motionFlags &
                  UINT32_C(0x100000)) != 0) {
                 player->paMotions[move].FunctPtr = 1;
@@ -340,12 +337,9 @@ void shaolin_Attack(kfNode *n)
             &player->playerRoot,
             &player->paMotions[0x15],
             0x16);
-        physics_gTurnToFace(
+        (void)physics_gForceFaceTarget(
             &player->playerRoot,
-            physics_gFaceTarget(
-                &player->playerRoot,
-                &player->target->playerRoot),
-            4);
+            &player->target->playerRoot);
         player->pFlags |= UINT32_C(0x20);
         return;
     }
@@ -384,12 +378,9 @@ void shaolin_Attack(kfNode *n)
         &player->playerRoot,
         &player->paMotions[0],
         0x16);
-    physics_gTurnToFace(
+    (void)physics_gForceFaceTarget(
         &player->playerRoot,
-        physics_gFaceTarget(
-            &player->playerRoot,
-            &player->target->playerRoot),
-        4);
+        &player->target->playerRoot);
 }
 
 /* 0xF7820, 51 bytes, global, 2 named locals

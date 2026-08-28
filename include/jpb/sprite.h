@@ -13,9 +13,63 @@
 extern "C" {
 #endif
 
-typedef struct TexAnim TexAnim;
-typedef struct PalAnim PalAnim;
 typedef struct Projectile Projectile;
+
+/* Exact matched-PC PDB type TexAnim. */
+typedef struct TexAnim {
+    void *anm_UVIndex;
+    int16_t anm_width;
+    int16_t anm_height;
+    int16_t anm_fframe;
+    int16_t anm_lframe;
+    int32_t anm_cframe;
+    int32_t anm_frate;
+    int32_t anm_flags;
+} TexAnim;
+
+/* Exact matched-PC PDB type ColorCycle. */
+typedef struct ColorCycle {
+    int16_t cc_fcolor;
+    int16_t cc_lcolor;
+    int16_t cc_dcolor;
+    int16_t cc_pad0;
+    int32_t cc_current;
+    int32_t cc_rate;
+    uint32_t cc_flags;
+} ColorCycle;
+
+/* Exact matched-PC PDB type PalAnim. */
+typedef struct PalAnim {
+    Node *pal_Next;
+    _Material *pal_Data;
+    ColorCycle pal_cycle[4];
+    uint32_t pal_flags;
+} PalAnim;
+
+/* Exact matched-PC PDB type Emiter (spelling retained). */
+typedef struct Emiter {
+    int16_t rate;
+    int16_t count;
+    int16_t flags;
+    int8_t vmin;
+    int8_t vmax;
+    int8_t sr;
+    int8_t sg;
+    int8_t sb;
+    int8_t spread;
+    int8_t er;
+    int8_t eg;
+    int8_t eb;
+    int8_t pad;
+    _svector rot;
+    VECTOR pos;
+    int16_t colorSpeed;
+    int16_t deathSpeed;
+    uint8_t v1;
+    uint8_t v2;
+    uint8_t v3;
+    uint8_t mode;
+} Emiter;
 
 /* Exact matched-PC PDB type 0x1210. */
 typedef struct CControl {
@@ -157,11 +211,46 @@ typedef struct Sprite {
     int16_t sp_Num;
 } Sprite;
 
+/* Exact matched-PC PDB type Particle. */
+typedef struct Particle {
+    _svector vel;
+    CVECTOR color;
+    _svector pos;
+    int16_t vx;
+    int16_t vy;
+    int16_t vz;
+} Particle;
+
+/* Exact matched-PC PDB type PCB. */
+typedef struct PCB {
+    Node *pcb_next_PCB;
+    int32_t pcb_flags;
+    VECTOR *pcb_Pos;
+    int32_t pcb_fRate;
+    int32_t pcb_fLaunch;
+    int32_t pcb_Interp;
+    uint8_t pcb_r;
+    uint8_t pcb_g;
+    uint8_t pcb_b;
+    uint8_t pcb_trans;
+    uint8_t pcb_sr;
+    uint8_t pcb_sg;
+    uint8_t pcb_sb;
+    uint8_t pcb_pad0;
+    int32_t pcb_Bits;
+    Sprite *pcb_Sptr;
+    int16_t pcb_v1;
+    int16_t pcb_v2;
+    int16_t pcb_v3;
+    int16_t pcb_mode;
+    int16_t pcb_Scale;
+    int16_t pcb_grnd;
+    Particle pcb_Particle[8];
+    _svector pcb_Data[8];
+} PCB;
+
 extern List mSCBDraw[2];
 extern int mCurSCBList;
-/* Portable diagnostics for corrupted double-buffer selector recovery. */
-extern uint32_t jpb_sprite_list_recovery_count;
-extern int32_t jpb_sprite_last_invalid_selector;
 extern uint32_t cluts[32];
 extern int numSprite;
 extern int numSCB;
@@ -207,7 +296,15 @@ void setPivotPositionAndFixScale(
     float *width,
     float *height,
     int pivot);
+void setPivotPositionAndFixScaleMM(
+    float *x,
+    float *y,
+    float *width,
+    float *height,
+    int pivot);
 void setPositionOffPivot(
+    float *x, float *y, float pivot_x, float pivot_y);
+void setPositionOffPivotMM(
     float *x, float *y, float pivot_x, float pivot_y);
 
 void _RenderSprite(MATRIX *matrix, SCB *scb);
@@ -215,6 +312,7 @@ int sprite_AddCallBack(int32_t *cb);
 Sprite *sprite_AddProjectile(
     Projectile *proj, VECTOR *pos, int32_t *callback, int type);
 Sprite *sprite_AddSpriteAtLoc(Sprite *sptr, int type, VECTOR *pos);
+Sprite *sprite_AddSpriteAtNode(int playernum, int nodeID, int type);
 void sprite_Flash(int32_t *cb);
 Sprite **sprite_AddSpriteEffect(
     EffectData *data, int num, VECTOR *loc, _svector *vel);
@@ -235,6 +333,20 @@ Sprite *sprite_GetPointsSprite(
     uint32_t colour,
     int small);
 void sprite_CommentsCallBack(int32_t *cb);
+SCB *sprite_DisplayTpage(int tpage, int x, int y);
+void sprite_FireEmiter(Emiter *emit, Sprite *shot);
+Ring *sprite_FireSphere(RingData *r, VECTOR *pos0);
+void sprite_Get3DShear(Sprite *sptr, VECTOR *center, int dist);
+Sprite *sprite_GetSpotMarker(int playernum, int dist, VECTOR *pos);
+void sprite_GetSuckSpritePos(
+    VECTOR *pos, _svector *dir, VECTOR *center);
+Sprite *sprite_GetTargetMarker(int playernum, int dist, int type);
+int sprite_Glow(int32_t *cb);
+void sprite_InitSCBPool(void);
+int sprite_LightMotion(int32_t *cb);
+int sprite_Lock(int32_t *cb);
+int sprite_LockNode(int32_t *cb);
+int sprite_OrbitNode(int32_t *cb);
 SCB *sprite_DisplaySprite(
     SCB *scb,
     int type,
@@ -273,6 +385,33 @@ void sprite_SpriteRotScale(
     Sprite *sptr, int x_rotation, int y_rotation, int z_rotation);
 void sprite_SpriteWork(MATRIX *matrix);
 void sprite_SwapData(SCB *scb);
+void sprite_SCBDraw(void *matrix);
+void sprite_Set2DSCBPos(
+    SCB *scb, int x, int y, int z, int w, int h);
+Sprite *sprite_SetColorCycle(
+    Sprite *sptr, int type, int ps, int pe, int pr);
+void sprite_SetSpriteEffect(
+    Sprite *sptr, int effect, int w, int h);
+int sprite_SetTrajectory(Sprite *sptr, int velocity, int angle);
+int sprite_Sparks(int32_t *cb);
+int sprite_Spot(int32_t *cb);
+int sprite_SpriteMotion(int32_t *cb);
+int sprite_TrackNode(int32_t *cb);
+int sprite_ViewPoint(int32_t *cb);
+PCB *sprite_gAllocPCB(void);
+void sprite_gMoveSCBPosition(
+    SCB *scb, float dx, float dy, float dz);
+void sprite_gSetBillBrd(Sprite *sptr);
+void sprite_gSetLineColor(Sprite *sptr, CVECTOR *color);
+void sprite_gSetLinePosition(
+    Sprite *sptr, VECTOR *p0, VECTOR *p1);
+void sprite_gSetRGB(SCB *scb, char r, char g, char b);
+void sprite_gSetSCBPosition(
+    SCB *scb, int x, int y, int z, int w, int h);
+void sprite_gSetSpriteCenter(Sprite *sptr, int x, int y, int z);
+void sprite_gSetSpriteRGB(
+    Sprite *sptr, char r, char g, char b);
+void sprite_gUnHideSCB(SCB *scb);
 
 #if defined(__cplusplus)
 #define JPB_SPRITE_STATIC_ASSERT(condition, message) \
@@ -307,6 +446,18 @@ JPB_SPRITE_STATIC_ASSERT(
     offsetof(RingData, time) == 44,
     "RingData.time layout changed");
 JPB_SPRITE_STATIC_ASSERT(
+    sizeof(TexAnim) == 32,
+    "TexAnim must match the matched-PC PDB");
+JPB_SPRITE_STATIC_ASSERT(
+    sizeof(ColorCycle) == 20,
+    "ColorCycle must match the matched-PC PDB");
+JPB_SPRITE_STATIC_ASSERT(
+    sizeof(Emiter) == 48,
+    "Emiter must match the matched-PC PDB");
+JPB_SPRITE_STATIC_ASSERT(
+    sizeof(Particle) == 26,
+    "Particle must match the matched-PC PDB");
+JPB_SPRITE_STATIC_ASSERT(
     offsetof(SCB, scb_flags) == sizeof(void *),
     "SCB.scb_flags native-pointer offset changed");
 JPB_SPRITE_STATIC_ASSERT(
@@ -326,6 +477,12 @@ JPB_SPRITE_STATIC_ASSERT(
 JPB_SPRITE_STATIC_ASSERT(
     sizeof(Sprite) == 152,
     "Sprite must match PDB type 0x126E");
+JPB_SPRITE_STATIC_ASSERT(
+    sizeof(PalAnim) == 104,
+    "PalAnim must match the matched-PC PDB");
+JPB_SPRITE_STATIC_ASSERT(
+    sizeof(PCB) == 344,
+    "PCB must match the matched-PC PDB");
 JPB_SPRITE_STATIC_ASSERT(
     sizeof(Ring) == 72,
     "Ring must match PDB type 0x120B");

@@ -18,74 +18,8 @@ uint32_t jpb_PCMapKeyboard(
     float *axis_x,
     float *axis_y)
 {
-    uint32_t bits = 0;
-    float x = 0.0f;
-    float y = 0.0f;
-
-    if (keyboard != NULL) {
-        if (keyboard->moveUp) {
-            bits |= JPB_PAD_UP;
-            y = -1.0f;
-        }
-        if (keyboard->moveLeft) {
-            bits |= JPB_PAD_RIGHT;
-            x = -1.0f;
-        }
-        if (keyboard->moveDown) {
-            bits |= JPB_PAD_DOWN;
-            y += 1.0f;
-        }
-        if (keyboard->moveRight) {
-            bits |= JPB_PAD_LEFT;
-            x += 1.0f;
-        }
-        if (keyboard->walkModifier &&
-            (bits & (JPB_PAD_UP | JPB_PAD_LEFT |
-                     JPB_PAD_DOWN | JPB_PAD_RIGHT)) != 0) {
-            bits |= JPB_PAD_ANALOG_MOVEMENT;
-        }
-        if (keyboard->zoomIn) bits |= JPB_PAD_ZOOM_IN;
-        if (keyboard->comboSouth) bits |= JPB_PAD_COMBO_SOUTH;
-        if (keyboard->comboWest) bits |= JPB_PAD_COMBO_WEST;
-        if (keyboard->comboNorth) bits |= JPB_PAD_COMBO_NORTH;
-        if (keyboard->lockOn) bits |= JPB_PAD_LOCK_ON;
-        if (keyboard->jumpBlockChord) {
-            bits |= JPB_PAD_JUMP | JPB_PAD_BLOCK |
-                    JPB_PAD_LEFT_TRIGGER;
-        }
-        if (keyboard->northBlockChord) {
-            bits |= JPB_PAD_COMBO_NORTH | JPB_PAD_BLOCK |
-                    JPB_PAD_LEFT_TRIGGER;
-        }
-        if (keyboard->southBlockChord) {
-            bits |= JPB_PAD_COMBO_SOUTH | JPB_PAD_BLOCK |
-                    JPB_PAD_LEFT_TRIGGER;
-        }
-        if (keyboard->westBlockChord) {
-            bits |= JPB_PAD_COMBO_WEST | JPB_PAD_BLOCK |
-                    JPB_PAD_LEFT_TRIGGER;
-        }
-        if (in_menu_state == 0) {
-            if (keyboard->block) {
-                bits |= JPB_PAD_BLOCK | JPB_PAD_LEFT_TRIGGER;
-            }
-            if (keyboard->jump) {
-                bits |= JPB_PAD_ZOOM_IN | JPB_PAD_JUMP;
-            }
-            if (keyboard->start) bits |= JPB_PAD_START;
-        } else {
-            if (keyboard->block) bits |= JPB_PAD_BLOCK;
-            if (keyboard->start) bits |= JPB_PAD_JUMP;
-            if (keyboard->jump) {
-                bits |= in_title_state == 0
-                    ? JPB_PAD_START
-                    : JPB_PAD_COMBO_SOUTH;
-            }
-        }
-    }
-    if (axis_x != NULL) *axis_x = x;
-    if (axis_y != NULL) *axis_y = y;
-    return bits;
+    return jpb_InputMapKeyboardState(
+        keyboard, in_menu_state, in_title_state, axis_x, axis_y);
 }
 
 int jpb_PCControllerUserForPlayer(

@@ -55,6 +55,7 @@ int ai_FireWeapon(
     int32_t *cpad, playerObject *player);
 int ai_HthAttack(
     wsl_ENEMY *pEnemy, UDATA *vars);
+int ai_LoadAI(int modelID, char *name);
 void ai_RangedAttack(
     wsl_ENEMY *pEnemy, UDATA *vars);
 int ai_SeqAttack(
@@ -77,6 +78,7 @@ void ai_WalktoPlayer(
     playerObject *player,
     int move,
     int dist);
+char ai_ValidateData(playerObject *player);
 aiData *ai_GetAIHandle(int modelID, int level);
 extern _svector mShotOffset[9];
 extern _svector mShotMiss[9];

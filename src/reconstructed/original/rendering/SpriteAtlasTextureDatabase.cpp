@@ -1,5 +1,5 @@
 /*
- * PARTIALLY REVIEWED RECONSTRUCTION.
+ * REVIEWED RECONSTRUCTION.
  * PDB module: 0069
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\SpriteAtlasTextureDatabase.obj
  * Primary source: W:\SWJediPowerBattles\work\rendering\SpriteAtlasTextureDatabase.cpp
@@ -10,16 +10,24 @@
  */
 
 #include "jpb/texture.h"
+#include "jpb/textutil.h"
 
 #include <algorithm>
-#include <cctype>
 #include <string>
+#include <vector>
 
 /* 0x1280, 496 bytes, local, 6 named locals
  * `dynamic initializer for 'atlasTextures''
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\rendering\SpriteAtlasTextureDatabase.cpp
  */
+std::vector<std::string> atlasTextures = {
+    "_winif2.bmp",
+    "winif2.tga",
+    "winif2.png",
+    "winif2_cleanUp.png",
+    "loadbar_gradient.png"
+};
 
 /* 0xEDDC0, 132 bytes, global, 7 named locals
  * std::_Destroy_range<std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >
@@ -45,39 +53,16 @@
  * Source: C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\include\vector
  */
 
-/*
- * Reference RVA 0xEDEE0. The five strings come from the matched executable's
- * atlasTextures dynamic initializer at RVA 0x1280. The retail body extracts
- * the basename at either slash style, lowercases it, then performs an exact
- * lookup in this list.
- */
 int isTexturePartofAtlas(const std::string &textureName)
 {
-    static const char *const atlasTextures[] = {
-        "_winif2.bmp",
-        "winif2.tga",
-        "winif2.png",
-        "winif2_cleanup.png",
-        "loadbar_gradient.png"
-    };
     const std::string::size_type separator =
         textureName.find_last_of("/\\");
-    std::string baseName = textureName.substr(
-        separator == std::string::npos ? 0 : separator + 1);
+    const std::string baseName = toLower(
+        textureName.substr(separator + 1));
 
-    std::transform(
-        baseName.begin(),
-        baseName.end(),
-        baseName.begin(),
-        [](unsigned char value) {
-            return static_cast<char>(std::tolower(value));
-        });
-    for (const char *candidate : atlasTextures) {
-        if (baseName == candidate) {
-            return 1;
-        }
-    }
-    return 0;
+    return std::find(
+               atlasTextures.begin(), atlasTextures.end(), baseName) !=
+           atlasTextures.end();
 }
 
 extern "C" int jpb_TextureIsPartOfAtlas(const char *filename)

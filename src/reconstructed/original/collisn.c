@@ -1,5 +1,5 @@
 /*
- * PARTIAL REVIEWED RECONSTRUCTION of
+ * COMPLETE REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\Work\collisn.c.
  *
  * This reviewed subset owns the collision-node registry, the exact
@@ -134,14 +134,18 @@ static Mnode *collision_node(int player, unsigned node_id)
     return *collision_slot(player, node_id);
 }
 
+static Mnode *collision_signed_node(int player, int8_t node_id)
+{
+    ptrdiff_t index =
+        (ptrdiff_t)player * JPB_COLLISION_NODE_CAPACITY +
+        (ptrdiff_t)node_id;
+
+    return maNodes[index];
+}
+
 static void collision_registration_failure(void)
 {
-    /*
-     * The reference calls its non-returning fatal routine with code 1 and
-     * emits INT3. Standard abort preserves that contract without importing a
-     * desktop error system.
-     */
-    abort();
+    exit(EXIT_FAILURE);
 }
 
 /* 0x25630, 197 bytes, global, 8 named locals
@@ -239,7 +243,7 @@ int coll_CheckNodeCollision(
                     vec_DistanceLV(
                         &attacker_node->v3RotCenter,
                         &target_node->v3RotCenter) <
-                    (uint32_t)(radius * 2);
+                    (uint32_t)collision_wrap_add(radius, radius);
             } else {
                 VECTOR attacker_previous;
                 VECTOR target_previous;
@@ -254,7 +258,6 @@ int coll_CheckNodeCollision(
                 attacker_previous.vz = collision_wrap_subtract(
                     attacker_node->v3RotCenter.vz,
                     attacker_node->v3Velocity.vz);
-                attacker_previous.pad = 0;
                 target_previous.vx = collision_wrap_subtract(
                     target_node->v3RotCenter.vx,
                     target_node->v3Velocity.vx);
@@ -264,7 +267,6 @@ int coll_CheckNodeCollision(
                 target_previous.vz = collision_wrap_subtract(
                     target_node->v3RotCenter.vz,
                     target_node->v3Velocity.vz);
-                target_previous.pad = 0;
                 relative_target.vx = collision_wrap_subtract(
                     target_node->v3RotCenter.vx,
                     attacker_node->v3Velocity.vx);
@@ -274,7 +276,6 @@ int coll_CheckNodeCollision(
                 relative_target.vz = collision_wrap_subtract(
                     target_node->v3RotCenter.vz,
                     attacker_node->v3Velocity.vz);
-                relative_target.pad = 0;
                 collided = vec_PointNearSegment(
                     radius,
                     &attacker_previous,
@@ -325,16 +326,19 @@ int coll_CheckNodeCollision(
                 target->hitVelocity.speed =
                     collision_low_i16(velocity);
                 target->hitLocation.vx =
-                    (attacker_node->v3RotCenter.vx +
-                     target_node->v3RotCenter.vx) /
+                    collision_wrap_add(
+                        attacker_node->v3RotCenter.vx,
+                        target_node->v3RotCenter.vx) /
                     2;
                 target->hitLocation.vy =
-                    (attacker_node->v3RotCenter.vy +
-                     target_node->v3RotCenter.vy) /
+                    collision_wrap_add(
+                        attacker_node->v3RotCenter.vy,
+                        target_node->v3RotCenter.vy) /
                     2;
                 target->hitLocation.vz =
-                    (attacker_node->v3RotCenter.vz +
-                     target_node->v3RotCenter.vz) /
+                    collision_wrap_add(
+                        attacker_node->v3RotCenter.vz,
+                        target_node->v3RotCenter.vz) /
                     2;
                 if ((uint8_t)(
                         (uint8_t)attacker_node_data->id -
@@ -346,6 +350,8 @@ int coll_CheckNodeCollision(
                     (attacker->pFlags & 0x00004000u) == 0) {
                     attacker->pFlags |= 0x00004000u;
                 }
+                target_node = collision_signed_node(
+                    target->playernum, target_node_data->id);
                 if ((target_node->flags & 0x00020000u) == 0) {
                     target_node->flags |= 0x00020000u;
                 }
@@ -487,7 +493,6 @@ int coll_CheckProjectileCollision(Projectile *proj)
                     dest.vz = collision_wrap_add(
                         targetpoint->vz,
                         mReflects[rand() % 5].vz);
-                    dest.pad = 0;
                     bullet_ShootProjectile(
                         proj,
                         target,
@@ -522,7 +527,6 @@ int coll_CheckProjectileCollision(Projectile *proj)
                     dest.vz = collision_wrap_add(
                         (int32_t)(p->mov.vz * travel),
                         targetpoint->vz);
-                    dest.pad = 0;
                     bullet_ShootProjectile(
                         proj,
                         target,
@@ -765,18 +769,16 @@ int coll_gCheckHotNodes(
             &attacker->paNodesSizes[node_index];
 
         if (node_data->radius1 > 0) {
-            Mnode *node = collision_node(
-                attacker->playernum,
-                (uint32_t)(int32_t)node_data->id);
+            Mnode *node = collision_signed_node(
+                attacker->playernum, node_data->id);
 
             if (node != NULL) {
                 Mnode *hot_node =
                     node_data->parentid == -1
                     ? node
-                    : collision_node(
+                    : collision_signed_node(
                           attacker->playernum,
-                          (uint32_t)(int32_t)
-                              node_data->parentid);
+                          node_data->parentid);
 
                 if ((hot_node->flags &
                      JPB_COLLISION_FLAG_HOT) != 0 ||

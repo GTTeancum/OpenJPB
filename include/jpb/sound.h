@@ -11,17 +11,34 @@ extern "C" {
 
 typedef struct _sound_Bank _sound_Bank;
 
+/* Exact matched-PC PDB layouts owned by win32/sound.c. */
+typedef struct tSFXHandle {
+    void *ptrChunk;
+    char *chunkName;
+} tSFXHandle;
+
+typedef struct tBankHandle {
+    tSFXHandle *loadedSFX[62];
+    int count;
+} tBankHandle;
+
 /*
  * Portable boundary around the platform mixer used by sound_playSfx. This
  * jpb_ callback is an integration seam, not an original PDB symbol. The PC
  * host binds it to the dependency-free WinMM adapter.
  */
 typedef uint16_t (*JPBSoundPlaySfxHook)(
+    void *chunk,
+    int loops,
     VECTOR *position,
     int bankId,
     char *sound,
     uint32_t flag,
     void *user_data);
+typedef void *(*JPBSoundChunkLoadHook)(
+    const char *path, void *user_data);
+typedef void (*JPBSoundChunkFreeHook)(
+    void *chunk, void *user_data);
 typedef void (*JPBSoundStopHook)(
     uint16_t handle, void *user_data);
 typedef void (*JPBSoundFadeHook)(
@@ -32,6 +49,35 @@ typedef int (*JPBSoundBankHook)(
     const char *const *paths,
     int count,
     int load,
+    void *user_data);
+
+typedef enum JPBSoundSetupOperation {
+    JPB_SOUND_SETUP_INIT = 0,
+    JPB_SOUND_SETUP_OPEN_AUDIO,
+    JPB_SOUND_SETUP_ALLOCATE_CHANNELS
+} JPBSoundSetupOperation;
+
+typedef int (*JPBSoundSetupHook)(
+    JPBSoundSetupOperation operation,
+    int value0,
+    int value1,
+    int value2,
+    int value3,
+    void *user_data);
+
+typedef enum JPBSoundChannelOperation {
+    JPB_SOUND_CHANNEL_PANNING = 0,
+    JPB_SOUND_CHANNEL_DISTANCE,
+    JPB_SOUND_CHANNEL_VOLUME,
+    JPB_SOUND_CHANNEL_PAUSE,
+    JPB_SOUND_CHANNEL_RESUME
+} JPBSoundChannelOperation;
+
+typedef void (*JPBSoundChannelHook)(
+    JPBSoundChannelOperation operation,
+    int channel,
+    int value0,
+    int value1,
     void *user_data);
 
 typedef enum JPBSoundControl {
@@ -47,12 +93,20 @@ typedef void (*JPBSoundControlHook)(
 
 void jpb_SoundSetPlaySfxHook(
     JPBSoundPlaySfxHook hook, void *user_data);
+void jpb_SoundSetChunkHooks(
+    JPBSoundChunkLoadHook load_hook,
+    JPBSoundChunkFreeHook free_hook,
+    void *user_data);
 void jpb_SoundSetStopHook(
     JPBSoundStopHook hook, void *user_data);
 void jpb_SoundSetFadeHook(
     JPBSoundFadeHook hook, void *user_data);
 void jpb_SoundSetBankHook(
     JPBSoundBankHook hook, void *user_data);
+void jpb_SoundSetSetupHook(
+    JPBSoundSetupHook hook, void *user_data);
+void jpb_SoundSetChannelHook(
+    JPBSoundChannelHook hook, void *user_data);
 void jpb_SoundSetControlHook(
     JPBSoundControlHook hook, void *user_data);
 

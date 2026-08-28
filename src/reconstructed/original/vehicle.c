@@ -493,9 +493,9 @@ int ai_Stap(int32_t *cpad, playerObject *player)
         jedi->v3RotationAbs.vz = stapAngle[index].vz;
         vehicle_mark_rotation(jedi);
     }
-    baseSpeed = jpb_StreetsEndingShortCollisionTimeout != 0 ? 0x68 : 0x51;
+    baseSpeed = GameStruct.difficulty != 0 ? 0x68 : 0x51;
     playerSpeedAdjustment =
-        jpb_StreetsEndingShortCollisionTimeout != 0 ? 0x20 : 0x18;
+        GameStruct.difficulty != 0 ? 0x20 : 0x18;
     p->constmov.vz = (float)flexmul(
         p->userdata[1] - (GameStruct.NumPlayers - 1) *
         playerSpeedAdjustment + baseSpeed,

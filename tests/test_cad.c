@@ -570,6 +570,7 @@ static int test_animation_tween_publication(void)
     animation.pCurrentAnimFrame = &animation.AnimFrameBuffer[0];
     animation.pPreviousAnimFrame = &animation.AnimFrameBuffer[0];
     animation.depack_context.huffdataorigin = words;
+    animation.depack_context.numparts = 1;
     animation.tweenLevel = 4;
     animation.AnimFrameBuffer[0].v3RootTranslation.vx = 30;
     animation.AnimFrameBuffer[0].v3RootTranslation.vy = 0;
@@ -643,6 +644,7 @@ static int test_animation_tween_uses_12_bit_joint_deltas(void)
     animation.pCurrentAnimFrame = &animation.AnimFrameBuffer[0];
     animation.pPreviousAnimFrame = &animation.AnimFrameBuffer[0];
     animation.depack_context.huffdataorigin = words;
+    animation.depack_context.numparts = 1;
     animation.tweenLevel = 2;
     animation.AnimFrameBuffer[0].av3JointAngle[0].vx = 3832;
     animation.AnimFrameBuffer[0].av3JointAngle[0].vy = 3568;

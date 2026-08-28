@@ -27,13 +27,22 @@ typedef struct MemoryPool {
 
 extern uint32_t mDefaultMemBank;
 extern MemoryPool maMemoryBanks[MEMORY_POOL_COUNT];
+extern char mem_pool_0[0x20000];
+extern char mem_pool_1[0xAFC00];
+extern char mem_pool_2[0x180000];
+extern char mem_pool_3a[0x500000];
 
 int memory_FlushMemoryPool(int type);
 int memory_InitMemoryPool(char *memory, uint32_t size, int type);
 int memory_InitMemorySystem(void);
 void *memory_gCalloc(unsigned n, unsigned size);
 void *memory_gCallocAnyMemory(unsigned n, unsigned size);
-void *memory_gCallocMemoryFunc(unsigned n, unsigned size, int type, ...);
+void *memory_gCallocMemoryFunc(
+    unsigned n,
+    unsigned size,
+    int type,
+    int line,
+    char *file);
 void *memory_gDrainMemoryPool(unsigned *rsize, int type);
 uint32_t memory_gMemUseage(void);
 void memory_gSetDefaultMemoryType(int type);

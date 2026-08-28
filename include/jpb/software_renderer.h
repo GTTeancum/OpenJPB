@@ -16,6 +16,8 @@
 extern "C" {
 #endif
 
+typedef struct physicsObject physicsObject;
+
 enum JPBSoftwareRenderResult {
     JPB_SOFTWARE_RENDER_OK = 0,
     JPB_SOFTWARE_RENDER_INVALID_ARGUMENT = -1,
@@ -77,19 +79,22 @@ typedef struct JPBSoftwareTexture {
     size_t height;
     size_t stridePixels;
     /*
-     * Portable carrier for the exact _Material state selected during
-     * texture loading. A resolver that does not provide these fields gets
-     * the reference defaults: flags zero, linear clamp, no color override.
+     * Portable carrier for texture-owned renderer state. StartPoly snapshots
+     * the current _Material flags per submission; this field remains useful
+     * to platform caches but is not a substitute for that submission state.
      */
     uint32_t materialFlags;
     TEXTURE_SAMPLE_TYPE samplerType;
     int32_t colorOverride;
     /*
-     * Exact Texture2D render class selected by _LoadTexture: ordinary=0,
-     * p_=1, and a_=2. StartPoly routes classes 1 and 2 through the
-     * transparent immediate-polygon queue.
+     * Exact Texture2D render class selected from the low byte of
+     * _LoadTexture's option: ordinary=0, additive=1, alpha=2. The separate
+     * p_/a_ filename-prefix classification is Texture::m_tpfDesired and
+     * does not select StartPoly's immediate-polygon queue.
      */
     int32_t materialType;
+    /* Stable portable equivalent of Texture::m_nIndex. */
+    int32_t descriptorIndex;
 } JPBSoftwareTexture;
 
 typedef struct JPBSoftwareDepthBuffer {
@@ -104,6 +109,8 @@ typedef struct JPBSoftwareMaterialVertex {
     float y;
     float depth;
     float inverseDepth;
+    /* Exact post-projection Z used by immediate polygons with clip W = 1. */
+    float clipDepth;
     float u;
     float v;
     float red;
@@ -133,6 +140,8 @@ typedef struct JPBSoftwareLevelVertex {
     float green;
     float blue;
     float alpha;
+    float uvScrollU;
+    float uvScrollV;
 } JPBSoftwareLevelVertex;
 
 typedef struct JPBSoftwareLevelBatch {
@@ -310,6 +319,29 @@ int jpb_SoftwareRenderBmdMaterializedWithDepthToSink(
     const JPBBmdView *bmd,
     modelObject *model,
     const _animFrame *key_frame,
+    const FVECTOR *world_position,
+    int32_t world_facing,
+    MATRIX *view_matrix,
+    const JPBSoftwareJpxScene *world_scene,
+    JPBSoftwareFramebuffer *framebuffer,
+    JPBSoftwareTextureResolver resolve_texture,
+    void *texture_user_data,
+    JPBSoftwareDepthBuffer *depth_buffer,
+    JPBSoftwareTriangleSink triangle_sink,
+    void *triangle_user_data,
+    JPBSoftwareRenderStats *stats);
+
+/*
+ * Live scene realization of render_RenderNode. Unlike the diagnostic BMD
+ * entry points above, this carries the scene and physics owners required by
+ * the shipped detached-node impact path.
+ */
+int jpb_SoftwareRenderBmdForScene(
+    const JPBBmdView *bmd,
+    modelObject *model,
+    const _animFrame *key_frame,
+    sceneObject *scene_object,
+    physicsObject *physics,
     const FVECTOR *world_position,
     int32_t world_facing,
     MATRIX *view_matrix,

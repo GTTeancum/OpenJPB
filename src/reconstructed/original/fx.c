@@ -1,7 +1,5 @@
 /*
- * PARTIAL RECONSTRUCTION. PlotZap, fx_GlowingMan, fx_PlasmaZap, and the
- * shipped-executable fx_screenGlow realization are reviewed; the remaining
- * emitted procedures retain explicit inventory markers below.
+ * REVIEWED RECONSTRUCTION of the complete matched fx.c owner.
  * PDB module: 0038
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\fx.obj
  * Primary source: W:\SWJediPowerBattles\work\fx.c
@@ -13,10 +11,15 @@
 
 #include "jpb/fx.h"
 
+#include "jpb/bmd.h"
 #include "jpb/camera.h"
+#include "jpb/collision.h"
 #include "jpb/flex.h"
 #include "jpb/game.h"
+#include "jpb/jonnywin.h"
+#include "jpb/linkstubs.h"
 #include "jpb/menu.h"
+#include "jpb/physics.h"
 #include "jpb/resources.h"
 #include "jpb/scene.h"
 #include "jpb/texture.h"
@@ -27,8 +30,6 @@
 
 static JPBFxScreenGlowHook jpb_screen_glow_hook;
 static void *jpb_screen_glow_user_data;
-static JPBFxGlowingManHook jpb_glowing_man_hook;
-static void *jpb_glowing_man_user_data;
 
 /* Exact fx.c module-local material owners at RVAs 0x537D88..0x537DA0. */
 static _Material *translucent_glowtexture;
@@ -36,26 +37,14 @@ static _Material *additive_glowtexture;
 static _Material *translucent_watertexture;
 static _Material *opaque_watertexture;
 static _Material *particlematerial;
-
-/*
- * Cleanup-only views of the two still-pending particle records. The pointer
- * links are exact matched-x64 offsets observed in fx_Init: particle next at
- * 0x158 and list next at 0x20. No live particle is created by the currently
- * reconstructed subset, but retaining this ownership prevents future list
- * work from acquiring a second cleanup path.
- */
-typedef struct FxParticleCleanupView {
-    unsigned char beforeNext[0x158];
-    struct FxParticleCleanupView *next;
-} FxParticleCleanupView;
-
-typedef struct FxParticleListCleanupView {
-    FxParticleCleanupView *particles;
-    unsigned char beforeNext[0x18];
-    struct FxParticleListCleanupView *next;
-} FxParticleListCleanupView;
-
-static FxParticleListCleanupView *globalparticlelist;
+static _Material *glowtexture;
+static uint32_t seed;
+static uint32_t gm_col1;
+static uint32_t gm_col2;
+static physicsObject *gm_p0;
+static int32_t gm_radius1;
+static int32_t gm_radius2;
+static _particle_list *globalparticlelist;
 
 void jpb_FxSetScreenGlowHook(
     JPBFxScreenGlowHook hook, void *user_data)
@@ -64,11 +53,14 @@ void jpb_FxSetScreenGlowHook(
     jpb_screen_glow_user_data = user_data;
 }
 
-void jpb_FxSetGlowingManHook(
-    JPBFxGlowingManHook hook, void *user_data)
+void jpb_FxInvalidateTextureCache(void)
 {
-    jpb_glowing_man_hook = hook;
-    jpb_glowing_man_user_data = user_data;
+    translucent_glowtexture = NULL;
+    additive_glowtexture = NULL;
+    translucent_watertexture = NULL;
+    opaque_watertexture = NULL;
+    particlematerial = NULL;
+    glowtexture = NULL;
 }
 
 /* 0xA2CB0, 119 bytes, global, 7 named locals
@@ -103,20 +95,23 @@ void fx_GlowingMan(
     uint32_t inner_color,
     uint32_t outer_color)
 {
-    /*
-     * The original traverses the registered model hierarchy and emits glow
-     * geometry for each child. The caller-visible behavior stays exact while
-     * the dependency-free renderer owns that traversal's realization.
-     */
-    if (jpb_glowing_man_hook != NULL &&
-        object != NULL) {
-        jpb_glowing_man_hook(
-            jpb_glowing_man_user_data,
-            object,
-            width,
-            height,
-            inner_color,
-            outer_color);
+    sceneObject *scene = (sceneObject *)object->pParent;
+    Mnode *root;
+    int child;
+
+    gm_col2 = outer_color;
+    gm_p0 = (physicsObject *)scene->pPhysics;
+    gm_col1 = inner_color;
+    gm_radius1 = width;
+    gm_radius2 = height;
+    root = coll_GetNode(gm_p0->physicsRoot.objectID, 0);
+    if (root != NULL &&
+        (root->flags & UINT32_C(4)) == 0 &&
+        root->pGeomData != NULL &&
+        root->pGeomData->numFaces != 0) {
+        for (child = 0; child < root->numChildNodes; ++child) {
+            traverseModel(&root->aChildNode[child], root);
+        }
     }
 }
 
@@ -129,13 +124,7 @@ void fx_Init(void)
 {
     const char *path;
 
-    /*
-     * The reference only tests the pointer. The texture-null half keeps the
-     * portable host's supported shutdown/re-init cycle safe after its full
-     * material-pool flush; it is indistinguishable during retail ownership.
-     */
-    if (translucent_glowtexture == NULL ||
-        translucent_glowtexture->texture == NULL) {
+    if (translucent_glowtexture == NULL) {
         menu_addTotal(100);
         path = resource_getPath(
             "a_glow.tga", JPB_RESOURCE_DEFAULT);
@@ -154,8 +143,7 @@ void fx_Init(void)
         opaque_watertexture = _LoadTexture(
             (char *)(void *)path, TT_SPRITE, 0);
     }
-    if (particlematerial == NULL ||
-        particlematerial->texture == NULL) {
+    if (particlematerial == NULL) {
         path = resource_getPath(
             "a_blob.tga", JPB_RESOURCE_DEFAULT);
         particlematerial = _LoadTexture(
@@ -163,12 +151,12 @@ void fx_Init(void)
     }
 
     while (globalparticlelist != NULL) {
-        FxParticleListCleanupView *list = globalparticlelist;
-        FxParticleCleanupView *particle = list->particles;
+        _particle_list *list = globalparticlelist;
+        _particle_8 *particle = list->plist;
 
         globalparticlelist = list->next;
         while (particle != NULL) {
-            FxParticleCleanupView *next = particle->next;
+            _particle_8 *next = particle->next;
 
             free(particle);
             particle = next;
@@ -348,6 +336,11 @@ void fx_Water(
  * PDB type: void (_svector*, _svector*, int,...
  * Source: W:\SWJediPowerBattles\work\fx.c
  */
+void fx_ZappingMan(objectRoot *object, uint32_t color)
+{
+    (void)object;
+    (void)color;
+}
 void fx_PlasmaZap(
     _plasma_zapvars *pzv,
     VECTOR *start,
@@ -367,10 +360,6 @@ void fx_PlasmaZap(
     int ysv;
     int zsv;
     int i;
-
-    if (pzv == NULL || start == NULL || end == NULL) {
-        return;
-    }
 
     s.vx = (int16_t)start->vx;
     s.vy = (int16_t)start->vy;
@@ -447,6 +436,7 @@ void fx_PlasmaZap(
             (rsin(mag * 8) >> 7));
         e.pad = 0;
 
+        SetCameraMatrix();
         fx_screenGlow(&s, &e, 0x30, color2);
         s = e;
         ysin += ysv;
@@ -595,42 +585,531 @@ void fx_screenGlow(
  * PDB type: void (FVECTOR*, FVECTOR*, int, u...
  * Source: W:\SWJediPowerBattles\work\fx.c
  */
+void fx_screenGlowFV(
+    FVECTOR *start,
+    FVECTOR *end,
+    int width,
+    uint32_t color)
+{
+    _svector short_start = {
+        (int16_t)(int)start->vx,
+        (int16_t)(int)start->vy,
+        (int16_t)(int)start->vz,
+        0};
+    _svector short_end = {
+        (int16_t)(int)end->vx,
+        (int16_t)(int)end->vy,
+        (int16_t)(int)end->vz,
+        0};
+
+    fx_screenGlow(&short_start, &short_end, width, color);
+}
 
 /* 0xA4100, 946 bytes, global, 12 named locals
  * fx_screenSection
  * PDB type: void (_svector*, _svector*, int,...
  * Source: W:\SWJediPowerBattles\work\fx.c
  */
+void fx_screenSection(
+    _svector *start,
+    _svector *end,
+    int width,
+    uint32_t color)
+{
+    const double depth_bias = 0.0000016;
+    FVECTOR transformed_start;
+    FVECTOR transformed_end;
+    float dx;
+    float dy;
+    float inverse_length = 1.0f;
+    float x_offset;
+    float y_offset;
+    double length_squared;
+
+    PerspectiveTransform(
+        &CameraMatrix, start, &transformed_start);
+    PerspectiveTransform(
+        &CameraMatrix, end, &transformed_end);
+    if (glowtexture == NULL) {
+        glowtexture = _LoadTexture(NULL, TT_SPRITE, 2);
+    }
+    glowtexture->flags = JPB_MATERIAL_MODE_TWO_SIDED;
+
+    dx = transformed_end.vx - transformed_start.vx;
+    dy = transformed_end.vy - transformed_start.vy;
+    length_squared =
+        (double)dy * (double)dy +
+        (double)dx * (double)dx;
+    if (length_squared != 0.0) {
+        inverse_length = 1.0f / (float)sqrt(length_squared);
+    }
+    x_offset = dy * inverse_length * (float)width;
+    y_offset = dx * inverse_length * (float)width;
+    transformed_start.vz =
+        (float)((double)transformed_start.vz - depth_bias);
+    transformed_end.vz =
+        (float)((double)transformed_end.vz - depth_bias);
+
+    _StartPoly(4, glowtexture);
+    _SetVert(
+        0,
+        transformed_start.vx - x_offset,
+        transformed_start.vy + y_offset,
+        transformed_start.vz,
+        0, 0.0f, 0.0f);
+    _SetVert(
+        1,
+        transformed_end.vx - x_offset,
+        transformed_end.vy + y_offset,
+        transformed_end.vz,
+        0, 0.0f, 0.0f);
+    _SetVert(
+        2,
+        transformed_start.vx,
+        transformed_start.vy,
+        transformed_start.vz,
+        color, 0.0f, 0.0f);
+    _SetVert(
+        3,
+        transformed_end.vx,
+        transformed_end.vy,
+        transformed_end.vz,
+        color, 0.0f, 0.0f);
+    _NoScaleEndPoly();
+
+    _StartPoly(4, glowtexture);
+    _SetVert(
+        0,
+        transformed_start.vx,
+        transformed_start.vy,
+        transformed_start.vz,
+        color, 0.0f, 0.0f);
+    _SetVert(
+        1,
+        transformed_end.vx,
+        transformed_end.vy,
+        transformed_end.vz,
+        color, 0.0f, 0.0f);
+    _SetVert(
+        2,
+        transformed_start.vx + x_offset,
+        transformed_start.vy - y_offset,
+        transformed_start.vz,
+        0, 0.0f, 0.0f);
+    _SetVert(
+        3,
+        transformed_end.vx + x_offset,
+        transformed_end.vy - y_offset,
+        transformed_end.vz,
+        0, 0.0f, 0.0f);
+    _NoScaleEndPoly();
+}
 
 /* 0xA44C0, 210 bytes, local, 8 named locals
  * getrandomcolor
  * PDB type: unsigned long (unsigned long, un...
  * Source: W:\SWJediPowerBattles\work\fx.c
  */
+static uint32_t getrandomcolor(
+    uint32_t base, uint32_t random_range)
+{
+    uint32_t random_red = (seed + UINT32_C(0x6347)) *
+        UINT32_C(0x731);
+    uint32_t random_green =
+        (random_red + UINT32_C(0x6347)) *
+        UINT32_C(0x731);
+    uint32_t red = ((base >> 16) & UINT32_C(0xff)) +
+        (random_red & UINT32_C(0x7fff)) %
+            ((random_range >> 16) & UINT32_C(0xff));
+    uint32_t green;
+    uint32_t blue;
+
+    seed = (random_green + UINT32_C(0x6347)) *
+        UINT32_C(0x731);
+    green = ((base >> 8) & UINT32_C(0xff)) +
+        (random_green & UINT32_C(0x7fff)) %
+            ((random_range >> 8) & UINT32_C(0xff));
+    blue = (base & UINT32_C(0xff)) +
+        (seed & UINT32_C(0x7fff)) %
+            (random_range & UINT32_C(0xff));
+    if ((int32_t)red < 0) {
+        red = 0;
+    } else if (red > UINT32_C(0xff)) {
+        red = UINT32_C(0xff);
+    }
+    if ((int32_t)green < 0) {
+        green = 0;
+    } else if (green > UINT32_C(0xff)) {
+        green = UINT32_C(0xff);
+    }
+    if (blue > UINT32_C(0xff)) {
+        blue = UINT32_C(0xff);
+    }
+    return (red << 16) | (green << 8) | blue;
+}
 
 /* 0xA45A0, 107 bytes, global, 4 named locals
  * particle_CleanUp
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\fx.c
  */
+void particle_CleanUp(void)
+{
+    while (globalparticlelist != NULL) {
+        _particle_list *list = globalparticlelist;
+        _particle_8 *particle = list->plist;
+
+        globalparticlelist = list->next;
+        while (particle != NULL) {
+            _particle_8 *next = particle->next;
+
+            free(particle);
+            particle = next;
+        }
+        free(list);
+    }
+}
 
 /* 0xA4610, 155 bytes, global, 5 named locals
  * particle_Init
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\fx.c
  */
+void particle_Init(void)
+{
+    if (particlematerial == NULL) {
+        const char *path = resource_getPath(
+            "a_blob.tga", JPB_RESOURCE_DEFAULT);
+
+        particlematerial = _LoadTexture(
+            (char *)(void *)path, TT_SPRITE, 2);
+    }
+    particle_CleanUp();
+}
 
 /* 0xA46B0, 858 bytes, global, 14 named locals
  * particle_Launch
  * PDB type: void (_particle_launcher*, FVECT...
  * Source: W:\SWJediPowerBattles\work\fx.c
  */
+void particle_Launch(
+    _particle_launcher *launcher,
+    FVECTOR *origin,
+    float groundplane)
+{
+    const float pi = 3.1415927f;
+    const float reciprocal_random = 1.0f / 32767.0f;
+    const float angle_scale = 32768.0f;
+    _particle_list *list =
+        (_particle_list *)malloc(sizeof(*list));
+    int remaining;
+
+    (void)groundplane;
+    if (list == NULL) {
+        return;
+    }
+    list->next = globalparticlelist;
+    globalparticlelist = list;
+    remaining = launcher->number;
+    while (remaining > 0) {
+        _particle_8 *group =
+            (_particle_8 *)malloc(sizeof(*group));
+        int count;
+        int particle;
+        float spread;
+
+        if (group == NULL) {
+            return;
+        }
+        group->next = list->plist;
+        list->plist = group;
+        count = remaining < 8 ? remaining : 8;
+        spread = launcher->angle * pi / 180.0f;
+        for (particle = 0; particle < count; ++particle) {
+            _particle *output = &group->p[particle];
+            uint32_t random_pitch =
+                (seed + UINT32_C(0x6347)) * UINT32_C(0x731);
+            uint32_t random_yaw =
+                (random_pitch + UINT32_C(0x6347)) *
+                UINT32_C(0x731);
+            float pitch_random =
+                (float)(random_pitch & UINT32_C(0x7fff)) *
+                reciprocal_random;
+            float yaw_random =
+                (float)(random_yaw & UINT32_C(0x7fff)) *
+                reciprocal_random;
+            float pitch =
+                pitch_random * spread + launcher->pitch;
+            float yaw =
+                (1.0f - pitch_random * pitch_random) *
+                    yaw_random * spread +
+                launcher->yaw;
+            double pitch_angle =
+                (double)((float)(int)(pitch * angle_scale) *
+                         pi / angle_scale);
+            float pitch_sine = (float)sin(pitch_angle);
+            uint32_t random_velocity =
+                (random_yaw + UINT32_C(0x6347)) *
+                UINT32_C(0x731);
+            int velocity =
+                (int)(random_velocity & UINT32_C(0x7fff)) %
+                    launcher->velocityrand +
+                launcher->velocity;
+            float x_velocity =
+                -(float)cos(pitch_angle) * (float)velocity;
+            double yaw_angle =
+                (double)((float)(int)(yaw * angle_scale) *
+                         pi / angle_scale);
+            float yaw_sine = (float)sin(yaw_angle);
+            float yaw_cosine = (float)cos(yaw_angle);
+
+            output->vel.vx = x_velocity;
+            output->vel.vy =
+                yaw_sine * pitch_sine * (float)velocity;
+            output->vel.vz =
+                yaw_cosine * pitch_sine * (float)velocity;
+            output->org = *origin;
+            seed =
+                (random_velocity + UINT32_C(0x6347)) *
+                UINT32_C(0x731);
+            output->life =
+                (int)(seed & UINT32_C(0x7fff)) %
+                    launcher->lifeoffsetrand +
+                launcher->lifeoffset;
+            output->color1 = getrandomcolor(
+                launcher->startcolor1,
+                launcher->startcolorrand1);
+            output->color2 = getrandomcolor(
+                launcher->startcolor2,
+                launcher->startcolorrand2);
+            output->decay =
+                launcher->decayrate +
+                rand() % launcher->decayrand;
+        }
+        remaining -= 8;
+    }
+}
 
 /* 0xA4A10, 242 bytes, global, 7 named locals
  * particle_Update
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\fx.c
  */
+static uint32_t particle_interpolate_color(
+    uint32_t target,
+    uint32_t source,
+    uint32_t scalar)
+{
+    uint32_t target_alpha = target >> 24;
+    uint32_t target_red = (target >> 16) & UINT32_C(0xff);
+    uint32_t target_green = (target >> 8) & UINT32_C(0xff);
+    uint32_t target_blue = target & UINT32_C(0xff);
+    uint32_t source_alpha = source >> 24;
+    uint32_t source_red = (source >> 16) & UINT32_C(0xff);
+    uint32_t source_green = (source >> 8) & UINT32_C(0xff);
+    uint32_t source_blue = source & UINT32_C(0xff);
+    uint32_t alpha =
+        ((target_alpha - source_alpha) * scalar +
+         source_alpha) >> 12;
+    uint32_t red =
+        ((target_red - source_red) * scalar +
+         source_red) >> 12;
+    uint32_t green =
+        ((target_green - source_green) * scalar +
+         source_green) >> 12;
+    uint32_t blue =
+        ((target_blue - source_blue) * scalar +
+         source_blue) >> 12;
+
+    return (alpha << 24) |
+        ((red & UINT32_C(0xff)) << 16) |
+        ((green & UINT32_C(0xff)) << 8) |
+        (blue & UINT32_C(0xff));
+}
+
+static int particle_process8(
+    _particle_8 *group,
+    _particle_list *list)
+{
+    _particle_launcher *launcher = list->launcher;
+    FVECTOR positions[16];
+    _particle *active[8];
+    int tail = (int)launcher->tail;
+    int scale = (int)launcher->scale;
+    int live = 8;
+    int active_count = 0;
+    int position_count = 0;
+    int index;
+
+    for (index = 0; index < 8; ++index) {
+        _particle *particle = &group->p[index];
+        int lifetime;
+
+        particle->life += particle->decay;
+        lifetime = particle->life;
+        if (lifetime > 0) {
+            if (lifetime < 0x8000) {
+                float lifetime1 = (float)(lifetime - tail);
+                float lifetime2 = lifetime1 * lifetime1;
+                float lifetime3 = (float)lifetime;
+                float lifetime4 = lifetime3 * lifetime3;
+
+                active[active_count++] = particle;
+                positions[position_count].vx =
+                    particle->org.vx +
+                    particle->vel.vx * lifetime1 +
+                    list->accel.vx * lifetime2;
+                positions[position_count].vy =
+                    particle->org.vy +
+                    particle->vel.vy * lifetime1 +
+                    list->accel.vy * lifetime2;
+                positions[position_count].vz =
+                    particle->org.vz +
+                    particle->vel.vz * lifetime1 +
+                    list->accel.vz * lifetime2;
+                ++position_count;
+                positions[position_count].vx =
+                    particle->org.vx +
+                    particle->vel.vx * lifetime3 +
+                    list->accel.vx * lifetime4;
+                positions[position_count].vy =
+                    particle->org.vy +
+                    particle->vel.vy * lifetime3 +
+                    list->accel.vy * lifetime4;
+                positions[position_count].vz =
+                    particle->org.vz +
+                    particle->vel.vz * lifetime3 +
+                    list->accel.vz * lifetime4;
+                ++position_count;
+            } else {
+                --live;
+            }
+        }
+    }
+    if (active_count != 0) {
+        RotTransPersManyFV(
+            positions, position_count, positions);
+        for (index = 0; index < active_count; ++index) {
+            _particle *particle = active[index];
+            FVECTOR *start = &positions[index * 2];
+            FVECTOR *end = &positions[index * 2 + 1];
+            uint32_t scalar = (uint32_t)(particle->life >> 4);
+            uint32_t color1 = particle_interpolate_color(
+                launcher->endcolor1,
+                particle->color1,
+                scalar);
+            uint32_t color2 = particle_interpolate_color(
+                launcher->endcolor2,
+                particle->color2,
+                scalar);
+            float xd = end->vx - start->vx;
+            float yd = end->vy - start->vy;
+            float length = (float)sqrt(
+                (double)(xd * xd + yd * yd));
+            float x2 = end->vx;
+            float y2 = end->vy;
+            float perpendicular_scale;
+            float x_offset;
+            float y_offset;
+
+            if (length < (float)scale) {
+                if (length == 0.0f) {
+                    yd = 0.0f;
+                    length = 1.0f;
+                    x2 = start->vx + (float)scale;
+                    y2 = start->vy;
+                    xd = 1.0f;
+                } else {
+                    float extension = (float)scale / length;
+
+                    x2 = start->vx + xd * extension;
+                    y2 = start->vy + yd * extension;
+                }
+            }
+            perpendicular_scale = (1.0f / length) * (float)scale;
+            x_offset = xd * perpendicular_scale;
+            y_offset = yd * perpendicular_scale;
+
+            _StartPoly(4, particlematerial);
+            _SetVert(
+                0,
+                start->vx,
+                start->vy,
+                start->vz,
+                color2,
+                0.01f,
+                0.01f);
+            _SetVert(
+                1,
+                x2 - x_offset,
+                y2 + x_offset,
+                end->vz,
+                color1,
+                0.99f,
+                0.01f);
+            _SetVert(
+                2,
+                x2 + y_offset,
+                y2 - x_offset,
+                end->vz,
+                color1,
+                0.01f,
+                0.99f);
+            _SetVert(
+                3,
+                x2 + x_offset,
+                y2 + y_offset,
+                end->vz,
+                color1,
+                0.99f,
+                0.99f);
+            _NoScaleEndPoly();
+        }
+    }
+    return live;
+}
+
+void particle_Update(void)
+{
+    _particle_list *list = globalparticlelist;
+    _particle_list *previous_list = NULL;
+
+    SetupTransformMatrix(&CameraMatrix);
+    while (list != NULL) {
+        _particle_list *next_list = list->next;
+        _particle_8 *group = list->plist;
+        _particle_8 *previous_group = NULL;
+        int remaining_groups = 8;
+
+        while (group != NULL) {
+            _particle_8 *next_group = group->next;
+
+            if (particle_process8(group, list) == 0) {
+                if (previous_group == NULL) {
+                    list->plist = next_group;
+                } else {
+                    previous_group->next = next_group;
+                }
+                free(group);
+                --remaining_groups;
+            } else {
+                previous_group = group;
+            }
+            group = next_group;
+        }
+        if (remaining_groups == 0) {
+            if (previous_list == NULL) {
+                globalparticlelist = next_list;
+            } else {
+                previous_list->next = next_list;
+            }
+            free(list);
+        } else {
+            previous_list = list;
+        }
+        list = next_list;
+    }
+}
 
 /* 0xA4B10, 2411 bytes, local, 49 named locals
  * particle_process8
@@ -643,9 +1122,89 @@ void fx_screenGlow(
  * PDB type: void (Mnode*, Mnode*)
  * Source: W:\SWJediPowerBattles\work\fx.c
  */
+static int16_t fx_scale_leaf_component(
+    int16_t component, int scale)
+{
+    int32_t product = (int32_t)component * scale;
+    int32_t rounding =
+        (int32_t)((uint32_t)(product >> 31) & UINT32_C(0xfff));
+
+    return (int16_t)((product + rounding) >> 12);
+}
+
+void traverseModel(Mnode *node, Mnode *parent)
+{
+    int child;
+
+    if ((node->flags & UINT32_C(4)) != 0 ||
+        node->pGeomData == NULL ||
+        node->pGeomData->numFaces == 0) {
+        return;
+    }
+    if (parent != NULL) {
+        _svector start = {
+            (int16_t)node->v3RotCenter.vx,
+            (int16_t)node->v3RotCenter.vy,
+            (int16_t)node->v3RotCenter.vz,
+            0};
+        _svector end = {
+            (int16_t)parent->v3RotCenter.vx,
+            (int16_t)parent->v3RotCenter.vy,
+            (int16_t)parent->v3RotCenter.vz,
+            0};
+        int radius;
+        uint32_t color;
+
+        if (node->numChildNodes == 0) {
+            _svector direction;
+            int length;
+
+            if (((uint32_t)node->id & UINT32_C(0xa000)) != 0) {
+                goto process_children;
+            }
+            direction.vx = (int16_t)(start.vx - end.vx);
+            direction.vy = (int16_t)(start.vy - end.vy);
+            direction.vz = (int16_t)(start.vz - end.vz);
+            direction.pad = 0;
+            length = normalize(
+                direction.vx,
+                direction.vy,
+                direction.vz,
+                &direction) + 8;
+            start.vx = (int16_t)(
+                end.vx +
+                fx_scale_leaf_component(direction.vx, length));
+            start.vy = (int16_t)(
+                end.vy +
+                fx_scale_leaf_component(direction.vy, length));
+            start.vz = (int16_t)(
+                end.vz +
+                fx_scale_leaf_component(direction.vz, length));
+            radius = gm_radius2;
+            color = gm_col2;
+        } else {
+            radius = gm_radius1;
+            color = gm_col1;
+            if (((uint32_t)node->id & UINT32_C(0xa000)) != 0) {
+                goto process_children;
+            }
+        }
+        fx_screenGlow(&end, &start, radius, color);
+    }
+
+process_children:
+    for (child = 0; child < node->numChildNodes; ++child) {
+        traverseModel(&node->aChildNode[child], node);
+    }
+}
 
 /* 0xA5610, 3 bytes, global, 2 named locals
  * traverseModel2
  * PDB type: void (Mnode*, Mnode*)
  * Source: W:\SWJediPowerBattles\work\fx.c
  */
+void traverseModel2(Mnode *node, Mnode *parent)
+{
+    (void)node;
+    (void)parent;
+}

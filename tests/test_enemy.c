@@ -24,6 +24,20 @@
 #include <string.h>
 
 static int failures;
+static uint32_t test_pose_words[3];
+
+static void init_test_animations(void)
+{
+    int index;
+
+    (anim_InitAnimations)(0);
+    for (index = 0; index < JPB_ANIMATION_CAPACITY; ++index) {
+        maAnimationData[index].depack_context.huffdataorigin =
+            test_pose_words;
+        maAnimationData[index].depack_context3.huffdataorigin =
+            test_pose_words;
+    }
+}
 
 #define CHECK(condition) \
     do { \
@@ -311,8 +325,7 @@ static void special_message_probe(
 static int create_enemy_probe(
     wsl_ENEMY *enemy, void *user_data)
 {
-    EnemyCreateProbe *probe =
-        (EnemyCreateProbe *)user_data;
+    EnemyCreateProbe *probe = (EnemyCreateProbe *)user_data;
 
     ++probe->calls;
     probe->last_enemy = enemy;
@@ -392,6 +405,7 @@ static void test_init_enemy(void)
     placement.aiDf.ownerType = 2;
     placement.aiDf.skillLevel = 24;
     placement.aiNum = 7;
+    placement.actorNum = 11;
     placement.loc.vx = 100;
     placement.loc.vy = -200;
     placement.loc.vz = 300;
@@ -403,6 +417,8 @@ static void test_init_enemy(void)
     CHECK(list_length(&enemyFreeList) == 19);
     CHECK(enemy->pPlace == &placement);
     CHECK(enemy->aiNum == 7);
+    CHECK(enemy->actorNum == 0);
+    CHECK(enemy->pPlace->actorNum == 11);
     CHECK(enemy->ownerType == 2);
     CHECK(enemy->active == 1);
     CHECK(enemy->enemyFlags == 0x12345678U);
@@ -454,7 +470,7 @@ static void test_add_enemy_orchestration(void)
     pointerRegistry_Reset();
     enemy_InitEnemies();
     mCurEnemyList = 0;
-    jpb_LoaderSetEnemyCreateProvider(
+    jpb_LoaderSetEnemyCreateTestHook(
         create_enemy_probe, &probe);
 
     first.aiNum = 0;
@@ -494,7 +510,7 @@ static void test_add_enemy_orchestration(void)
     CHECK(list_length(&enemyFreeList) == 19);
 
     abGlobalBits[2] = 0;
-    jpb_LoaderSetEnemyCreateProvider(NULL, NULL);
+    jpb_LoaderSetEnemyCreateTestHook(NULL, NULL);
 }
 
 static void initialize_placement_array(
@@ -541,7 +557,7 @@ static void test_check_for_new_enemies(void)
     enemy_InitEnemies();
     mCurEnemyList = 0;
     probe.result = 1;
-    jpb_LoaderSetEnemyCreateProvider(
+    jpb_LoaderSetEnemyCreateTestHook(
         create_enemy_probe, &probe);
 
     storage[0].aiDf.activeFlags =
@@ -611,7 +627,7 @@ static void test_check_for_new_enemies(void)
         ((wsl_ENEMY *)enemyList[0].tail)->enemyID == 29);
 
     memset(&GameStruct, 0, sizeof(GameStruct));
-    jpb_LoaderSetEnemyCreateProvider(NULL, NULL);
+    jpb_LoaderSetEnemyCreateTestHook(NULL, NULL);
 }
 
 static void test_enemy_map_triggers(void)
@@ -740,6 +756,12 @@ static int test_ai_data_access(void)
     CHECK(jpb_AiRegisterData(17, 4, data) == 0);
     ai_Main(pad, &player);
     CHECK(jpb_ai_MainCallback(pad, &player) == 0);
+    player.playerID = 0x47;
+    CHECK((unsigned char)ai_ValidateData(&player) == 0x47);
+    player.playerID = 0x48;
+    CHECK(ai_ValidateData(&player) == 0);
+    player.playerID = 0x50;
+    CHECK(ai_ValidateData(&player) == 0);
     CHECK(jpb_AiRegisterData(17, 2, NULL) == 1);
     return 0;
 }
@@ -1449,7 +1471,7 @@ static void test_authored_opcode_traversal_boundary(void)
     physics_gInitObjects(0);
     jpb_SceneInitPool(0);
     player_gInitPlayers(0);
-    anim_InitAnimations(0);
+    init_test_animations();
     gaPlayerData[0].playerRoot.objectID = 0;
     gaPlayerData[0].playerRoot.pParent =
         &target_scene.sceneRoot;
@@ -1476,7 +1498,10 @@ static void test_authored_opcode_traversal_boundary(void)
     target_scene.pModel =
         &target_model.modelRoot;
     target_motions[0].Seq = 0;
-    target_motions[0].FunctPtr = -1;
+    target_motions[0].FunctPtr = 0;
+    target_motions[0].snd[0][0] = '0';
+    target_motions[0].snd[1][0] = '0';
+    target_template.Lframe = 10;
     physics.pos.vx = 111.0f;
     physics.pos.vy = 222.0f;
     physics.pos.vz = 333.0f;
@@ -1584,8 +1609,7 @@ static void test_authored_opcode_traversal_boundary(void)
     variables[1].si = 22;
     variables[2].si = 0;
     enemy.currAIMode = 0;
-    allText[22] =
-        (wchar_t *)(void *)special_message;
+    allText[22] = special_message;
     allText[376] = NULL;
     GameStruct.GameState &=
         ~UINT32_C(0x02000000);

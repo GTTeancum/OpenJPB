@@ -1,9 +1,10 @@
 /*
- * PARTIAL REVIEWED RECONSTRUCTION of
+ * COMPLETE REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\Work\unpack.c.
  *
- * The reviewed subset establishes the Huffman tables, bit reservoir, cached
- * value path, compressed-vector decode, and pointer-based CAD context.
+ * All seven emitted procedures are reviewed against the matched executable.
+ * This establishes the Huffman tables, bit reservoir, cached and tree value
+ * paths, compressed-vector decoders, and pointer-based CAD context.
  *
  * Provenance:
  *   direct     - names/signatures and _dpcontext layout from the exact PDB.

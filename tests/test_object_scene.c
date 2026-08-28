@@ -287,9 +287,6 @@ typedef struct SceneMiddleTrace {
     int afterWorld;
     int afterModels;
     int beforePlayerProcess;
-    int levelCalls;
-    int level;
-    int arguments[3];
 } SceneMiddleTrace;
 
 static void trace_scene_middle_stage(
@@ -304,20 +301,12 @@ static void trace_scene_middle_stage(
     }
 }
 
-static void trace_scene_middle_level(
-    void *user_data,
-    int level,
-    int argument0,
-    int argument1,
-    int argument2)
+static void trace_scene_middle_unpause(
+    void *user_data, MATRIX *matrix)
 {
-    SceneMiddleTrace *trace = (SceneMiddleTrace *)user_data;
-
-    ++trace->levelCalls;
-    trace->level = level;
-    trace->arguments[0] = argument0;
-    trace->arguments[1] = argument1;
-    trace->arguments[2] = argument2;
+    (void)user_data;
+    (void)matrix;
+    GameStruct.GameState &= ~UINT32_C(0x02000000);
 }
 
 static int test_scene_middle_render_paused_owner(void)
@@ -345,7 +334,6 @@ static int test_scene_middle_render_paused_owner(void)
     LevelSelect = 22;
 
     hooks.renderModels = trace_scene_middle_stage;
-    hooks.levelOwner = trace_scene_middle_level;
     jpb_SceneSetMiddleRenderHooks(&hooks, &trace);
     scene_middleRender(NULL);
     jpb_SceneSetMiddleRenderHooks(NULL, NULL);
@@ -356,8 +344,43 @@ static int test_scene_middle_render_paused_owner(void)
     CHECK(trace.afterWorld == 0);
     CHECK(trace.afterModels == 1);
     CHECK(trace.beforePlayerProcess == 0);
-    CHECK(trace.levelCalls == 0);
     CHECK(initialLevelPauseDelay == 2);
+    return 0;
+}
+
+static int test_scene_middle_render_level15_has_no_owner(void)
+{
+    JPBSceneMiddleRenderHooks hooks;
+    SceneMiddleTrace trace;
+
+    memset(&hooks, 0, sizeof(hooks));
+    memset(&trace, 0, sizeof(trace));
+    meminit();
+    sprite_gInitSprites();
+    memset(&GameStruct, 0, sizeof(GameStruct));
+    memset(&OptionStruct, 0, sizeof(OptionStruct));
+    memset(&gCamera, 0, sizeof(gCamera));
+    gCamera.viewType = JPB_CAMERA_VIEW_ABSOLUTE_FOCUS;
+    gpWorld = NULL;
+    gSCENE_READY = 1;
+    initialLevelPauseDelay = 2;
+    gSTROBE_MODE = 2;
+    gGlobalFrameRate = 2048;
+    GameStruct.GameState = UINT32_C(0x02000000);
+    OptionStruct.overlayMode = 0;
+    LevelSelect = 15;
+    gDeathCount = 100;
+    secretBits = 0;
+
+    hooks.renderModels = trace_scene_middle_stage;
+    hooks.afterPhysics = trace_scene_middle_unpause;
+    jpb_SceneSetMiddleRenderHooks(&hooks, &trace);
+    scene_middleRender(NULL);
+    jpb_SceneSetMiddleRenderHooks(NULL, NULL);
+
+    CHECK(trace.afterModels == 1);
+    CHECK(gDeathCount == 100);
+    CHECK((secretBits & UINT32_C(0x100)) == 0);
     return 0;
 }
 
@@ -643,12 +666,16 @@ static int hurt_sound_calls;
 static int hurt_sound_bank;
 
 static uint16_t test_hurt_sound(
+    void *chunk,
+    int loops,
     VECTOR *position,
     int bankId,
     char *sound,
     uint32_t flag,
     void *user_data)
 {
+    (void)chunk;
+    (void)loops;
     (void)user_data;
     CHECK(position == NULL);
     CHECK(strcmp(sound, "jedihit") == 0);
@@ -703,6 +730,7 @@ static int test_hurtplayer_nonfatal_and_death(void)
     gGlobalTimer = 500;
     LevelSelect = 0;
     hurt_sound_calls = 0;
+    CHECK(sound_LoadBank("resident", 3) == 0);
     jpb_SoundSetPlaySfxHook(test_hurt_sound, NULL);
 
     hurtplayer(&player, -3);
@@ -747,6 +775,7 @@ static int test_hurtplayer_nonfatal_and_death(void)
     CHECK(enemy.enemyFlags == 4);
 
     jpb_SoundSetPlaySfxHook(NULL, NULL);
+    sound_FreeBank(3);
     return 0;
 }
 
@@ -758,6 +787,7 @@ int main(void)
     CHECK(test_scene_matrix_accessors() == 0);
     CHECK(test_scene_post_render_state() == 0);
     CHECK(test_scene_middle_render_paused_owner() == 0);
+    CHECK(test_scene_middle_render_level15_has_no_owner() == 0);
     CHECK(test_level_fed() == 0);
     CHECK(test_level_corus() == 0);
     CHECK(test_level_palace() == 0);

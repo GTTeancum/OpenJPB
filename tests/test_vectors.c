@@ -1,9 +1,11 @@
 #include "jpb/fmath.h"
 #include "jpb/vectors.h"
+#include "jpb/wrender.h"
 
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #define CHECK(condition)                                                     \
     do {                                                                     \
@@ -116,6 +118,22 @@ static int test_point_to_line_distance(void)
     return 0;
 }
 
+static int test_distance_and_length_entries(void)
+{
+    VECTOR long_a = {1, 2, 3, 71};
+    VECTOR long_b = {4, 6, 15, 72};
+    VECTOR length = {3, 4, 12, 73};
+    _svector short_a = {1, 2, 3, 74};
+    _svector short_b = {4, 6, 15, 75};
+
+    CHECK(vec_Distance2DLV(&long_a, &long_b) == 12);
+    CHECK(vec_DistanceLV(&long_a, &long_b) == 13);
+    CHECK(vec_DistanceSV(&short_a, &short_b) == 13);
+    CHECK(vec_DistanceSVLV(&short_a, &long_b) == 13);
+    CHECK(vec_LengthLV(&length) == 13);
+    return 0;
+}
+
 static int test_segment_and_polar(void)
 {
     VECTOR a = {0, 0, 0, 0};
@@ -216,13 +234,36 @@ static int test_rotation_wrappers(void)
     MATRIX matrix;
     MATRIX matrix_x;
     MATRIX matrix_y;
+    MATRIX saved_current;
+    MATRIX expected_current;
     VECTOR temp;
+    int32_t pop_result;
+
+    while (jpb_WRenderMatrixStackLevel() != 0) {
+        PopMatrix();
+    }
+    saved_current = *jpb_WRenderCurrentMatrix();
+    fill_matrix(
+        &expected_current,
+        1.0f, 2.0f, 3.0f,
+        4.0f, 5.0f, 6.0f,
+        7.0f, 8.0f, 9.0f);
+    expected_current.t[0] = 10;
+    expected_current.t[1] = 11;
+    expected_current.t[2] = 12;
+    *jpb_WRenderCurrentMatrix() = expected_current;
+    pop_result = jpb_WRenderMatrixStackBaseLow32();
 
     (void)vec_IdentMatrix(&matrix);
     (void)fRotMatrix(&rotation, &matrix);
     expected.pad = 104;
     (void)fApplyMatrixLV(&matrix, &source, &expected);
-    CHECK(vec_RotVectorLV(&rotation, &source, &actual) == 0);
+    CHECK(vec_RotVectorLV(&rotation, &source, &actual) == pop_result);
+    CHECK(jpb_WRenderMatrixStackLevel() == 0);
+    CHECK(memcmp(
+              jpb_WRenderCurrentMatrix(),
+              &expected_current,
+              sizeof(expected_current)) == 0);
     CHECK(actual.vx == expected.vx);
     CHECK(actual.vy == expected.vy);
     CHECK(actual.vz == expected.vz);
@@ -233,7 +274,12 @@ static int test_rotation_wrappers(void)
     expected.pad = 105;
     (void)fApplyMatrixLV(&matrix, &source, &expected);
     actual.pad = 106;
-    CHECK(vec_RotVectorY(1024, &source, &actual) == 0);
+    CHECK(vec_RotVectorY(1024, &source, &actual) == pop_result);
+    CHECK(jpb_WRenderMatrixStackLevel() == 0);
+    CHECK(memcmp(
+              jpb_WRenderCurrentMatrix(),
+              &expected_current,
+              sizeof(expected_current)) == 0);
     CHECK(actual.vx == expected.vx);
     CHECK(actual.vy == expected.vy);
     CHECK(actual.vz == expected.vz);
@@ -254,7 +300,12 @@ static int test_rotation_wrappers(void)
     (void)fRotMatrixY((int)rotation.vy, &matrix_y);
     (void)fApplyMatrixLV(&matrix_y, &temp, &expected);
     actual.pad = 107;
-    CHECK(vec_InvRotVectorLV(&rotation, &source, &actual) == 0);
+    CHECK(vec_InvRotVectorLV(&rotation, &source, &actual) == pop_result);
+    CHECK(jpb_WRenderMatrixStackLevel() == 0);
+    CHECK(memcmp(
+              jpb_WRenderCurrentMatrix(),
+              &expected_current,
+              sizeof(expected_current)) == 0);
     CHECK(actual.vx == expected.vx);
     CHECK(actual.vy == expected.vy);
     CHECK(actual.vz == expected.vz);
@@ -263,11 +314,21 @@ static int test_rotation_wrappers(void)
     /* vec_InvRotVectorLV stages through a temp, so source/dest may alias. */
     actual = source;
     actual.pad = 108;
-    CHECK(vec_InvRotVectorLV(&rotation, &actual, &actual) == 0);
+    CHECK(vec_InvRotVectorLV(&rotation, &actual, &actual) == pop_result);
     CHECK(actual.vx == expected.vx);
     CHECK(actual.vy == expected.vy);
     CHECK(actual.vz == expected.vz);
     CHECK(actual.pad == 108);
+
+    while (jpb_WRenderMatrixStackLevel() < 15) {
+        PushMatrix();
+    }
+    CHECK(vec_RotVectorY(0, &source, &actual) == pop_result);
+    CHECK(jpb_WRenderMatrixStackLevel() == 14);
+    while (jpb_WRenderMatrixStackLevel() != 0) {
+        PopMatrix();
+    }
+    *jpb_WRenderCurrentMatrix() = saved_current;
     return 0;
 }
 
@@ -345,6 +406,7 @@ int main(void)
     if (test_invert_matrix() != 0 ||
         test_area_and_linear_combine() != 0 ||
         test_point_to_line_distance() != 0 ||
+        test_distance_and_length_entries() != 0 ||
         test_segment_and_polar() != 0 ||
         test_quick_checks() != 0 ||
         test_rotation_and_scale() != 0 ||

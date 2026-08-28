@@ -1,5 +1,5 @@
 /*
- * PARTIAL REVIEWED RECONSTRUCTION of
+ * REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\Work\player.c.
  *
  * The reviewed subset establishes the exact player pool, Pad embedding,
@@ -23,8 +23,9 @@
  *                ownership, 20-slot stride, attacker budgets, map trigger,
  *                pad/AI routing, life/Force HUD and damage overlay ownership,
  *                pause gate, and controller call are checked at
- *                0xE8170..0xE8A7C. Developer diagnostic text remains an
- *                explicitly identified presentation boundary.
+ *                0xE8170..0xE8A7C. The final developer controller diagnostic
+ *                is checked at 0xE6D90..0xE721A through its exact legacy text
+ *                renderer boundary.
  *
  * PDB module: 0064
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\player.obj
@@ -57,6 +58,7 @@
 #include "jpb/physics.h"
 #include "jpb/scene.h"
 #include "jpb/sprite.h"
+#include "jpb/text.h"
 #include "jpb/wrender.h"
 #include "jpb/whook.h"
 #include "jpb/world.h"
@@ -230,6 +232,67 @@ void player_AfterLife(playerObject *player)
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\Work\player.c
  */
+void player_ControllerDump(void)
+{
+    char output[256];
+    size_t length;
+    size_t source_index;
+    size_t output_index = 0;
+
+    if (GameStruct.screenShotFlag != 0) {
+        return;
+    }
+    memset(output, 0, 255);
+    length = strlen(gaPlayerData[0].PreMotion);
+    source_index = length < 17 ? 0 : length - 16;
+    while (source_index < length) {
+        char character = gaPlayerData[0].PreMotion[source_index++];
+
+        switch (character) {
+        case 'e':
+            character = 'E';
+            break;
+        case 'f':
+            character = 'F';
+            break;
+        case 'n':
+            character = 'N';
+            break;
+        case 's':
+            character = 'S';
+            break;
+        case 'w':
+            character = 'W';
+            break;
+        case 'L':
+        case 'M':
+        case 'R':
+        case 'S':
+            continue;
+        case '!':
+        case '+':
+        case '.':
+        case 'J':
+        case 'K':
+        default:
+            break;
+        }
+        output[output_index++] = character;
+    }
+    output[output_index] = '\0';
+
+    Text_gWrite(
+        0x1000, -128, 2, 0, 20, 182, SmallFont, output);
+    Text_gWrite(
+        0x1000,
+        -128,
+        11,
+        0,
+        20,
+        200,
+        SmallFont,
+        (*gaPlayerData[0].pMotion)->name);
+}
 
 static CVECTOR player_packed_color(uint32_t color)
 {

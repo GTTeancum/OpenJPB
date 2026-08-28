@@ -1,5 +1,9 @@
 #include "jpb/bmd.h"
+#include "jpb/camera.h"
+#include "jpb/game.h"
 #include "jpb/material.h"
+#include "jpb/physics.h"
+#include "jpb/scene.h"
 #include "jpb/software_renderer.h"
 
 #include <float.h>
@@ -160,11 +164,14 @@ static int test_geometry_view(void)
     JPBBmdGeometryView geometry;
     modelObject model;
     Mnode node;
+    static sceneObject scene;
+    static physicsObject physics;
     JPBJpxView world_view;
     JPBSoftwareJpxScene world_scene;
     JPBSoftwareFramebuffer framebuffer;
     JPBSoftwareDepthBuffer depth_buffer;
     JPBSoftwareRenderStats render_stats;
+    _Material source_material = {0};
     MATRIX view_matrix;
     _animFrame key_frame;
     FVECTOR world_position = {1.0f, 2.0f, 3.0f};
@@ -223,6 +230,9 @@ static int test_geometry_view(void)
     colors[2].b = 90;
     CHECK(jpb_BmdInspect(
               archive, sizeof(archive), &view) == JPB_BMD_OK);
+    view.material_handles_relocated = 1;
+    records[1].t.TextureID =
+        (uint64_t)(uintptr_t)&source_material;
     CHECK(jpb_BmdGetGeometry(
               &view, view.root, &geometry) == JPB_BMD_OK);
     CHECK(geometry.local_vertex_count == 3);
@@ -308,6 +318,13 @@ static int test_geometry_view(void)
     node.v3RotCenter.vx = (int32_t)world_position.vx;
     node.v3RotCenter.vy = (int32_t)world_position.vy;
     node.v3RotCenter.vz = (int32_t)world_position.vz;
+    memset(&view_matrix, 0, sizeof(view_matrix));
+    view_matrix.m[0][0] = 1.0f;
+    view_matrix.m[1][1] = 1.0f;
+    view_matrix.m[2][2] = 1.0f;
+    view_matrix.t[2] = 20;
+    test_material_flags = JPB_MATERIAL_MODE_TWO_SIDED;
+    source_material.flags = JPB_MATERIAL_MODE_TWO_SIDED;
     memset(pixels, 0, sizeof(pixels));
     memset(&render_stats, 0, sizeof(render_stats));
     CHECK(jpb_SoftwareRenderBmdMaterialized(
@@ -316,7 +333,7 @@ static int test_geometry_view(void)
               NULL,
               &world_position,
               0,
-              NULL,
+              &view_matrix,
               &world_scene,
               &framebuffer,
               resolve_white_texture,
@@ -342,7 +359,7 @@ static int test_geometry_view(void)
               NULL,
               &world_position,
               0,
-              NULL,
+              &view_matrix,
               &world_scene,
               &framebuffer,
               resolve_white_texture,
@@ -368,19 +385,78 @@ static int test_geometry_view(void)
     }
 
     /*
-     * NoScaleEndPoly rejects negative projected winding only for the exact
-     * flags-zero material mode. Flag one makes the same face two-sided.
+     * Exact render_RenderNode detached-part integration at shipped RVAs
+     * 0x129B2C..0x129D56. The old portable path consumed Translation2 but
+     * never advanced it, which left destroyed droid parts suspended.
      */
-    face->vertex[0] = 0;
-    face->vertex[1] = -2;
-    face->vertex[2] = 1;
-    face->vertex[3] = INT16_MAX;
-    test_material_flags = JPB_MATERIAL_MODE_BACKFACE_REJECT;
-    test_color_override = -1;
-    CHECK(jpb_SoftwareClearDepthBuffer(&depth_buffer) == 1);
-    memset(pixels, 0, sizeof(pixels));
+    memset(&scene, 0, sizeof(scene));
+    memset(&physics, 0, sizeof(physics));
+    scene.sceneRoot.objectID = 3;
+    scene.pPhysics = &physics.physicsRoot;
+    physics.airGround = -1000.0f;
+    gGlobalFrameRate = 0x800;
+    node.flags = UINT32_C(0x04000000);
+    node.v3Translation2.vx = 10;
+    node.v3Translation2.vy = 20;
+    node.v3Translation2.vz = 30;
+    node.v3Velocity2.vx = 2;
+    node.v3Velocity2.vy = 8;
+    node.v3Velocity2.vz = -3;
+    node.time = 16;
     memset(&render_stats, 0, sizeof(render_stats));
-    CHECK(jpb_SoftwareRenderBmdMaterializedWithDepth(
+    CHECK(jpb_SoftwareRenderBmdForScene(
+              &view,
+              &model,
+              NULL,
+              &scene,
+              &physics,
+              &world_position,
+              0,
+              NULL,
+              &world_scene,
+              &framebuffer,
+              resolve_white_texture,
+              NULL,
+              NULL,
+              NULL,
+              NULL,
+              &render_stats) == JPB_SOFTWARE_RENDER_OK);
+    CHECK(node.v3RotCenter.vx == 10);
+    CHECK(node.v3RotCenter.vy == 20);
+    CHECK(node.v3RotCenter.vz == 30);
+    CHECK(node.v3Translation2.vx == 12);
+    CHECK(node.v3Translation2.vy == 27);
+    CHECK(node.v3Translation2.vz == 27);
+    CHECK(node.time == 48);
+    CHECK(render_stats.modelTriangles == 1);
+
+    node.flags = UINT32_C(0x04000000);
+    node.time = 0x1000;
+    memset(&render_stats, 0, sizeof(render_stats));
+    CHECK(jpb_SoftwareRenderBmdForScene(
+              &view,
+              &model,
+              NULL,
+              &scene,
+              &physics,
+              &world_position,
+              0,
+              NULL,
+              &world_scene,
+              &framebuffer,
+              resolve_white_texture,
+              NULL,
+              NULL,
+              NULL,
+              NULL,
+              &render_stats) == JPB_SOFTWARE_RENDER_OK);
+    CHECK(render_stats.modelTriangles == 0);
+    CHECK(node.time == 0x1020);
+    CHECK((node.flags & UINT32_C(0x4)) == 0);
+
+    node.flags = UINT32_C(0x1000);
+    memset(&render_stats, 0, sizeof(render_stats));
+    CHECK(jpb_SoftwareRenderBmdMaterialized(
               &view,
               &model,
               NULL,
@@ -391,11 +467,43 @@ static int test_geometry_view(void)
               &framebuffer,
               resolve_white_texture,
               NULL,
+              &render_stats) == JPB_SOFTWARE_RENDER_OK);
+    CHECK(render_stats.modelTriangles == 0);
+    CHECK(node.flags == UINT32_C(0x1000));
+    node.flags = 0;
+
+    /*
+     * NoScaleEndPoly converts projected winding to an integer before the
+     * signed test. This small negative face truncates to zero and survives;
+     * the two-sided material below must survive as well.
+     */
+    face->vertex[0] = 0;
+    face->vertex[1] = -2;
+    face->vertex[2] = 1;
+    face->vertex[3] = INT16_MAX;
+    test_material_flags = JPB_MATERIAL_MODE_BACKFACE_REJECT;
+    source_material.flags = JPB_MATERIAL_MODE_BACKFACE_REJECT;
+    test_color_override = -1;
+    CHECK(jpb_SoftwareClearDepthBuffer(&depth_buffer) == 1);
+    memset(pixels, 0, sizeof(pixels));
+    memset(&render_stats, 0, sizeof(render_stats));
+    CHECK(jpb_SoftwareRenderBmdMaterializedWithDepth(
+              &view,
+              &model,
+              NULL,
+              &world_position,
+              0,
+              &view_matrix,
+              &world_scene,
+              &framebuffer,
+              resolve_white_texture,
+              NULL,
               &depth_buffer,
               &render_stats) == JPB_SOFTWARE_RENDER_OK);
-    CHECK(render_stats.modelPixels == 0);
+    CHECK(render_stats.modelPixels > 0);
 
     test_material_flags = JPB_MATERIAL_MODE_TWO_SIDED;
+    source_material.flags = JPB_MATERIAL_MODE_TWO_SIDED;
     test_color_override = 100;
     CHECK(jpb_SoftwareClearDepthBuffer(&depth_buffer) == 1);
     memset(pixels, 0, sizeof(pixels));
@@ -406,7 +514,7 @@ static int test_geometry_view(void)
               NULL,
               &world_position,
               0,
-              NULL,
+              &view_matrix,
               &world_scene,
               &framebuffer,
               resolve_white_texture,
@@ -429,6 +537,7 @@ static int test_geometry_view(void)
         CHECK(saw_override);
     }
     test_material_flags = JPB_MATERIAL_MODE_BACKFACE_REJECT;
+    source_material.flags = JPB_MATERIAL_MODE_BACKFACE_REJECT;
     test_color_override = -1;
 
     /*
@@ -442,6 +551,7 @@ static int test_geometry_view(void)
     view_matrix.m[1][1] = 1.0f;
     view_matrix.m[2][2] = 1.0f;
     test_material_flags = JPB_MATERIAL_MODE_TWO_SIDED;
+    source_material.flags = JPB_MATERIAL_MODE_TWO_SIDED;
     world_position.vx = 0.0f;
     world_position.vy = 3.0f;
     world_position.vz = 0.0f;
@@ -496,6 +606,7 @@ static int test_geometry_view(void)
               &render_stats) == JPB_SOFTWARE_RENDER_OK);
     CHECK(render_stats.modelPixels == 0);
     test_material_flags = JPB_MATERIAL_MODE_BACKFACE_REJECT;
+    source_material.flags = JPB_MATERIAL_MODE_BACKFACE_REJECT;
     world_position.vx = 1.0f;
     world_position.vy = 2.0f;
     world_position.vz = 3.0f;

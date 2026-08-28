@@ -1,5 +1,5 @@
 /*
- * PARTIAL REVIEWED RECONSTRUCTION of
+ * REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\Work\input.c.
  *
  * The reviewed subset owns the platform-neutral pad masks, held-button
@@ -12,7 +12,8 @@
  *                pad globals from linked symbols.
  *   decompiled - control flow checked against the raw Ghidra export.
  *   assembly   - complete mask/update expression, bit-15 pad-index clearing,
- *                store ordering, and zero ranges checked at exact RVAs.
+ *                store ordering, zero ranges, and the initInput tail jump
+ *                checked at exact RVAs.
  *
  * PDB module: 0043
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\input.obj
@@ -33,6 +34,8 @@ static void *input_provider_user_data;
 static JPBInputPowerBattleChordProvider
     power_battle_chord_provider;
 static void *power_battle_chord_user_data;
+static JPBInputKeyPressedProvider key_pressed_provider;
+static void *key_pressed_user_data;
 
 /* Exact linked packet/type globals at RVAs 0x4CBAD0 and 0x538050. */
 ControllerPacket padBuffer[JPB_INPUT_PAD_COUNT];
@@ -96,6 +99,21 @@ int jpb_InputPowerBattleChordPressed(void)
     }
     return power_battle_chord_provider(
         power_battle_chord_user_data) != 0;
+}
+
+void jpb_InputSetKeyPressedProvider(
+    JPBInputKeyPressedProvider provider,
+    void *user_data)
+{
+    key_pressed_provider = provider;
+    key_pressed_user_data = user_data;
+}
+
+int jpb_InputKeyPressed(int virtual_key)
+{
+    return key_pressed_provider != NULL &&
+           key_pressed_provider(
+               virtual_key, key_pressed_user_data) != 0;
 }
 
 /* 0xAEBD0, 45 bytes, global, 0 named locals
@@ -236,6 +254,10 @@ void handleShockers(int padnum)
  * PDB type: void (<no type>)
  * Source: W:\SWJediPowerBattles\Work\input.c
  */
+void initInput(void)
+{
+    (void)InitInput();
+}
 
 /* 0xAEF60, 16 bytes, global, 0 named locals
  * initPSXPad

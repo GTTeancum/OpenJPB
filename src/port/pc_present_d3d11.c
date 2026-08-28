@@ -1,5 +1,6 @@
 #define COBJMACROS
 #include "jpb/game_runtime.h"
+#include "jpb/level.h"
 #include "jpb/projection.h"
 #define NODE_INVALID MSXML_NODE_INVALID
 #define WIN32_LEAN_AND_MEAN
@@ -31,6 +32,8 @@ typedef struct JPBPCD3D11WorldConstants {
     float row2[4];
     float projection[4];
     float transparentPass[4];
+    float uvScrollSpeed[2];
+    float padding[2];
 } JPBPCD3D11WorldConstants;
 
 typedef struct JPBPCD3D11WorldTexture {
@@ -93,16 +96,19 @@ struct JPBPCD3D11Presenter {
     ID3D11BlendState *worldAdditiveBlend;
     ID3D11DepthStencilState *worldDepthWrite;
     ID3D11DepthStencilState *worldDepthRead;
+    ID3D11DepthStencilState *screenDepthRead;
     ID3D11RasterizerState *worldRasterizer;
     ID3D11RasterizerState *worldScissorRasterizer;
     ID3D11SamplerState *worldSampler;
     ID3D11ShaderResourceView *worldWhiteView;
     ID3D11VertexShader *modelVertexShader;
+    ID3D11VertexShader *screenVertexShader;
     ID3D11PixelShader *modelPixelShader;
     ID3D11PixelShader *screenOpaquePixelShader;
     ID3D11PixelShader *screenTransparentPixelShader;
     ID3D11PixelShader *gameplayCompositePixelShader;
     ID3D11InputLayout *modelInputLayout;
+    ID3D11InputLayout *screenInputLayout;
     ID3D11Buffer *modelConstants;
     ID3D11Buffer *modelVertexBuffer;
     ID3D11SamplerState *modelLinearSampler;
@@ -201,17 +207,17 @@ static const char pc_gameplay_composite_shader[] =
 static const char pc_world_shader[] =
     "cbuffer WorldConstants : register(b0) {\n"
     "  float4 viewRow0; float4 viewRow1; float4 viewRow2;\n"
-    "  float4 projection; float4 transparentPass;\n"
+    "  float4 projection; float4 transparentPass; float2 uvScrollSpeed; float2 padding;\n"
     "};\n"
     "Texture2D materialTexture : register(t0);\n"
     "SamplerState materialSampler : register(s0);\n"
-    "struct VSInput { float3 position : POSITION; float2 uv : TEXCOORD0; float4 color : COLOR0; };\n"
+    "struct VSInput { float3 position : POSITION; float2 uv : TEXCOORD0; float4 color : COLOR0; float2 uvScroll : TEXCOORD1; };\n"
     "struct VSOutput { float4 position : SV_Position; float2 uv : TEXCOORD0; float4 color : COLOR0; float depth : TEXCOORD1; };\n"
     "VSOutput VSWorld(VSInput input) {\n"
     "  VSOutput output;\n"
     "  float3 camera = float3(dot(float4(input.position, 1.0), viewRow0), dot(float4(input.position, 1.0), viewRow1), dot(float4(input.position, 1.0), viewRow2));\n"
     "  output.position = float4(camera.x * projection.x, -camera.y * projection.y, camera.z * projection.z + projection.w, camera.z);\n"
-    "  output.uv = input.uv; output.color = input.color / 255.0; output.depth = camera.z / 10240.0;\n"
+    "  output.uv = input.uv + abs(input.uvScroll) - sign(input.uvScroll) * uvScrollSpeed; output.color = input.color / 255.0; output.depth = camera.z / 10240.0;\n"
     "  return output;\n"
     "}\n"
     "struct PSOutput { float4 color : SV_Target0; float depth : SV_Target1; };\n"
@@ -229,9 +235,13 @@ static const char pc_model_shader[] =
     "Texture2D materialTexture : register(t0);\n"
     "SamplerState materialSampler : register(s0);\n"
     "struct VSInput { float3 screen : POSITION; float inverseDepth : TEXCOORD0; float2 uv : TEXCOORD1; float4 color : COLOR0; };\n"
+    "struct VSImmediateInput { float3 screen : POSITION; float inverseDepth : TEXCOORD0; float clipDepth : TEXCOORD2; float2 uv : TEXCOORD1; float4 color : COLOR0; };\n"
     "struct VSOutput { float4 position : SV_Position; float2 uv : TEXCOORD0; float4 color : COLOR0; float depth : TEXCOORD1; };\n"
     "VSOutput VSModel(VSInput input) { VSOutput output; float cameraZ = input.screen.z * 10240.0;\n"
     " output.position = float4((input.screen.x * viewport.x - 1.0) * cameraZ, (1.0 - input.screen.y * viewport.y) * cameraZ, cameraZ * 1.00010001 - 1.00010001, cameraZ);\n"
+    " output.uv = input.uv; output.color = input.color / 255.0; output.depth = input.screen.z; return output; }\n"
+    "VSOutput VSImmediate(VSImmediateInput input) { VSOutput output;\n"
+    " output.position = float4(input.screen.x * viewport.x - 1.0, 1.0 - input.screen.y * viewport.y, input.clipDepth, 1.0);\n"
     " output.uv = input.uv; output.color = input.color / 255.0; output.depth = input.screen.z; return output; }\n"
     "struct PSOutput { float4 color : SV_Target0; float depth : SV_Target1; };\n"
     "PSOutput PSModel(VSOutput input) { PSOutput output; float4 sample = materialTexture.Sample(materialSampler, input.uv);\n"
@@ -607,6 +617,9 @@ static HRESULT pc_present_compile_world_shaders(
          D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0,
          offsetof(JPBSoftwareLevelVertex, red),
+         D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT, 0,
+         offsetof(JPBSoftwareLevelVertex, uvScrollU),
          D3D11_INPUT_PER_VERTEX_DATA, 0}
     };
     ID3DBlob *vertex_blob = NULL;
@@ -674,7 +687,25 @@ static HRESULT pc_present_compile_model_shaders(
          offsetof(JPBSoftwareMaterialVertex, red),
          D3D11_INPUT_PER_VERTEX_DATA, 0}
     };
+    static const D3D11_INPUT_ELEMENT_DESC screen_elements[] = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,
+         offsetof(JPBSoftwareMaterialVertex, x),
+         D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 0, DXGI_FORMAT_R32_FLOAT, 0,
+         offsetof(JPBSoftwareMaterialVertex, inverseDepth),
+         D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 2, DXGI_FORMAT_R32_FLOAT, 0,
+         offsetof(JPBSoftwareMaterialVertex, clipDepth),
+         D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT, 0,
+         offsetof(JPBSoftwareMaterialVertex, u),
+         D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0,
+         offsetof(JPBSoftwareMaterialVertex, red),
+         D3D11_INPUT_PER_VERTEX_DATA, 0}
+    };
     ID3DBlob *vs = NULL;
+    ID3DBlob *screen_vs = NULL;
     ID3DBlob *ps = NULL;
     ID3DBlob *screen_opaque_ps = NULL;
     ID3DBlob *screen_transparent_ps = NULL;
@@ -685,6 +716,13 @@ static HRESULT pc_present_compile_model_shaders(
         pc_model_shader, sizeof(pc_model_shader) - 1,
         "OpenJPBModel.hlsl", NULL, NULL, "VSModel", "vs_4_0",
         D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &vs, &errors);
+    if (errors != NULL) { ID3D10Blob_Release(errors); errors = NULL; }
+    if (FAILED(result)) goto cleanup;
+    result = D3DCompile(
+        pc_model_shader, sizeof(pc_model_shader) - 1,
+        "OpenJPBImmediate.hlsl", NULL, NULL,
+        "VSImmediate", "vs_4_0",
+        D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &screen_vs, &errors);
     if (errors != NULL) { ID3D10Blob_Release(errors); errors = NULL; }
     if (FAILED(result)) goto cleanup;
     result = D3DCompile(
@@ -726,6 +764,11 @@ static HRESULT pc_present_compile_model_shaders(
         ID3D10Blob_GetBufferSize(vs), NULL,
         &presenter->modelVertexShader);
     if (FAILED(result)) goto cleanup;
+    result = ID3D11Device_CreateVertexShader(
+        presenter->device, ID3D10Blob_GetBufferPointer(screen_vs),
+        ID3D10Blob_GetBufferSize(screen_vs), NULL,
+        &presenter->screenVertexShader);
+    if (FAILED(result)) goto cleanup;
     result = ID3D11Device_CreatePixelShader(
         presenter->device, ID3D10Blob_GetBufferPointer(ps),
         ID3D10Blob_GetBufferSize(ps), NULL,
@@ -737,6 +780,13 @@ static HRESULT pc_present_compile_model_shaders(
         ID3D10Blob_GetBufferPointer(vs),
         ID3D10Blob_GetBufferSize(vs),
         &presenter->modelInputLayout);
+    if (FAILED(result)) goto cleanup;
+    result = ID3D11Device_CreateInputLayout(
+        presenter->device, screen_elements,
+        sizeof(screen_elements) / sizeof(screen_elements[0]),
+        ID3D10Blob_GetBufferPointer(screen_vs),
+        ID3D10Blob_GetBufferSize(screen_vs),
+        &presenter->screenInputLayout);
 cleanup:
     if (screen_transparent_ps != NULL) {
         ID3D10Blob_Release(screen_transparent_ps);
@@ -744,6 +794,7 @@ cleanup:
     if (screen_opaque_ps != NULL) ID3D10Blob_Release(screen_opaque_ps);
     if (ps != NULL) ID3D10Blob_Release(ps);
     if (vs != NULL) ID3D10Blob_Release(vs);
+    if (screen_vs != NULL) ID3D10Blob_Release(screen_vs);
     return result;
 }
 
@@ -840,6 +891,12 @@ static HRESULT pc_present_create_world_states(
     result = ID3D11Device_CreateDepthStencilState(
         presenter->device, &depth_desc,
         &presenter->worldDepthRead);
+    if (FAILED(result)) return result;
+    /* Both shipped D3DTransparencyPass PSOs use LESS_EQUAL. */
+    depth_desc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+    result = ID3D11Device_CreateDepthStencilState(
+        presenter->device, &depth_desc,
+        &presenter->screenDepthRead);
     if (FAILED(result)) return result;
 
     memset(&blend_desc, 0, sizeof(blend_desc));
@@ -1329,7 +1386,10 @@ static int pc_present_append_triangle(
         third == NULL) {
         return 0;
     }
-    view = pc_present_world_texture(presenter, texture);
+    /* A NULL texture is the renderer's explicit solid-color primitive. */
+    view = texture != NULL
+        ? pc_present_world_texture(presenter, texture)
+        : presenter->worldWhiteView;
     if (view == NULL) return 0;
     sampler = texture != NULL &&
             texture->samplerType == TEXTURESAMPLER_POINTCLAMP
@@ -1563,14 +1623,21 @@ static HRESULT pc_present_submit_material_triangles(
                 ? presenter->worldScissorRasterizer
                 : presenter->worldRasterizer);
         ID3D11DeviceContext_IASetInputLayout(
-            presenter->context, presenter->modelInputLayout);
+            presenter->context,
+            screen_polys
+                ? presenter->screenInputLayout
+                : presenter->modelInputLayout);
         ID3D11DeviceContext_IASetPrimitiveTopology(
             presenter->context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         ID3D11DeviceContext_IASetVertexBuffers(
             presenter->context, 0, 1,
             &presenter->modelVertexBuffer, &stride, &offset);
         ID3D11DeviceContext_VSSetShader(
-            presenter->context, presenter->modelVertexShader, NULL, 0);
+            presenter->context,
+            screen_polys
+                ? presenter->screenVertexShader
+                : presenter->modelVertexShader,
+            NULL, 0);
         ID3D11DeviceContext_VSSetConstantBuffers(
             presenter->context, 0, 1, &presenter->modelConstants);
         ID3D11DeviceContext_PSSetShader(
@@ -1604,7 +1671,7 @@ static HRESULT pc_present_submit_material_triangles(
                 ID3D11DeviceContext_OMSetDepthStencilState(
                     presenter->context,
                     transparent
-                        ? presenter->worldDepthRead
+                        ? presenter->screenDepthRead
                         : presenter->worldDepthWrite,
                     0);
             }
@@ -1843,6 +1910,7 @@ static void pc_present_set_title_vertex(
     vertex->y = y;
     vertex->depth = 0.0001f;
     vertex->inverseDepth = 10000.0f;
+    vertex->clipDepth = 0.0001f;
     vertex->u = u;
     vertex->v = v;
     vertex->red = (float)color.r;
@@ -2147,14 +2215,17 @@ void jpb_PCD3D11PresenterDestroy(JPBPCD3D11Presenter *presenter)
     if (presenter->modelLinearSampler != NULL) ID3D11SamplerState_Release(presenter->modelLinearSampler);
     if (presenter->modelConstants != NULL) ID3D11Buffer_Release(presenter->modelConstants);
     if (presenter->modelInputLayout != NULL) ID3D11InputLayout_Release(presenter->modelInputLayout);
+    if (presenter->screenInputLayout != NULL) ID3D11InputLayout_Release(presenter->screenInputLayout);
     if (presenter->screenTransparentPixelShader != NULL) ID3D11PixelShader_Release(presenter->screenTransparentPixelShader);
     if (presenter->screenOpaquePixelShader != NULL) ID3D11PixelShader_Release(presenter->screenOpaquePixelShader);
     if (presenter->modelPixelShader != NULL) ID3D11PixelShader_Release(presenter->modelPixelShader);
     if (presenter->modelVertexShader != NULL) ID3D11VertexShader_Release(presenter->modelVertexShader);
+    if (presenter->screenVertexShader != NULL) ID3D11VertexShader_Release(presenter->screenVertexShader);
     if (presenter->worldWhiteView != NULL) ID3D11ShaderResourceView_Release(presenter->worldWhiteView);
     if (presenter->worldSampler != NULL) ID3D11SamplerState_Release(presenter->worldSampler);
     if (presenter->worldScissorRasterizer != NULL) ID3D11RasterizerState_Release(presenter->worldScissorRasterizer);
     if (presenter->worldRasterizer != NULL) ID3D11RasterizerState_Release(presenter->worldRasterizer);
+    if (presenter->screenDepthRead != NULL) ID3D11DepthStencilState_Release(presenter->screenDepthRead);
     if (presenter->worldDepthRead != NULL) ID3D11DepthStencilState_Release(presenter->worldDepthRead);
     if (presenter->worldDepthWrite != NULL) ID3D11DepthStencilState_Release(presenter->worldDepthWrite);
     if (presenter->worldGlassBlend != NULL) ID3D11BlendState_Release(presenter->worldGlassBlend);
@@ -2440,6 +2511,9 @@ static int pc_present_render_level_range(
     constants->projection[3] = -10000.0f / 9999.0f;
     memset(constants->transparentPass, 0,
            sizeof(constants->transparentPass));
+    constants->uvScrollSpeed[0] = g_levelUVScroll.vx;
+    constants->uvScrollSpeed[1] = g_levelUVScroll.vy;
+    memset(constants->padding, 0, sizeof(constants->padding));
     ID3D11DeviceContext_Unmap(
         presenter->context,
         (ID3D11Resource *)presenter->worldConstants, 0);

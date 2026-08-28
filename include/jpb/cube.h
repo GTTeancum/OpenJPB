@@ -13,7 +13,9 @@ extern "C" {
 enum {
     JPB_CULL_MESH_COUNT = 32,
     JPB_CULL_VISIBILITY_COUNT = 1000,
-    JPB_CULL_PLANE_COUNT = 7
+    JPB_CULL_PLANE_COUNT = 7,
+    JPB_CUBE_UV_SET_COUNT = 1024,
+    JPB_CUBE_UV_FLOATS_PER_SET = 8
 };
 
 /* Exact matched-PC PDB global and procedures. */
@@ -43,26 +45,15 @@ typedef struct JPBCubeRenderBounds {
     int32_t maxZ;
 } JPBCubeRenderBounds;
 
-/*
- * The matched level-12 path submits the old JPX cube stream directly from
- * plotsomecubes. Dependency-light hosts realize that immediate renderer at
- * this boundary while the recovered culling and scheduling remain game-owned.
- */
-typedef int (*JPBCubeLegacyRenderHook)(
-    void *user_data,
-    int min_x,
-    int min_z,
-    int max_x,
-    int max_z);
-
 void cube_GetCubeAmbientLight(VECTOR *position, CVECTOR *color);
+int GPUcluts(void *mapbase, int32_t *buffer4k);
 void cube_HideMesh(int mesh);
 void cube_InitVisibility(void);
 void cube_NewWorldRender(MATRIX *matrix);
 void cube_ShowMesh(int mesh);
+int initUVs(void);
+const float *jpb_CubeUVTable(void);
 void jpb_CubeGetLastRenderBounds(JPBCubeRenderBounds *bounds);
-void jpb_CubeSetLegacyRenderHook(
-    JPBCubeLegacyRenderHook hook, void *user_data);
 int plotsomecubes(int min_x, int min_z, int max_x, int max_z);
 void twatcameramatrix(MATRIX *matrix, MATRIX *m);
 

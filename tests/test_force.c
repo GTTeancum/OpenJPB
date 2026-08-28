@@ -1,4 +1,5 @@
 #include "jpb/anim.h"
+#include "jpb/bmd.h"
 #include "jpb/camera.h"
 #include "jpb/collision.h"
 #include "jpb/effects.h"
@@ -28,11 +29,26 @@ typedef struct ForceFixture {
     animObject *animation;
     animListNode current_sequence;
     Mnode nodes[TEST_NODE_COUNT];
+    geomData geometry[3];
     Motion motions[TEST_MOTION_COUNT];
     _animTemplate templates[TEST_MOTION_COUNT];
 } ForceFixture;
 
 static int failures;
+static uint32_t test_pose_words[3];
+
+static void init_test_animations(void)
+{
+    int index;
+
+    (anim_InitAnimations)(0);
+    for (index = 0; index < JPB_ANIMATION_CAPACITY; ++index) {
+        maAnimationData[index].depack_context.huffdataorigin =
+            test_pose_words;
+        maAnimationData[index].depack_context3.huffdataorigin =
+            test_pose_words;
+    }
+}
 
 typedef struct GlowTrace {
     int calls;
@@ -40,18 +56,11 @@ typedef struct GlowTrace {
     _svector first_end;
     _svector last_start;
     _svector last_end;
+    int first_width;
+    uint32_t first_color;
     int width;
     uint32_t color;
 } GlowTrace;
-
-typedef struct GlowingManTrace {
-    int calls;
-    objectRoot *object;
-    int width;
-    int height;
-    uint32_t inner_color;
-    uint32_t outer_color;
-} GlowingManTrace;
 
 typedef struct CylinderTrace {
     int calls;
@@ -90,31 +99,14 @@ static void trace_screen_glow(
     if (trace->calls == 0) {
         trace->first_start = *start;
         trace->first_end = *end;
+        trace->first_width = width;
+        trace->first_color = color;
     }
     trace->last_start = *start;
     trace->last_end = *end;
     trace->width = width;
     trace->color = color;
     ++trace->calls;
-}
-
-static void trace_glowing_man(
-    void *user_data,
-    objectRoot *object,
-    int width,
-    int height,
-    uint32_t inner_color,
-    uint32_t outer_color)
-{
-    GlowingManTrace *trace =
-        (GlowingManTrace *)user_data;
-
-    ++trace->calls;
-    trace->object = object;
-    trace->width = width;
-    trace->height = height;
-    trace->inner_color = inner_color;
-    trace->outer_color = outer_color;
 }
 
 static void trace_cylinder(
@@ -160,7 +152,7 @@ static void reset_fixture(ForceFixture *fixture)
          ++index) {
         maPhysicsData[index].physicsRoot.objectID = -1;
     }
-    anim_InitAnimations(0);
+    init_test_animations();
     fixture->animation = &maAnimationData[0];
 
     fixture->player.playerRoot.pParent =
@@ -214,7 +206,27 @@ static void reset_fixture(ForceFixture *fixture)
     GameStruct.aCharacterData[0].MaxForce = 100;
     storeAnim = NULL;
     jpb_FxSetScreenGlowHook(NULL, NULL);
-    jpb_FxSetGlowingManHook(NULL, NULL);
+}
+
+static void prepare_glowing_man_hierarchy(
+    ForceFixture *fixture)
+{
+    Mnode *root = &fixture->nodes[0];
+    Mnode *joint = &fixture->nodes[1];
+    Mnode *leaf = &fixture->nodes[2];
+
+    fixture->geometry[0].numFaces = 1;
+    fixture->geometry[1].numFaces = 1;
+    fixture->geometry[2].numFaces = 1;
+    root->pGeomData = &fixture->geometry[0];
+    root->numChildNodes = 1;
+    root->aChildNode = joint;
+    joint->pGeomData = &fixture->geometry[1];
+    joint->numChildNodes = 1;
+    joint->aChildNode = leaf;
+    joint->v3RotCenter.vx = 100;
+    leaf->pGeomData = &fixture->geometry[2];
+    leaf->v3RotCenter.vx = 200;
 }
 
 static void test_primary_force_sequences(void)
@@ -358,7 +370,7 @@ static void test_healing_callback(void)
 static void test_cloak_callback(void)
 {
     ForceFixture fixture;
-    GlowingManTrace trace;
+    GlowTrace trace;
     WorldData world;
 
     reset_fixture(&fixture);
@@ -369,8 +381,9 @@ static void test_cloak_callback(void)
     fixture.player.forceFlags =
         UINT32_C(0x100);
     fixture.model.flags = UINT32_C(0x20);
-    jpb_FxSetGlowingManHook(
-        trace_glowing_man, &trace);
+    prepare_glowing_man_hierarchy(&fixture);
+    jpb_FxSetScreenGlowHook(
+        trace_screen_glow, &trace);
 
     CHECK(force_CloakCallBack(
               NULL, &fixture.player) == 0);
@@ -381,15 +394,17 @@ static void test_cloak_callback(void)
           UINT32_C(0x180));
     CHECK(fixture.model.flags ==
           UINT32_C(0x30));
-    CHECK(trace.calls == 1);
-    CHECK(trace.object ==
-          &fixture.physics.physicsRoot);
-    CHECK(trace.width == 48);
-    CHECK(trace.height == 54);
-    CHECK(trace.inner_color ==
+    CHECK(trace.calls == 2);
+    CHECK(trace.first_width == 48);
+    CHECK(trace.width == 54);
+    CHECK(trace.first_color ==
           UINT32_C(0xc0200808));
-    CHECK(trace.outer_color ==
+    CHECK(trace.color ==
           UINT32_C(0xc0301010));
+    CHECK(trace.first_start.vx == 0);
+    CHECK(trace.first_end.vx == 100);
+    CHECK(trace.last_start.vx == 100);
+    CHECK(trace.last_end.vx == 208);
 
     fixture.player.forceData[1] = 0;
     CHECK(force_CloakCallBack(
@@ -418,7 +433,33 @@ static void test_cloak_callback(void)
            UINT32_C(0x10)) == 0);
 
     gpWorld = NULL;
-    jpb_FxSetGlowingManHook(NULL, NULL);
+    jpb_FxSetScreenGlowHook(NULL, NULL);
+}
+
+static void test_screen_glow_fv_conversion(void)
+{
+    FVECTOR start = {12.75f, -3.75f, 40000.0f};
+    FVECTOR end = {-9.5f, 8.5f, -40000.0f};
+    GlowTrace trace;
+
+    memset(&trace, 0, sizeof(trace));
+    jpb_FxSetScreenGlowHook(
+        trace_screen_glow, &trace);
+    fx_screenGlowFV(
+        &start,
+        &end,
+        17,
+        UINT32_C(0x12345678));
+    CHECK(trace.calls == 1);
+    CHECK(trace.first_start.vx == 12);
+    CHECK(trace.first_start.vy == -3);
+    CHECK(trace.first_start.vz == (int16_t)40000);
+    CHECK(trace.first_end.vx == -9);
+    CHECK(trace.first_end.vy == 8);
+    CHECK(trace.first_end.vz == (int16_t)-40000);
+    CHECK(trace.width == 17);
+    CHECK(trace.color == UINT32_C(0x12345678));
+    jpb_FxSetScreenGlowHook(NULL, NULL);
 }
 
 static void test_mesmerize_callback(void)
@@ -479,7 +520,8 @@ static void test_mesmerize_callback(void)
     target_motions[61].Seq = 61;
     target_motions[61].Speed = -1;
     target_motions[61].Lock = 1;
-    target_templates[61].Fframe = 4;
+    target_templates[61].Fframe = 0;
+    target_templates[61].Lframe = 10;
 
     target_scene.pScene =
         &target_scene_component;
@@ -1126,15 +1168,16 @@ static void test_shield_callback(void)
 static void test_star_callback(void)
 {
     ForceFixture fixture;
-    GlowingManTrace trace;
+    GlowTrace trace;
 
     reset_fixture(&fixture);
     memset(&trace, 0, sizeof(trace));
     GameStruct.aCharacterData[0].Items = 2;
     fixture.player.forceFlags =
         UINT32_C(0x100);
-    jpb_FxSetGlowingManHook(
-        trace_glowing_man, &trace);
+    prepare_glowing_man_hierarchy(&fixture);
+    jpb_FxSetScreenGlowHook(
+        trace_screen_glow, &trace);
 
     CHECK(force_StarCallBack(
               NULL, &fixture.player) == 0);
@@ -1143,14 +1186,12 @@ static void test_star_callback(void)
     CHECK(GameStruct.aCharacterData[0].Items == 1);
     CHECK(fixture.player.forceFlags ==
           UINT32_C(0x160));
-    CHECK(trace.calls == 1);
-    CHECK(trace.object ==
-          &fixture.physics.physicsRoot);
-    CHECK(trace.width == 48);
-    CHECK(trace.height == 54);
-    CHECK(trace.inner_color ==
+    CHECK(trace.calls == 2);
+    CHECK(trace.first_width == 48);
+    CHECK(trace.width == 54);
+    CHECK(trace.first_color ==
           UINT32_C(0x00302010));
-    CHECK(trace.outer_color ==
+    CHECK(trace.color ==
           UINT32_C(0xc0482814));
 
     fixture.player.forceData[1] = 0;
@@ -1160,7 +1201,7 @@ static void test_star_callback(void)
     CHECK(fixture.player.forceFlags ==
           UINT32_C(0x100));
 
-    jpb_FxSetGlowingManHook(NULL, NULL);
+    jpb_FxSetScreenGlowHook(NULL, NULL);
 }
 
 int main(void)
@@ -1183,6 +1224,7 @@ int main(void)
     test_absorb_reflect_callback();
     test_shield_callback();
     test_star_callback();
+    test_screen_glow_fv_conversion();
 
     if (failures != 0) {
         fprintf(

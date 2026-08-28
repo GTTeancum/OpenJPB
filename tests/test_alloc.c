@@ -19,12 +19,19 @@ static int test_sizes_and_reuse(void)
     void *reused;
 
     meminit();
+    CHECK(mem_heaplen == 0x4000);
+    CHECK(mem_heap == localheap);
     CHECK(mem_heap != NULL);
     CHECK(mem_heapend - mem_heap == 0x4000);
+    CHECK(mem_heap[0] == UINT32_C(0x4000));
     a = memalloc(4);
+    CHECK(mem_heap[0] == UINT32_C(0x00008002));
+    CHECK(mem_heap[2] == UINT32_C(0x80023ffe));
     b = memalloc(5);
     CHECK(a != NULL);
     CHECK(b != NULL);
+    CHECK(mem_heap[2] == UINT32_C(0x80028003));
+    CHECK(mem_heap[5] == UINT32_C(0x80033ffb));
     CHECK(memsize(a) == 8);
     CHECK(memsize(b) == 12);
 

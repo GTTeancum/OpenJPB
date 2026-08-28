@@ -3,6 +3,8 @@
 
 #include "jpb/anim.h"
 
+#include <stddef.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -31,8 +33,32 @@ void unpack_seekcontext(_dpcontext *context, int seek);
 
 #if defined(__cplusplus)
 static_assert(sizeof(_optab) == 8, "_optab layout changed");
+static_assert(offsetof(_optab, gotto) == 4, "_optab.gotto offset changed");
+static_assert(offsetof(_dpcontext, wordbuffer) == 0, "_dpcontext.wordbuffer offset changed");
+static_assert(offsetof(_dpcontext, wordsinbuffer) == 8, "_dpcontext.wordsinbuffer offset changed");
+static_assert(offsetof(_dpcontext, handyvalues) == 16, "_dpcontext.handyvalues offset changed");
+static_assert(offsetof(_dpcontext, huffdata) == 24, "_dpcontext.huffdata offset changed");
+static_assert(offsetof(_dpcontext, huffdataorigin) == 32, "_dpcontext.huffdataorigin offset changed");
+static_assert(offsetof(_dpcontext, huffdword) == 40, "_dpcontext.huffdword offset changed");
+static_assert(offsetof(_dpcontext, huffbits) == 44, "_dpcontext.huffbits offset changed");
+static_assert(offsetof(_dpcontext, n_bitmask) == 48, "_dpcontext.n_bitmask offset changed");
+static_assert(offsetof(_dpcontext, numseq) == 52, "_dpcontext.numseq offset changed");
+static_assert(offsetof(_dpcontext, numparts) == 54, "_dpcontext.numparts offset changed");
+static_assert(offsetof(_dpcontext, seqdata) == 56, "_dpcontext.seqdata offset changed");
 #else
 _Static_assert(sizeof(_optab) == 8, "_optab layout changed");
+_Static_assert(offsetof(_optab, gotto) == 4, "_optab.gotto offset changed");
+_Static_assert(offsetof(_dpcontext, wordbuffer) == 0, "_dpcontext.wordbuffer offset changed");
+_Static_assert(offsetof(_dpcontext, wordsinbuffer) == 8, "_dpcontext.wordsinbuffer offset changed");
+_Static_assert(offsetof(_dpcontext, handyvalues) == 16, "_dpcontext.handyvalues offset changed");
+_Static_assert(offsetof(_dpcontext, huffdata) == 24, "_dpcontext.huffdata offset changed");
+_Static_assert(offsetof(_dpcontext, huffdataorigin) == 32, "_dpcontext.huffdataorigin offset changed");
+_Static_assert(offsetof(_dpcontext, huffdword) == 40, "_dpcontext.huffdword offset changed");
+_Static_assert(offsetof(_dpcontext, huffbits) == 44, "_dpcontext.huffbits offset changed");
+_Static_assert(offsetof(_dpcontext, n_bitmask) == 48, "_dpcontext.n_bitmask offset changed");
+_Static_assert(offsetof(_dpcontext, numseq) == 52, "_dpcontext.numseq offset changed");
+_Static_assert(offsetof(_dpcontext, numparts) == 54, "_dpcontext.numparts offset changed");
+_Static_assert(offsetof(_dpcontext, seqdata) == 56, "_dpcontext.seqdata offset changed");
 #endif
 
 #endif

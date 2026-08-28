@@ -211,9 +211,11 @@ matched scale, icon, random-power, display-name, and model-name tables retain
 their PDB names. The PC field loads the selected `.pwr` through the original
 resource owner and invokes the dispatcher after player processing; the FED
 smoke proves all 55 records enter that live path. All 52 installed files are
-independent real-asset gates. The removed immediate-mode `DrawPowerUp` mesh
-backend remains a declared fidelity gap behind a narrow dependency-free draw
-seam; the PC adapter currently realizes it as a world-space glint.
+independent real-asset gates. Exact `loadPowerupModels`, `FixDrawPowerUp`,
+`jitteryFesteringMatrixCrack`, `DrawPowerUp`, and the packed transform owners
+now load, relocate, color-fix, transform, and submit the authored pickup BMD
+faces. The former world-space glint and duplicate post-scene renderer are
+removed.
 
 Exact `hurtplayer` now connects those leaves to scene death behavior. It
 preserves the object/player gates, death flags, `player_AfterLife`,
@@ -424,9 +426,11 @@ reject invalid transitions through the exact frustum, handle the one-player,
 two-player, focused, Streets/JarJar, uber, and shake modes, and publish the
 resulting gameplay camera. The PC frame uses this owner in place of its former
 parallel authored-camera builder.
-The portable loader seam now persists for the runtime lifetime and owns
-independent scene/model/physics/animation/player records for each active
-supported placement in original pool slots 2..19. Exact matched-executable
+The fully reconstructed loader now owns independent
+scene/model/physics/animation/player records for each active supported
+placement in original pool slots 2..19. The portable runtime publishes
+immutable archives through the canonical loader globals and observes completed
+actors only for rendering and diagnostics. Exact matched-executable
 tables connect all 12 FED actor-table classes: battle-droid, pilot, security,
 protocol-droid, Destroyer, Loader Droid, Droid Starfighter, beacon, door,
 piston, and both lift records. BMD/CAD,
@@ -611,12 +615,13 @@ diagnostic glyph fallback. The dedicated real-font gate renders the exact
 87-point bold score configuration at 960x540.
 
 The same boundary now owns the recovered `allTextEverything` localization
-aggregate rather than test-authored message fragments. Source retains all
-seven retail language blocks and all display slots under the original PDB
-name. Exact `generateAllText`, `UpdateCurrentlyLoadedFont`, and
-`MarkFontAtlasForRefresh` leaves are active during PC runtime startup; only
-UTF-8-to-native-`wchar_t` widening is substituted for portability. A
-whole-corpus hash verifies 68,317 recovered bytes.
+aggregate rather than test-authored message fragments. Source retains the
+exact 2,725-pointer physical layout: 127 shared entries, seven 371-entry
+language tails, the model/level-name aggregate pointers, and the terminal
+empty pointer. Exact `generateAllText`, `UpdateCurrentlyLoadedFont`, and
+`MarkFontAtlasForRefresh` leaves are active during PC runtime startup. Each
+live draw converts the published UTF-8 bytes through exact `ConvertToUTF16`;
+a whole-corpus hash verifies 68,317 recovered bytes.
 
 The title flow now also has its original game-owned state foundation. Exact
 PDB type `MENUVARS`, `menu_mainInitMenu`, title entry, the eight-slot push/pop

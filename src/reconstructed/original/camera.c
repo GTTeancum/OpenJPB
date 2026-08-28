@@ -1,10 +1,10 @@
 /*
- * PARTIAL REVIEWED RECONSTRUCTION of
+ * COMPLETE REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\Work\camera.c.
  *
- * Reviewed bodies cover the Camera state accessors, authored-dolly selection,
- * gameplay-camera placement, transition visibility checks, focused and
- * multiplayer camera modes, and screen-shake update listed below.
+ * All 23 emitted procedures are checked against the matched PDB and executable,
+ * including authored-dolly selection, gameplay-camera placement, transition
+ * visibility checks, focused and multiplayer modes, and screen shake.
  *
  * Provenance:
  *   direct     - names/signatures from the exact PDB; Camera layout from TPI
@@ -23,7 +23,10 @@
  */
 
 #include "jpb/camera.h"
+#include "jpb/boss.h"
+#include "jpb/console.h"
 #include "jpb/cube.h"
+#include "jpb/debugtext.h"
 #include "jpb/flex.h"
 #include "jpb/game.h"
 #include "jpb/intersec.h"
@@ -42,12 +45,11 @@
 
 /*
  * The matched PDB retains the accessor names but not names for their two
- * backing data objects at RVAs 0x547C08 and 0x547C10. These descriptive
- * module-local names therefore remain explicitly inferred.
+ * backing data objects at RVAs 0x547C08 and 0x547C10. The reconstruction gives
+ * those exact objects descriptive module-local aliases.
  */
 static Camera *jpb_current_camera;
 static int32_t jpb_current_camera_type;
-static VECTOR *jpb_focused_destination;
 
 /* Exact file-local camera state at matched-PC RVAs 0x4F1AC4..0x4F1AE3. */
 static char streetsending;
@@ -58,9 +60,6 @@ static int32_t streetsendcamang;
 static int32_t zeroBSSCheck;
 static uint32_t camera_shake_start;
 static JPBCameraSelectionDiagnostics camera_selection_diagnostics;
-
-/* Exact global from boss.c used by camera types 5/6 and level 12. */
-extern _svector gJarJarPos;
 
 static int32_t camera_trunc_double_to_i32(double value)
 {
@@ -124,17 +123,18 @@ static int32_t camera_trunc_divide_power_two(
     return camera_arithmetic_shift_right(value, bits);
 }
 
-static int32_t camera_flexmul(int32_t left, int32_t right)
-{
-    return camera_trunc_divide_power_two(
-        camera_wrap_multiply(left, right), 12);
-}
-
 static int32_t camera_average(int32_t left, int32_t right)
 {
-    int32_t sum = camera_wrap_add(left, right);
+    return camera_trunc_divide_power_two(
+        camera_wrap_add(left, right), 1);
+}
 
-    return sum >= 0 ? sum / 2 : -((-sum) / 2);
+static int32_t camera_scaled_average(int32_t left, int32_t right)
+{
+    return camera_trunc_divide_power_two(
+        camera_wrap_multiply(
+            camera_wrap_add(left, right), 0x800),
+        12);
 }
 
 static int16_t camera_average_movement(int16_t first, float second)
@@ -179,26 +179,10 @@ static int32_t camera_i16_clamped(int32_t value)
     return camera_clamp(value, -0x7fff, 0x8000);
 }
 
-static int camera_ascii_equal(const char *left, const char *right)
-{
-    if (left == NULL || right == NULL) {
-        return 0;
-    }
-    while (*left != '\0' && *right != '\0') {
-        unsigned char a = (unsigned char)*left++;
-        unsigned char b = (unsigned char)*right++;
-
-        if (a >= 'A' && a <= 'Z') a = (unsigned char)(a + ('a' - 'A'));
-        if (b >= 'A' && b <= 'Z') b = (unsigned char)(b + ('a' - 'A'));
-        if (a != b) return 0;
-    }
-    return *left == *right;
-}
-
 static int32_t camera_wrapped_angle_delta(
     int32_t current, int32_t destination)
 {
-    int32_t delta = destination - current;
+    int32_t delta = camera_wrap_subtract(destination, current);
 
     if (delta > 0x800) {
         delta -= 0x1000;
@@ -297,7 +281,7 @@ static void camera_CameraSlide(void)
     if (magnitude < 0x11) {
         step = delta / 2;
     } else {
-        step = camera_flexmul(
+        step = flexmul(
             camera_trunc_divide_power_two(delta, 4), speed);
     }
     gCamera.angle.vx =
@@ -309,42 +293,42 @@ static void camera_CameraSlide(void)
     if (magnitude < 0x11) {
         step = delta / 2;
     } else {
-        step = camera_flexmul(
+        step = flexmul(
             camera_trunc_divide_power_two(delta, 4), speed);
     }
     gCamera.angle.vy =
         camera_wrap_add(gCamera.angle.vy, step) & 0x0fff;
 
     delta = gCamera.angleDest.vz - gCamera.angle.vz;
-    step = camera_flexmul(
+    step = flexmul(
         camera_trunc_divide_power_two(delta, 4), speed);
     gCamera.angle.vz = camera_wrap_add(gCamera.angle.vz, step);
 
     if ((gCamera.viewType & 0x2000) == 0) {
         delta = (int32_t)gCamera.focusDest.vx -
                 (int32_t)gCamera.focus.vx;
-        step = camera_flexmul(
+        step = flexmul(
             camera_trunc_divide_power_two(delta, 4), speed);
         gCamera.focus.vx =
             camera_low_i16((int32_t)gCamera.focus.vx + step);
 
         delta = (int32_t)gCamera.focusDest.vy -
                 (int32_t)gCamera.focus.vy;
-        step = camera_flexmul(
+        step = flexmul(
             camera_trunc_divide_power_two(delta, 4), speed);
         gCamera.focus.vy =
             camera_low_i16((int32_t)gCamera.focus.vy + step);
 
         delta = (int32_t)gCamera.focusDest.vz -
                 (int32_t)gCamera.focus.vz;
-        step = camera_flexmul(
+        step = flexmul(
             camera_trunc_divide_power_two(delta, 4), speed);
         gCamera.focus.vz =
             camera_low_i16((int32_t)gCamera.focus.vz + step);
         return;
     }
 
-    step = camera_flexmul(0x20, speed);
+    step = flexmul(0x20, speed);
     {
         int16_t short_step = camera_low_i16(step);
         int32_t focus_delta =
@@ -539,6 +523,8 @@ int camera_SetCameraPos(int camera_type)
     playerObject *selected1;
     physicsObject *physics0;
     physicsObject *physics1;
+    VECTOR *player0_position;
+    VECTOR *player1_position;
     VECTOR *position0;
     VECTOR *position1;
     VECTOR old_location;
@@ -548,6 +534,7 @@ int camera_SetCameraPos(int camera_type)
     int candidate_camera;
     int changed_camera = 0;
     int camera_accepted = 1;
+    int height_position_y;
     int selected0_active;
     int selected1_active;
 
@@ -556,12 +543,12 @@ int camera_SetCameraPos(int camera_type)
 
     player0 = gpWorld->player0;
     player1 = gpWorld->player1;
-    position0 = physics_gGetPosition(&player0->playerRoot);
-    position1 = physics_gGetPosition(&player1->playerRoot);
+    player0_position = physics_gGetPosition(&player0->playerRoot);
+    player1_position = physics_gGetPosition(&player1->playerRoot);
     selected0 = camera_type == 2 ? player1 : player0;
     selected1 = camera_type == 1 ? player0 : player1;
-    position0 = physics_gGetPosition(&selected0->playerRoot);
-    position1 = physics_gGetPosition(&selected1->playerRoot);
+    position0 = camera_type == 2 ? player1_position : player0_position;
+    position1 = camera_type == 1 ? player0_position : player1_position;
     physics0 = camera_player_physics(selected0);
     physics1 = camera_player_physics(selected1);
     selected0_active = camera_player_active(selected0);
@@ -587,9 +574,9 @@ int camera_SetCameraPos(int camera_type)
         target.vy = camera_trunc_divide_power_two(vertical_sum, 2);
         target.vz = camera_average(position0->vz, position1->vz);
     } else {
-        target.vx = camera_average(position0->vx, position1->vx);
-        target.vy = camera_average(position0->vy, position1->vy);
-        target.vz = camera_average(position0->vz, position1->vz);
+        target.vx = camera_scaled_average(position0->vx, position1->vx);
+        target.vy = camera_scaled_average(position0->vy, position1->vy);
+        target.vz = camera_scaled_average(position0->vz, position1->vz);
         if (camera_type == 5) {
             if (selected0_active) {
                 gpWorld->location.vx = (int32_t)physics0->pos.vx;
@@ -607,14 +594,15 @@ int camera_SetCameraPos(int camera_type)
         }
     }
     target.pad = 0;
-    if ((int)(int8_t)LevelSelect == 12) {
-        target.vx = gJarJarPos.vx;
-        target.vy = gJarJarPos.vy;
-        target.vz = gJarJarPos.vz;
-    }
 
     high_point = target;
-    high_point.vy += 0x100;
+    if ((int)(int8_t)LevelSelect == 12) {
+        high_point.vx = gJarJarPos.vx;
+        high_point.vy = gJarJarPos.vy;
+        high_point.vz = gJarJarPos.vz;
+    }
+    height_position_y = high_point.vy;
+    high_point.vy = camera_wrap_add(high_point.vy, 0x100);
     memset(&height_stuff, 0, sizeof(height_stuff));
     {
         int ground = intersec_FindWalkHeight(
@@ -623,7 +611,8 @@ int camera_SetCameraPos(int camera_type)
             (objectRoot *)(void *)&height_stuff,
             1);
 
-        if (height_stuff.cube == NULL || target.vy - ground >= 0x40) {
+        if (height_stuff.cube == NULL ||
+            camera_wrap_subtract(height_position_y, ground) >= 0x40) {
             candidate_camera = gpWorld->currentDolly;
         } else {
             const uint8_t *camera_record =
@@ -677,9 +666,9 @@ int camera_SetCameraPos(int camera_type)
         camera_selection_diagnostics.player1Active =
             camera_player_active(player1);
 
+        (void)debug_printf(
+            "NEWCAMERAFLAG = %d\n", newcameraflag);
         newcameraflag = 0;
-        memset(&test_camera, 0, sizeof(test_camera));
-        memset(&local_environment, 0, sizeof(local_environment));
         test_camera.viewType = JPB_CAMERA_VIEW_ABSOLUTE_FOCUS;
         PushMatrix();
         (void)camera_StuffCamera(
@@ -704,12 +693,12 @@ int camera_SetCameraPos(int camera_type)
             90.0f,
             320.0f,
             180.0f);
-        if (camera_type == 0) {
+        if (jpb_current_camera_type == 0) {
             height = (int32_t)(
                 (physics0->validairground +
                  physics1->validairground) *
                 0.5f);
-        } else if (camera_type == 2) {
+        } else if (jpb_current_camera_type == 2) {
             height = (int32_t)physics1->validairground;
         } else {
             height = (int32_t)physics0->validairground;
@@ -724,6 +713,7 @@ int camera_SetCameraPos(int camera_type)
                     distances0);
             offscreen =
                 camera_selection_diagnostics.player0Clip & box_mask & 0x0f;
+            (void)debug_printf("0: %04x\n", offscreen);
         }
         if (camera_player_active(player1)) {
             camera_selection_diagnostics.player1Clip =
@@ -759,8 +749,12 @@ int camera_SetCameraPos(int camera_type)
                distances0, sizeof(distances0));
         memcpy(camera_selection_diagnostics.distances1,
                distances1, sizeof(distances1));
-        camera_selection_diagnostics.testFocus = test_camera.focus;
-        camera_selection_diagnostics.testAngle = test_camera.angle;
+        camera_selection_diagnostics.testFocus.vx = test_camera.focus.vx;
+        camera_selection_diagnostics.testFocus.vy = test_camera.focus.vy;
+        camera_selection_diagnostics.testFocus.vz = test_camera.focus.vz;
+        camera_selection_diagnostics.testAngle.vx = test_camera.angle.vx;
+        camera_selection_diagnostics.testAngle.vy = test_camera.angle.vy;
+        camera_selection_diagnostics.testAngle.vz = test_camera.angle.vz;
         if (camera_accepted) {
             gpWorld->currentDolly =
                 camera_low_i16(candidate_camera);
@@ -811,40 +805,51 @@ void camera_SetCameras(void)
                 &gpWorld->player1->playerRoot);
             int32_t delta_x = position0->vx - position1->vx;
             int32_t delta_z = position0->vz - position1->vz;
+            int32_t arc_tangent;
             int32_t destination_yaw;
             int32_t delta;
 
             if (delta_x == 0) delta_x = 1;
-            destination_yaw =
-                (ratan2(delta_z, delta_x) - 0x400) & 0x0fff;
-            gCamera.focusDest.vx =
-                camera_low_i16(position0->vx);
-            gCamera.focusDest.vy =
-                camera_low_i16(position0->vy + 0x100);
-            gCamera.focusDest.vz =
-                camera_low_i16(position0->vz);
-            delta = camera_wrapped_angle_delta(
-                destination_yaw, gCamera.angle.vy);
-            if ((delta < 0 ? -delta : delta) > 0x400) {
+            arc_tangent = ratan2(delta_z, delta_x);
+            if (arc_tangent != INT32_MIN) {
                 destination_yaw =
-                    (destination_yaw - 0x800) & 0x0fff;
-            }
-            gCamera.angleDest.vx = -0x1e2;
-            gCamera.angleDest.vy = destination_yaw;
-            gCamera.angleDest.vz = 0x200;
-            if ((gCamera.viewType & UINT32_C(0x100)) == 0) {
-                gCamera.angle = gCamera.angleDest;
-                gCamera.focus = gCamera.focusDest;
+                    (arc_tangent - 0x400) & 0x0fff;
+                (void)SquareRoot0(camera_wrap_add(
+                    camera_wrap_multiply(delta_z, delta_z),
+                    camera_wrap_multiply(delta_x, delta_x)));
+                gCamera.focusDest.vx =
+                    camera_low_i16(position0->vx);
+                gCamera.focusDest.vy =
+                    camera_low_i16(position0->vy + 0x100);
+                gCamera.focusDest.vz =
+                    camera_low_i16(position0->vz);
+                delta = camera_wrapped_angle_delta(
+                    destination_yaw, gCamera.angle.vy);
+                if ((delta < 0 ? -delta : delta) > 0x400) {
+                    destination_yaw =
+                        (destination_yaw - 0x800) & 0x0fff;
+                }
+                gCamera.angleDest.vx = -0x1e2;
+                gCamera.angleDest.vy = destination_yaw;
+                gCamera.angleDest.vz = 0x200;
+                if ((gCamera.viewType & UINT32_C(0x100)) == 0) {
+                    gCamera.angle.vx = gCamera.angleDest.vx;
+                    gCamera.angle.vy = gCamera.angleDest.vy;
+                    gCamera.angle.vz = gCamera.angleDest.vz;
+                    gCamera.focus.vx = gCamera.focusDest.vx;
+                    gCamera.focus.vy = gCamera.focusDest.vy;
+                    gCamera.focus.vz = gCamera.focusDest.vz;
+                }
             }
         }
         break;
     case 4:
         if (gCamera.cameraTimer < gGlobalTimer) {
             gCamera.userData = 0;
-            jpb_focused_destination = NULL;
         }
         if (gCamera.userData != 0) {
-            const VECTOR *destination = jpb_focused_destination;
+            const VECTOR *destination =
+                (const VECTOR *)(uintptr_t)gCamera.userData;
 
             gCamera.focusDest.vx =
                 camera_low_i16(destination->vx);
@@ -854,8 +859,12 @@ void camera_SetCameras(void)
                 camera_low_i16(destination->vz);
             gCamera.angleDest.vz = 0x200;
             if ((gCamera.viewType & UINT32_C(0x100)) == 0) {
-                gCamera.angle = gCamera.angleDest;
-                gCamera.focus = gCamera.focusDest;
+                gCamera.angle.vx = gCamera.angleDest.vx;
+                gCamera.angle.vy = gCamera.angleDest.vy;
+                gCamera.angle.vz = gCamera.angleDest.vz;
+                gCamera.focus.vx = gCamera.focusDest.vx;
+                gCamera.focus.vy = gCamera.focusDest.vy;
+                gCamera.focus.vz = gCamera.focusDest.vz;
             }
             break;
         }
@@ -897,8 +906,7 @@ void camera_SetFocusedCameraFocus(
     gCamera.cameraTimer =
         gGlobalTimer + (uint32_t)(time * 0x200);
     jpb_current_camera_type = camera_type;
-    gCamera.userData = (uint32_t)(uintptr_t)destination;
-    jpb_focused_destination = destination;
+    gCamera.userData = (uint32_t)(uintptr_t)&destination;
 }
 
 /* 0x24940, 17 bytes, global, 1 named locals
@@ -1027,10 +1035,10 @@ static int camera_StuffCamera(
         leading != 0 && gGlobalFrameRate != 0 && level != 12) {
         _svector movement;
         int32_t speed;
-        int32_t lead_speed = camera_flexmul(0x24a, gGlobalFrameRate);
-        int32_t lead_slowdown = camera_flexmul(0x100, gGlobalFrameRate);
+        int32_t lead_speed = flexmul(0x24a, gGlobalFrameRate);
+        int32_t lead_slowdown = flexmul(0x100, gGlobalFrameRate);
         int32_t decay =
-            0x1000 - camera_flexmul(0x18c, gGlobalFrameRate);
+            0x1000 - flexmul(0x18c, gGlobalFrameRate);
 
         if (cameralead > 0) {
             lead_speed += camera_trunc_divide_power_two(cameralead, 4);
@@ -1055,18 +1063,19 @@ static int camera_StuffCamera(
             if (speed != 0) {
                 lead.vx = camera_low_i16(
                     (int32_t)lead.vx +
-                    flexmul12(movement.vx, scale));
+                    flexmul(movement.vx, scale));
                 lead.vz = camera_low_i16(
                     (int32_t)lead.vz +
-                    camera_flexmul(movement.vz, scale));
+                    flexmul(movement.vz, scale));
             }
         }
         lead.vy = 0;
-        lead.vx = camera_low_i16(camera_flexmul(lead.vx, decay));
-        lead.vz = camera_low_i16(camera_flexmul(lead.vz, decay));
+        lead.vx = camera_low_i16(flexmul(lead.vx, decay));
+        lead.vz = camera_low_i16(flexmul(lead.vz, decay));
     }
 
     if ((flags & UINT32_C(0x400)) != 0) {
+        (void)debug_printf("\ncutscene on!!!!!!!\n");
         focus_x = dolly->offset.vx + dolly->slackx;
         focus_y = dolly->offset.vy + dolly->offx;
         focus_z = dolly->offset.vz + dolly->slackz;
@@ -1076,17 +1085,21 @@ static int camera_StuffCamera(
 
         pitch = 0x200;
         yaw = 0x400;
-        focus_y = streetcampos.vy +
+        (void)debug_printf("Y = %d\n", streetcampos.vy);
+        focus_y = position->vy +
             (GameStruct.NumPlayers == 2 ? 0x4e8 : 0x4d0);
-        if (camera_player_active(player0)) {
+        if (obj_gCheckObjectFlag(
+                &player0->playerRoot, 0, UINT32_C(0x20)) == 0 &&
+            (float)maximum_x < physics->pos.vx) {
             maximum_x = (int32_t)physics->pos.vx;
         }
-        if (camera_player_active(player1) &&
-            (int32_t)physics2->pos.vx > maximum_x) {
+        if (obj_gCheckObjectFlag(
+                &player1->playerRoot, 0, UINT32_C(0x20)) == 0 &&
+            (float)maximum_x < physics2->pos.vx) {
             maximum_x = (int32_t)physics2->pos.vx;
         }
         focus_x = camera_wrap_add(maximum_x, 0x29c);
-        focus_z = streetcampos.vz;
+        focus_z = position->vz;
 
         if (zeroBSSCheck != zerobss_levelReset) {
             zeroBSSCheck = zerobss_levelReset;
@@ -1100,18 +1113,19 @@ static int camera_StuffCamera(
                 streetsending = 1;
                 streetsendcampos = focus_x;
                 streetsendcamang =
-                    0x200 - camera_flexmul(8, gGlobalFrameRate);
+                    0x200 - flexmul(8, gGlobalFrameRate);
             } else {
                 if (streetsendcamang > 0x140) {
                     streetsendcamang -=
-                        camera_flexmul(4, gGlobalFrameRate);
+                        flexmul(4, gGlobalFrameRate);
                 }
                 streetsendcampos -=
-                    camera_flexmul(0x24, gGlobalFrameRate);
+                    flexmul(0x24, gGlobalFrameRate);
                 focus_x = streetsendcampos;
                 pitch = streetsendcamang;
             }
         }
+        (void)debug_printf("STREET Y CAM = %d\n", focus_y);
         focus_z = camera_low_i16(
             ((((camera_low_i16(
                     (int32_t)((uint32_t)(focus_z + 0x7f80) >> 8)) +
@@ -1237,9 +1251,8 @@ static int camera_StuffCamera(
     }
 
     if (level == 25) {
-        int32_t average_x = camera_average(
-            (int32_t)maPhysicsData[0].pos.vx,
-            (int32_t)maPhysicsData[1].pos.vx);
+        int32_t average_x = (int32_t)(
+            (physics->pos.vx + physics2->pos.vx) * 0.5f);
         int32_t range = physics_gGetRange(
             &player0->playerRoot, &player1->playerRoot);
 
@@ -1254,6 +1267,7 @@ static int camera_StuffCamera(
         (((flags & UINT32_C(4)) != 0) && changed_camera != 0) ||
         (camera->viewType & UINT32_C(0x1000)) == 0 ||
         level == 12) {
+        (void)debug_printf("CHANGEDCAM = %d\n", changed_camera);
         camera->angle.vx = pitch;
         camera->angle.vy = yaw;
         camera->angle.vz = 0;
@@ -1268,16 +1282,16 @@ static int camera_StuffCamera(
         camera->focusDest.vz = camera->focus.vz;
         camera->viewType |= UINT32_C(0x1000);
     } else {
-        camera->angleDest.vx = pitch;
-        camera->angleDest.vy = yaw;
-        camera->angleDest.vz = 0;
-        camera->focusDest.vx = camera_low_i16(focus_x);
-        camera->focusDest.vy = camera_low_i16(focus_y);
-        camera->focusDest.vz = camera_low_i16(focus_z);
+        gCamera.angleDest.vx = pitch;
+        gCamera.angleDest.vy = yaw;
+        gCamera.angleDest.vz = 0;
+        gCamera.focusDest.vx = camera_low_i16(focus_x);
+        gCamera.focusDest.vy = camera_low_i16(focus_y);
+        gCamera.focusDest.vz = camera_low_i16(focus_z);
     }
 
     {
-        VECTOR view = {0, 0, 0, 0};
+        VECTOR view;
 
         camera_GetLocation(&view);
         cameraLocation.vx = camera_low_i16(view.vx);
@@ -1314,21 +1328,23 @@ int console_CamerasCommand(
 {
     (void)float_arguments;
 
-    if (argument_count == 2 &&
-        string_arguments != NULL &&
-        integer_arguments != NULL) {
-        if (camera_ascii_equal(string_arguments[0], "shake")) {
-            camera_SetShake(integer_arguments[1]);
+    if (argument_count == 2) {
+        if (_stricmp(string_arguments[0], "shake") == 0) {
+            screenshakeamplitude = integer_arguments[1];
+            screenshake = 0x100;
             return 0;
         }
-        if (camera_ascii_equal(string_arguments[0], "set") &&
-            gpWorld != NULL) {
+        if (_stricmp(string_arguments[0], "set") == 0) {
             gpWorld->overRideDolly =
                 camera_low_i16(integer_arguments[1]);
             return 0;
         }
     }
-    /* The original tail only presents usage text through console_Printf. */
+    (void)console_Printf("cameras\n");
+    (void)console_Printf(
+        "\tshake amp - shake the screen, amplitude\n");
+    (void)console_Printf(
+        "\tset n     - force camera(0=normal)\n");
     return 0;
 }
 double lerp(double x, double y, double amount)

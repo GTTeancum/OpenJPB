@@ -7,20 +7,23 @@
 extern "C" {
 #endif
 
-enum { JPB_SOUND_BANK_TABLE_COUNT = 43 };
+enum {
+    AUDIO_SFX_BANK_COUNT = 43,
+    AUDIO_SFX_BANK_NAME_CAPACITY = 62
+};
 
-typedef struct JPBSoundBankData {
-    const char *directory;
-    const char *const *paths;
-    int count;
-} JPBSoundBankData;
+/* Exact matched-PC PDB type: 80-byte tAudioSFX_Bank. */
+typedef struct tAudioSFX_Bank {
+    char bankName[AUDIO_SFX_BANK_NAME_CAPACITY];
+    char **ptrSFXNames;
+    int numSFXs;
+} tAudioSFX_Bank;
 
-extern const JPBSoundBankData
-    jpb_soundBankTable[JPB_SOUND_BANK_TABLE_COUNT];
+extern tAudioSFX_Bank
+    audioSFX_aSFXBanks[AUDIO_SFX_BANK_COUNT];
 
 #ifdef __cplusplus
 }
 #endif
 
 #endif
-

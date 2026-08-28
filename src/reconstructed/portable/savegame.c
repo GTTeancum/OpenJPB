@@ -13,23 +13,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-void deserializeGameStruct(const void *data)
-{
-    if (data != NULL) {
-        memcpy(&SaveGameStruct, data, sizeof(SaveGameStruct));
-    }
-}
-
-void *serializeGameStruct(void)
-{
-    void *data = malloc(sizeof(SaveGameStruct));
-
-    if (data != NULL) {
-        memcpy(data, &SaveGameStruct, sizeof(SaveGameStruct));
-    }
-    return data;
-}
-
 static JPBSaveResult jpb_save_write_payload(
     const char *path, const void *data, size_t size)
 {

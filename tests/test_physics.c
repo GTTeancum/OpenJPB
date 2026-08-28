@@ -2,6 +2,7 @@
 #include "jpb/bmd.h"
 #include "jpb/camera.h"
 #include "jpb/collision.h"
+#include "jpb/console.h"
 #include "jpb/cube.h"
 #include "jpb/effects.h"
 #include "jpb/flex.h"
@@ -46,62 +47,65 @@ static int32_t pack_solid_vector(int x, int y, int z)
     return (int32_t)packed;
 }
 
-typedef struct GeometryResolverFixture {
-    const geomData *geometry;
-    int pointerType;
-    void *stream;
-    int callCount;
-} GeometryResolverFixture;
-
-static void *test_geometry_stream_resolver(
-    const geomData *geometry,
-    int pointer_type,
-    void *user_data)
+static int test_debug_player_model_owner(void)
 {
-    GeometryResolverFixture *fixture =
-        (GeometryResolverFixture *)user_data;
+    physicsObject physics;
+    sceneObject scene;
+    modelObject model;
+    Mnode node;
+    int32_t old_scene_ready = gSCENE_READY;
+    uint8_t old_ai_debug = OptionStruct.AIDebug;
 
-    ++fixture->callCount;
-    if (geometry == fixture->geometry &&
-        pointer_type == fixture->pointerType) {
-        return fixture->stream;
-    }
-    return NULL;
+    memset(&physics, 0, sizeof(physics));
+    memset(&scene, 0, sizeof(scene));
+    memset(&model, 0, sizeof(model));
+    memset(&node, 0, sizeof(node));
+    physics.physicsRoot.pParent = &scene.sceneRoot;
+    scene.pModel = &model.modelRoot;
+    model.modelRoot.objectID = 19;
+    node.id = (modelNodeId)(NODE_DYNAMIC | 8);
+    coll_gRegisterNode(model.modelRoot.objectID, &node);
+
+    gSCENE_READY = 1;
+    OptionStruct.AIDebug = 1;
+    DebugPlayer(&physics);
+    gSCENE_READY = old_scene_ready;
+    OptionStruct.AIDebug = old_ai_debug;
+    return 0;
 }
 
-static int test_geometry_stream_resolution(void)
+static int test_mesh_console_commands(void)
 {
-    geomData geometry;
-    GeometryResolverFixture fixture;
-    uint32_t registered_vertex = UINT32_C(0x12345678);
-    uint32_t owned_normal = UINT32_C(0x87654321);
+    char hide_argument[] = "4";
+    char show_argument[] = "5";
+    char question_argument[] = "?";
+    char *hide_arguments[] = {hide_argument};
+    char *show_arguments[] = {show_argument};
+    char *question_arguments[] = {question_argument};
+    int integer_arguments[] = {4};
+    int row;
 
-    memset(&geometry, 0, sizeof(geometry));
-    memset(&fixture, 0, sizeof(fixture));
-    pointerRegistry_Reset();
-    geometry.pVertex = addPtr(
-        &registered_vertex, JPB_POINTER_ARRAY_VERTEX);
-    CHECK(geometry.pVertex >= 0);
-    CHECK(jpb_PhysicsResolveGeometryStream(
-              &geometry, JPB_POINTER_ARRAY_VERTEX) ==
-          &registered_vertex);
+    cullmesh[4] = 1;
+    CHECK(console_HideMeshCommand(
+              1, hide_arguments, integer_arguments, NULL) == 4);
+    CHECK(cullmesh[4] == 0);
+    integer_arguments[0] = 5;
+    cullmesh[5] = 0;
+    CHECK(console_ShowMeshCommand(
+              1, show_arguments, integer_arguments, NULL) == 5);
+    CHECK(cullmesh[5] == 1);
 
-    fixture.geometry = &geometry;
-    fixture.pointerType = JPB_POINTER_ARRAY_NORMAL;
-    fixture.stream = &owned_normal;
-    jpb_PhysicsSetGeometryStreamResolver(
-        test_geometry_stream_resolver, &fixture);
-    CHECK(jpb_PhysicsResolveGeometryStream(
-              &geometry, JPB_POINTER_ARRAY_NORMAL) ==
-          &owned_normal);
-    CHECK(jpb_PhysicsResolveGeometryStream(
-              &geometry, JPB_POINTER_ARRAY_VERTEX) ==
-          &registered_vertex);
-    CHECK(fixture.callCount == 2);
-    CHECK(jpb_PhysicsResolveGeometryStream(
-              &geometry, JPB_POINTER_ARRAY_ENEMY) == NULL);
-    jpb_PhysicsSetGeometryStreamResolver(NULL, NULL);
-    pointerRegistry_Reset();
+    row = jpb_ConsoleBufferRow();
+    (void)console_HideMeshCommand(
+        1, question_arguments, integer_arguments, NULL);
+    CHECK(strcmp(
+              jpb_ConsoleBufferLine((size_t)(uint8_t)(row + 1)),
+              "usage: hidemesh [n|all]") == 0);
+    row = jpb_ConsoleBufferRow();
+    (void)console_ShowMeshCommand(0, NULL, integer_arguments, NULL);
+    CHECK(strcmp(
+              jpb_ConsoleBufferLine((size_t)(uint8_t)(row + 1)),
+              "usage: showmesh [n|all]") == 0);
     return 0;
 }
 
@@ -191,7 +195,7 @@ static int test_update_scene_object(void)
     int expected_facing;
 
     CHECK(jpb_PhysicsUpdateSceneObject(NULL) ==
-          JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT);
+          JPB_PHYSICS_RESULT_INVALID_ARGUMENT);
     physics_gInitObjects(0);
     jpb_SceneInitPool(0);
     memset(gaPlayerData, 0, sizeof(gaPlayerData));
@@ -237,7 +241,7 @@ static int test_update_scene_object(void)
     expected_facing = ratan2(100, -100) & 0x0fff;
 
     CHECK(jpb_PhysicsUpdateSceneObject(physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(physics->angle.vy == expected_facing);
     CHECK(physics->vpos.vx == 12);
     CHECK(physics->vpos.vy == 100);
@@ -260,7 +264,7 @@ static int test_update_scene_object(void)
     physics->validairground = 55.0f;
 
     CHECK(jpb_PhysicsUpdateSceneObject(physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(scene->v3WorldAngle.vx == 101);
     CHECK(scene->v3WorldAngle.vy == 202);
     CHECK(scene->v3WorldAngle.vz == 303);
@@ -268,7 +272,7 @@ static int test_update_scene_object(void)
 
     physics->physicsRoot.pParent = NULL;
     CHECK(jpb_PhysicsUpdateSceneObject(physics) ==
-          JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT);
+          JPB_PHYSICS_RESULT_INVALID_ARGUMENT);
     return 0;
 }
 
@@ -332,9 +336,9 @@ static int test_driver_state_sync(void)
     physics_gInitObjects(0);
     memset(gaPlayerData, 0, sizeof(gaPlayerData));
     CHECK(jpb_PhysicsSyncDriverState(-1) ==
-          JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT);
+          JPB_PHYSICS_RESULT_INVALID_ARGUMENT);
     CHECK(jpb_PhysicsSyncDriverState(2) ==
-          JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT);
+          JPB_PHYSICS_RESULT_INVALID_ARGUMENT);
 
     player = &gaPlayerData[0];
     driver = &maPhysicsData[0];
@@ -355,7 +359,7 @@ static int test_driver_state_sync(void)
     driven->mapinfo.poly = &poly;
 
     CHECK(jpb_PhysicsSyncDriverState(0) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(driver->pos.vx == 10.0f);
     CHECK(driver->pos.vy == 20.0f);
     CHECK(driver->pos.vz == 30.0f);
@@ -373,7 +377,7 @@ static int test_driver_state_sync(void)
     driver->pos.vx = -1.0f;
     driven->pos.vx = 99.0f;
     CHECK(jpb_PhysicsSyncDriverState(0) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(driver->pos.vx == -1.0f);
     return 0;
 }
@@ -994,17 +998,17 @@ static int test_normal_movement_and_no_contact_commit(void)
     physics.constmov.vz = 100.0f;
     physics.accel.vz = 10.0f;
     CHECK(jpb_PhysicsCalcMovementNormal(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(physics.constmov.vz == 90.0f);
     CHECK(physics.currentmov.vz == 90.0f);
     CHECK(physics.mov.vx == 0.0f);
     CHECK(physics.mov.vz == 45.0f);
     CHECK((physics.flags & 0x00004800u) == 0x00004800u);
     CHECK(jpb_PhysicsCalcMovementNormal(&physics) ==
-          JPB_PHYSICS_PARTIAL_ALREADY_PROCESSED);
+          JPB_PHYSICS_RESULT_ALREADY_PROCESSED);
 
     CHECK(jpb_PhysicsMoveNoContact(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(physics.pos.vz == 45.0f);
     CHECK((physics.flags & 0x00001800u) == 0);
 
@@ -1013,7 +1017,7 @@ static int test_normal_movement_and_no_contact_commit(void)
     physics.accel.vz = 0.0f;
     physics.angle.vy = 1024;
     CHECK(jpb_PhysicsCalcMovementNormal(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(fabsf(physics.mov.vx - 50.0f) < 0.001f);
     CHECK(fabsf(physics.mov.vz) < 0.001f);
 
@@ -1027,7 +1031,7 @@ static int test_normal_movement_and_no_contact_commit(void)
     physics.airmov.vz = 4.0f;
     player.pFlags = 1;
     CHECK(jpb_PhysicsCalcMovementNormal(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(physics.mov.vx == 1.0f);
     CHECK(physics.mov.vy == 1.5f);
     CHECK(physics.mov.vz == 2.0f);
@@ -1037,7 +1041,7 @@ static int test_normal_movement_and_no_contact_commit(void)
     memset(&solid, 0, sizeof(solid));
     physics.solid = &solid;
     CHECK(jpb_PhysicsCalcMovementNormal(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK((physics.flags & 0x00004000u) != 0);
     return 0;
 }
@@ -1057,7 +1061,7 @@ static int test_move_player_direct_and_special_paths(void)
     int mode;
 
     CHECK(jpb_PhysicsMovePlayer(NULL) ==
-          JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT);
+          JPB_PHYSICS_RESULT_INVALID_ARGUMENT);
     for (mode = MOVE_FLY; mode <= MOVE_COREDEATH; mode += 2) {
         memset(&physics, 0, sizeof(physics));
         physics.movemode = (MOVE_MODE)mode;
@@ -1070,7 +1074,7 @@ static int test_move_player_direct_and_special_paths(void)
         physics.flags = UINT32_C(0x00011800);
 
         CHECK(jpb_PhysicsMovePlayer(&physics) ==
-              JPB_PHYSICS_PARTIAL_OK);
+              JPB_PHYSICS_RESULT_OK);
         CHECK(physics.pos.vx == 11.0f);
         CHECK(physics.pos.vy == 18.0f);
         CHECK(physics.pos.vz == 33.0f);
@@ -1102,7 +1106,7 @@ static int test_move_player_direct_and_special_paths(void)
     physics.flags = UINT32_C(0x00011800);
 
     CHECK(jpb_PhysicsMovePlayer(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(physics.pos.vx == 11.0f);
     CHECK(physics.pos.vy == 22.0f);
     CHECK(physics.pos.vz == 33.0f);
@@ -1123,7 +1127,7 @@ static int test_move_player_direct_and_special_paths(void)
     player.groundDelay = UINT32_C(0xffffffff);
 
     CHECK(jpb_PhysicsMovePlayer(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(physics.pos.vx == 11.0f);
     CHECK(physics.pos.vy == 22.0f);
     CHECK(physics.pos.vz == 33.0f);
@@ -1140,7 +1144,7 @@ static int test_move_player_direct_and_special_paths(void)
     player.pFlags = UINT32_C(0x40000008);
 
     CHECK(jpb_PhysicsMovePlayer(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(player.pFlags == UINT32_C(0x40000000));
 
     connect_complete_actor(
@@ -1154,7 +1158,7 @@ static int test_move_player_direct_and_special_paths(void)
     player.pFlags = UINT32_C(0x04000008);
 
     CHECK(jpb_PhysicsMovePlayer(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(physics.pos.vx == 100.0f);
     CHECK(physics.pos.vy == 200.0f);
     CHECK(physics.pos.vz == 304.0f);
@@ -1208,7 +1212,7 @@ static int test_normal_movement_surface_forces(void)
     fGlobalFrameRate = 0.5f;
 
     CHECK(jpb_PhysicsCalcMovementNormal(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(fabsf(physics.mov.vx - 1.0f) < 0.00001f);
     CHECK(fabsf(physics.mov.vy - 3.0f) < 0.00001f);
     CHECK(fabsf(physics.mov.vz - 4.0f) < 0.00001f);
@@ -1228,7 +1232,7 @@ static int test_normal_movement_surface_forces(void)
     LevelSelect = 1;
 
     CHECK(jpb_PhysicsCalcMovementNormal(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(fabsf(physics.mov.vx + 9.0f) < 0.00001f);
     CHECK(fabsf(physics.mov.vz - 12.5f) < 0.00001f);
 
@@ -1253,7 +1257,7 @@ static int test_normal_movement_surface_forces(void)
         MAP_FLAG_CONVEYOR_NEG_X;
 
     CHECK(jpb_PhysicsCalcMovementNormal(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(fabsf(physics.mov.vx - 5.0f) < 0.00001f);
     CHECK(physics.mov.vz == 0.0f);
 
@@ -1273,7 +1277,7 @@ static int test_normal_movement_surface_forces(void)
     totalframes = 100 + 0x0f00 + 1;
 
     CHECK(jpb_PhysicsCalcMovementNormal(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(fabsf(physics.mov.vx + 2.0f) < 0.00001f);
     CHECK(fabsf(physics.mov.vy - 3.0f) < 0.00001f);
     CHECK(fabsf(physics.mov.vz + 4.0f) < 0.00001f);
@@ -1289,7 +1293,7 @@ static int test_normal_movement_surface_forces(void)
     LevelSelect = 10;
 
     CHECK(jpb_PhysicsCalcMovementNormal(&physics) ==
-          JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT);
+          JPB_PHYSICS_RESULT_INVALID_ARGUMENT);
     CHECK((physics.flags & UINT32_C(0x00004000)) == 0);
 
     leveldata = old_leveldata;
@@ -1320,8 +1324,7 @@ static int test_blown_movement_state_machine(void)
     FVECTOR old_gravity = globalgravity;
     float old_frame_rate = fGlobalFrameRate;
     char old_level = LevelSelect;
-    JPBPlayerCallback old_callback =
-        jpb_TrajectoryCallbackSlot;
+    JPBPlayerCallback old_callback = funcArray[6];
 
     memset(motions, 0, sizeof(motions));
     memset(map_storage, 0, sizeof(map_storage));
@@ -1344,7 +1347,7 @@ static int test_blown_movement_state_machine(void)
     globalgravity.vz = 0.0f;
 
     CHECK(jpb_PhysicsCalcMovementNormal(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(physics.movemode == MOVE_BLOWN);
     CHECK(physics.userdata[0] == 0x200);
     CHECK(physics.uservector.vx == 40);
@@ -1374,7 +1377,7 @@ static int test_blown_movement_state_machine(void)
     physics.airmov.vy = 2.0f;
     physics.airmov.vz = 3.0f;
     CHECK(jpb_PhysicsCalcMovement(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(physics.movemode == MOVE_BLOWN);
     CHECK(physics.userdata[0] == 0x2a00);
     CHECK(physics.airmov.vx == 1.0f);
@@ -1392,10 +1395,9 @@ static int test_blown_movement_state_machine(void)
     physics.airmov.vy = 3.0f;
     physics.airmov.vz = 4.0f;
     globalgravity.vy = 0.0f;
-    jpb_TrajectoryCallbackSlot =
-        test_trajectory_callback;
+    funcArray[6] = test_trajectory_callback;
     CHECK(jpb_PhysicsCalcMovement(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(physics.movemode == MOVE_NORMAL);
     CHECK(physics.airTime == 0);
     CHECK(physics.realAirTime == 0);
@@ -1410,7 +1412,7 @@ static int test_blown_movement_state_machine(void)
     globalgravity = old_gravity;
     fGlobalFrameRate = old_frame_rate;
     LevelSelect = old_level;
-    jpb_TrajectoryCallbackSlot = old_callback;
+    funcArray[6] = old_callback;
     return 0;
 }
 
@@ -1441,7 +1443,7 @@ static int test_hover_movement_state_machine(void)
     jpb_CubeRuntimeFlags = 0;
 
     CHECK(jpb_PhysicsCalcMovement(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(physics.airmov.vy == 32.0f);
     CHECK(fabsf(physics.mov.vx - 1.5f) < 0.00001f);
     CHECK(fabsf(physics.mov.vy - 17.0f) < 0.00001f);
@@ -1457,7 +1459,7 @@ static int test_hover_movement_state_machine(void)
     fGlobalFrameRate = 1.0f;
 
     CHECK(jpb_PhysicsCalcMovement(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(physics.airmov.vy == 4.0f);
     CHECK(physics.mov.vy == 4.0f);
 
@@ -1470,7 +1472,7 @@ static int test_hover_movement_state_machine(void)
     physics.airmov.vy = -16.0f;
 
     CHECK(jpb_PhysicsCalcMovement(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(physics.airmov.vy == 0.0f);
     CHECK(physics.mov.vy == 0.0f);
 
@@ -1484,7 +1486,7 @@ static int test_hover_movement_state_machine(void)
     jpb_CubeRuntimeFlags = 0;
 
     CHECK(jpb_PhysicsCalcMovement(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(physics.airmov.vy == -32.0f);
     CHECK(physics.mov.vy == -32.0f);
 
@@ -1498,7 +1500,7 @@ static int test_hover_movement_state_machine(void)
     jpb_CubeRuntimeFlags = UINT32_C(0x00000008);
 
     CHECK(jpb_PhysicsCalcMovement(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(physics.airmov.vy == -64.0f);
     CHECK(physics.mov.vy == -64.0f);
 
@@ -1513,7 +1515,7 @@ static int test_hover_movement_state_machine(void)
     jpb_CubeRuntimeFlags = 0;
 
     CHECK(jpb_PhysicsCalcMovement(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(fabsf(physics.mov.vx - 0.5f) < 0.00001f);
     CHECK(physics.mov.vy == 0.0f);
     CHECK(fabsf(physics.mov.vz) < 0.00001f);
@@ -1557,7 +1559,7 @@ static int test_flying_movement_state_machine(void)
         fGlobalFrameRate = 0.5f;
 
         CHECK(jpb_PhysicsCalcMovement(&physics) ==
-              JPB_PHYSICS_PARTIAL_OK);
+              JPB_PHYSICS_RESULT_OK);
         CHECK(physics.mov.vx == 0.0f);
         CHECK(physics.mov.vy == 0.0f);
         CHECK(fabsf(physics.mov.vz - 5.0f) < 0.00001f);
@@ -1573,7 +1575,7 @@ static int test_flying_movement_state_machine(void)
     fGlobalFrameRate = 0.5f;
 
     CHECK(jpb_PhysicsCalcMovement(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(physics.mov.vx == 1.0f);
     CHECK(physics.mov.vy == 2.0f);
     CHECK(physics.mov.vz == 3.0f);
@@ -1627,7 +1629,7 @@ static int test_coredeath_movement_state_machine(void)
         test_sound_stop_hook, &stop_capture);
 
     CHECK(jpb_PhysicsCalcMovement(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(physics.movemode == MOVE_COREDEATH);
     CHECK(physics.uservector.vx == 10);
     CHECK(physics.uservector.vz == 20);
@@ -1650,7 +1652,7 @@ static int test_coredeath_movement_state_machine(void)
     afterLife = NULL;
 
     CHECK(jpb_PhysicsCalcMovement(&physics) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(stop_capture.count == 2);
     CHECK(stop_capture.handles[0] == 11);
     CHECK(stop_capture.handles[1] == 22);
@@ -1797,7 +1799,7 @@ static int test_processed_standee_movement(void)
     rider.newlocalpos.vx = 10.0f;
     rider.localfacing.vy = 20.0f;
     CHECK(jpb_PhysicsCalcMovementNormal(&rider) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(rider.angle.vy == 120);
     CHECK(rider.newlocalpos.vx == 15.0f);
     CHECK(rider.mov.vx == 5.0f);
@@ -1810,7 +1812,7 @@ static int test_processed_standee_movement(void)
     platform.constmov.vz = 12.0f;
     platform.accel.vz = 2.0f;
     CHECK(jpb_PhysicsCalcMovementNormal(&rider) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK((rider.flags & 0x00004000u) != 0);
     CHECK((platform.flags & 0x00004000u) != 0);
     CHECK(platform.constmov.vz == 10.0f);
@@ -1879,7 +1881,7 @@ static int test_recursive_standee_cycle_scheduling(void)
     fGlobalFrameRate = 1.0f;
 
     CHECK(jpb_PhysicsCalcMovementNormal(&physics_a) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK((physics_a.flags & UINT32_C(0x00004000)) != 0);
     CHECK((physics_b.flags & UINT32_C(0x00004000)) != 0);
     CHECK(physics_a.constmov.vz == 9.0f);
@@ -1888,14 +1890,14 @@ static int test_recursive_standee_cycle_scheduling(void)
     CHECK(physics_b.mov.vz == 18.0f);
 
     CHECK(jpb_PhysicsCalcMovementNormal(&physics_a) ==
-          JPB_PHYSICS_PARTIAL_ALREADY_PROCESSED);
+          JPB_PHYSICS_RESULT_ALREADY_PROCESSED);
     CHECK(physics_a.constmov.vz == 9.0f);
     CHECK(physics_b.constmov.vz == 18.0f);
 
     jpb_PhysicsBeginObjectFrame(&physics_a);
     jpb_PhysicsBeginObjectFrame(&physics_b);
     CHECK(jpb_PhysicsCalcMovementNormal(&physics_b) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK((physics_a.flags & UINT32_C(0x00004000)) != 0);
     CHECK((physics_b.flags & UINT32_C(0x00004000)) != 0);
     CHECK(physics_a.constmov.vz == 8.0f);
@@ -2434,7 +2436,7 @@ static int test_world_blocking_core(void)
               &endpos,
               &direction,
               9.0f) ==
-          JPB_PHYSICS_PARTIAL_INVALID_ARGUMENT);
+          JPB_PHYSICS_RESULT_INVALID_ARGUMENT);
 
     physics.physicsRoot.objectID = 2;
     physics.mov.vx = 1.0f;
@@ -2637,12 +2639,16 @@ static char *map_sound_name;
 static uint32_t map_sound_flag;
 
 static uint16_t test_map_sound_hook(
+    void *chunk,
+    int loops,
     VECTOR *position,
     int bank,
     char *sound,
     uint32_t flag,
     void *user_data)
 {
+    (void)chunk;
+    (void)loops;
     (void)user_data;
     ++map_sound_calls;
     map_sound_position = *position;
@@ -2774,8 +2780,6 @@ static int test_streets_ending_collision_trigger(void)
     char old_level = LevelSelect;
     gamestruct old_game = GameStruct;
     uint32_t old_cube_flags = jpb_CubeRuntimeFlags;
-    uint8_t old_short_timeout =
-        jpb_StreetsEndingShortCollisionTimeout;
     int32_t old_stapbikeindex[2] = {
         stapbikeindex[0], stapbikeindex[1]
     };
@@ -2826,7 +2830,7 @@ static int test_streets_ending_collision_trigger(void)
     memset(&GameStruct, 0, sizeof(GameStruct));
     GameStruct.NumPlayers = 1;
     jpb_CubeRuntimeFlags = 0;
-    jpb_StreetsEndingShortCollisionTimeout = 0;
+    GameStruct.difficulty = 0;
     stapbikeindex[0] = 1;
     stapbikeindex[1] = 0;
     stapsound = 77;
@@ -2844,6 +2848,7 @@ static int test_streets_ending_collision_trigger(void)
     bestinfo.facenormal.vx = 0.9f;
     jpb_PhysicsSetStreetsEndingCountdown(0);
     reset_map_effect_observations();
+    CHECK(sound_LoadBank("resident", 0) == 0);
     jpb_SoundSetPlaySfxHook(test_map_sound_hook, NULL);
     jpb_SoundSetStopHook(
         test_sound_stop_hook, &stop_capture);
@@ -2851,7 +2856,7 @@ static int test_streets_ending_collision_trigger(void)
     CHECK(jpb_PhysicsTryStartStreetsEnding(
               physics0, 1) == 0);
     CHECK(jpb_PhysicsGetStreetsEndingCountdown() == 0);
-    jpb_StreetsEndingShortCollisionTimeout = 1;
+    GameStruct.difficulty = 1;
     CHECK(jpb_PhysicsTryStartStreetsEnding(
               physics0, 1) == 1);
     CHECK(jpb_PhysicsGetStreetsEndingCountdown() == 0x13800);
@@ -2876,13 +2881,12 @@ static int test_streets_ending_collision_trigger(void)
               physics0, 1) == 0);
 
     jpb_SoundSetPlaySfxHook(NULL, NULL);
+    sound_FreeBank(0);
     jpb_SoundSetStopHook(NULL, NULL);
     paEffects[18] = old_effect;
     stapsound = old_stapsound;
     stapbikeindex[0] = old_stapbikeindex[0];
     stapbikeindex[1] = old_stapbikeindex[1];
-    jpb_StreetsEndingShortCollisionTimeout =
-        old_short_timeout;
     jpb_CubeRuntimeFlags = old_cube_flags;
     GameStruct = old_game;
     totalframes = old_totalframes;
@@ -2930,6 +2934,7 @@ static int test_launch_splash(void)
     meminit();
     sprite_gInitSprites();
     reset_map_effect_observations();
+    CHECK(sound_LoadBank("ruins", 3) == 0);
     jpb_SoundSetPlaySfxHook(test_map_sound_hook, NULL);
 
     jpb_PhysicsLaunchSplash(&physics);
@@ -2937,9 +2942,9 @@ static int test_launch_splash(void)
     CHECK(mSCBDraw[0].head != NULL);
     scb = (SCB *)mSCBDraw[0].head;
     CHECK(scb->scb_Texture == &material);
-    CHECK(scb->scb_vertex0.vx == 32764.0f);
+    CHECK(scb->scb_vertex0.vx == -32512.0f);
     CHECK(scb->scb_vertex0.vy == -32763.0f);
-    CHECK(scb->scb_vertex0.vz == -32512.0f);
+    CHECK(scb->scb_vertex0.vz == 32764.0f);
     CHECK(map_sound_calls == 1);
     CHECK(map_sound_bank == 3);
     CHECK(strcmp(map_sound_name, "splash") == 0);
@@ -2949,6 +2954,7 @@ static int test_launch_splash(void)
     CHECK(map_sound_position.vz == -32512);
 
     jpb_SoundSetPlaySfxHook(NULL, NULL);
+    sound_FreeBank(3);
     paEffects[61] = old_effect;
     effects1Handle[0] = old_material;
     LevelSelect = old_level;
@@ -3215,6 +3221,7 @@ static int test_launch_map_anim_effects(void)
     material.ih = 6;
     paEffects[10] = &effect;
     effects1Handle[0] = &material;
+    CHECK(sound_LoadBank("resident", 3) == 0);
     jpb_SoundSetPlaySfxHook(test_map_sound_hook, NULL);
     GameStruct.GameState &= ~UINT32_C(0x02000000);
     OptionStruct.FunFactor &= UINT8_C(0xfe);
@@ -3228,9 +3235,9 @@ static int test_launch_map_anim_effects(void)
     LaunchMapAnimEffects(2, &worldpos, events);
     CHECK(mSCBDraw[0].head != NULL);
     CHECK(((SCB *)mSCBDraw[0].head)->scb_Texture == &material);
-    CHECK(((SCB *)mSCBDraw[0].head)->scb_vertex0.vx == 7.0f);
+    CHECK(((SCB *)mSCBDraw[0].head)->scb_vertex0.vx == 33.0f);
     CHECK(((SCB *)mSCBDraw[0].head)->scb_vertex0.vy == 19.0f);
-    CHECK(((SCB *)mSCBDraw[0].head)->scb_vertex0.vz == 33.0f);
+    CHECK(((SCB *)mSCBDraw[0].head)->scb_vertex0.vz == 7.0f);
     CHECK(map_sound_calls == 1);
     CHECK(map_sound_bank == 3);
     CHECK(strcmp(map_sound_name, "explosm") == 0);
@@ -3298,6 +3305,7 @@ static int test_launch_map_anim_effects(void)
         sizeof(old_physics));
 
     jpb_SoundSetPlaySfxHook(NULL, NULL);
+    sound_FreeBank(3);
     paEffects[10] = old_effect;
     effects1Handle[0] = old_material;
     LevelSelect = old_level;
@@ -3447,7 +3455,7 @@ static int test_character_blocking_kernel(void)
               &p1,
               &testpos0,
               &range) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(fabsf(range - 5.0f) < 0.00001f);
     CHECK(fabsf(p0.mov.vx - -11.25f) < 0.00001f);
     CHECK(fabsf(p1.mov.vx - 3.75f) < 0.00001f);
@@ -3475,7 +3483,7 @@ static int test_character_blocking_kernel(void)
               &p1,
               &testpos0,
               &range) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(p0.mov.vx == 0.0f);
     CHECK(p1.mov.vx == 48.0f);
 
@@ -3494,7 +3502,7 @@ static int test_character_blocking_kernel(void)
               &p1,
               &testpos0,
               &range) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(p0.mov.vx == 0.0f);
     CHECK(p1.mov.vx == 0.0f);
     CHECK(p0.flags == 0);
@@ -3508,7 +3516,7 @@ static int test_character_blocking_kernel(void)
               &p1,
               &testpos0,
               &range) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(fabsf(range - sqrtf(10025.0f)) < 0.00001f);
     CHECK(p0.mov.vx == 0.0f);
     CHECK(p1.mov.vx == 0.0f);
@@ -3565,7 +3573,7 @@ static int test_move_character_contact_sweep(void)
     }
 
     CHECK(jpb_PhysicsMoveCharacterContacts(p0) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(fabsf(maRange[0][1] - 5.0f) < 0.00001f);
     for (index = 2; index < JPB_PHYSICS_CAPACITY; ++index) {
         CHECK(maRange[0][index] == -1.0f);
@@ -3580,7 +3588,7 @@ static int test_move_character_contact_sweep(void)
     player1->pFlags = UINT32_C(0x0800);
     maRange[0][1] = 123.0f;
     CHECK(jpb_PhysicsMoveCharacterContacts(p0) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(maRange[0][1] == -1.0f);
     CHECK(p0->mov.vx == 0.0f);
     CHECK(p1->mov.vx == 0.0f);
@@ -3590,14 +3598,14 @@ static int test_move_character_contact_sweep(void)
     player1->playerID = 12;
     maRange[0][1] = 123.0f;
     CHECK(jpb_PhysicsMoveCharacterContacts(p0) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(maRange[0][1] == -1.0f);
 
     p1->flags = 0;
     player0->pFlags = UINT32_C(0x04000000);
     maRange[0][1] = 123.0f;
     CHECK(jpb_PhysicsMoveCharacterContacts(p0) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(maRange[0][1] == 123.0f);
     return 0;
 }
@@ -3677,7 +3685,7 @@ static int test_move_large_character_node_contacts(void)
     nodes[2].v3RotCenter.vx = 10;
     maRange[0][1] = 123.0f;
     CHECK(jpb_PhysicsMoveCharacterContacts(p0) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(maRange[0][1] == -1.0f);
     CHECK(fabsf(p0->mov.vx - 128.0f) < 0.00001f);
     CHECK(p0->mov.vy == 0.0f);
@@ -3690,14 +3698,14 @@ static int test_move_large_character_node_contacts(void)
     p0->flags = 0;
     nodes[2].flags = 1;
     CHECK(jpb_PhysicsMoveCharacterContacts(p0) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(p0->mov.vx == 0.0f);
     CHECK(p0->flags == 0);
 
     nodes[2].flags = 0;
     nodes[2].v3RotCenter.vy = -119;
     CHECK(jpb_PhysicsMoveCharacterContacts(p0) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(p0->mov.vx == 0.0f);
     CHECK(p0->flags == 0);
 
@@ -3717,7 +3725,7 @@ static int test_move_large_character_node_contacts(void)
     p0->flags = 0;
     player1->playerID = JPB_PLAYER_ID_WORM;
     CHECK(jpb_PhysicsMoveCharacterContacts(p0) ==
-          JPB_PHYSICS_PARTIAL_OK);
+          JPB_PHYSICS_RESULT_OK);
     CHECK(maRange[0][1] == -1.0f);
     CHECK(fabsf(p0->mov.vx - 104.0f) < 0.00001f);
     CHECK(p0->mov.vy == 0.0f);
@@ -3727,7 +3735,7 @@ static int test_move_large_character_node_contacts(void)
     return 0;
 }
 
-static int test_range_cache_and_fallback(void)
+static int test_range_cache_hit_and_miss(void)
 {
     sceneObject scene0;
     sceneObject scene1;
@@ -3772,7 +3780,8 @@ static int test_range_cache_and_fallback(void)
 
 int main(void)
 {
-    CHECK(test_geometry_stream_resolution() == 0);
+    CHECK(test_debug_player_model_owner() == 0);
+    CHECK(test_mesh_console_commands() == 0);
     CHECK(test_public_state_conversion() == 0);
     CHECK(test_update_scene_object() == 0);
     CHECK(test_set_recoil() == 0);
@@ -3813,7 +3822,7 @@ int main(void)
     CHECK(test_character_blocking_kernel() == 0);
     CHECK(test_move_character_contact_sweep() == 0);
     CHECK(test_move_large_character_node_contacts() == 0);
-    CHECK(test_range_cache_and_fallback() == 0);
+    CHECK(test_range_cache_hit_and_miss() == 0);
     CHECK(test_launch_map_anim_effects() == 0);
     CHECK(test_process_physics_objects_scheduler() == 0);
     CHECK(test_reset_jedi_complete() == 0);

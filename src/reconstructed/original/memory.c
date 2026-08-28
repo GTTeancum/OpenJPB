@@ -1,12 +1,13 @@
 /*
- * Reviewed reconstruction of W:\SWJediPowerBattles\Work\memory.c.
+ * COMPLETE REVIEWED RECONSTRUCTION of
+ * W:\SWJediPowerBattles\Work\memory.c.
  *
  * Provenance:
  *   direct     - API/global names, MemoryPool layout, bank sizes, addresses,
  *                signatures, source line arguments, and code extents.
- *   decompiled - bump-allocation behavior checked against Ghidra and x64
- *                instructions at RVAs 0xBEA80 through 0xBEEFA.
- *   substituted- reference _Exit(1) failures use the portable C _Exit(1).
+ *   assembly   - all ten bodies checked instruction-by-instruction at RVAs
+ *                0xBEA80 through 0xBEEFA, including signed rounding, address
+ *                return residues, the exhaustion diagnostic, and _Exit(1).
  *
  * Despite their names, the calloc routines do not clear memory. Pools are
  * eight-byte-aligned bump allocators and accept an allocation only when its
@@ -16,21 +17,32 @@
 #include "jpb/memory.h"
 
 #include "jpb/alloc.h"
+#include "jpb/whook.h"
 
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 uint32_t mDefaultMemBank;
 MemoryPool maMemoryBanks[MEMORY_POOL_COUNT];
 
-static char memory_bank_0[0x20000];
-static char memory_bank_1[0xAFC00];
-static char memory_bank_2[0x180000];
-static char memory_bank_3[0x500000];
+char mem_pool_0[0x20000];
+char mem_pool_1[0xAFC00];
+char mem_pool_2[0x180000];
+char mem_pool_3a[0x500000];
 
 static uint32_t memory_align_eight(uint32_t value)
 {
     if ((value & 7u) != 0) {
         value = (value & ~7u) + 8u;
+    }
+    return value;
+}
+
+static int32_t memory_align_eight_signed(int32_t value)
+{
+    if (value % 8 != 0) {
+        value = (value / 8 + 1) * 8;
     }
     return value;
 }
@@ -70,25 +82,19 @@ int memory_InitMemoryPool(char *memory, uint32_t size, int type)
     pool->pMemPool = memory;
     pool->memUsed = 0;
 
-    /*
-     * The reference source declares int but leaves its successful return
-     * unspecified. Callers discard it; zero makes the portable contract
-     * deterministic without changing observed game behavior.
-     */
-    return 0;
+    return (int)(uintptr_t)maMemoryBanks;
 }
 
 /* Reference RVA 0xBEB20, 217 bytes. */
 int memory_InitMemorySystem(void)
 {
-    memory_InitMemoryPool(memory_bank_0, 0x80, 0);
-    memory_InitMemoryPool(memory_bank_1, 0x2BF, 1);
-    memory_InitMemoryPool(memory_bank_2, 0x600, 2);
-    memory_InitMemoryPool(memory_bank_3, 0x1400, 3);
+    memory_InitMemoryPool(mem_pool_0, 0x80, 0);
+    memory_InitMemoryPool(mem_pool_1, 0x2BF, 1);
+    memory_InitMemoryPool(mem_pool_2, 0x600, 2);
+    memory_InitMemoryPool(mem_pool_3a, 0x1400, 3);
     meminit();
-
-    /* The reference tail-calls the no-op clearzerobss and has no set return. */
-    return 0;
+    clearzerobss();
+    return (int)(uintptr_t)mem_heapend;
 }
 
 /* Reference RVA 0xBEC00, 39 bytes. */
@@ -105,9 +111,9 @@ void *memory_gCalloc(unsigned n, unsigned size)
 /* Reference RVA 0xBEC30, 107 bytes. */
 void *memory_gCallocAnyMemory(unsigned n, unsigned size)
 {
-    uint32_t needed = memory_align_eight((uint32_t)(n * size));
+    int32_t needed = memory_align_eight_signed((int32_t)(n * size));
 
-    if (needed < maMemoryBanks[2].memFree) {
+    if ((uint32_t)needed < maMemoryBanks[2].memFree) {
         void *result = memory_gCallocMemoryFunc(
             n,
             size,
@@ -127,12 +133,16 @@ void *memory_gCallocMemoryFunc(
     unsigned n,
     unsigned size,
     int type,
-    ...)
+    int line,
+    char *file)
 {
     uint32_t needed = (uint32_t)(n * size);
     MemoryPool *pool;
     uint32_t old_free;
     char *result;
+
+    (void)line;
+    (void)file;
 
     if (type == MEMORY_POOL_ANY) {
         return memory_gCallocAnyMemory(n, size);
@@ -142,6 +152,16 @@ void *memory_gCallocMemoryFunc(
     pool = &maMemoryBanks[type];
     old_free = pool->memFree;
     if (needed >= old_free) {
+        char stemp[255];
+
+        memset(stemp, 0, sizeof(stemp));
+        sprintf(
+            stemp,
+            "memory_gCallocMemory: pool %d too small for %d bytes "
+            "(only %d bytes left)",
+            type,
+            (int)needed,
+            (int)old_free);
         memory_fatal();
     }
 
@@ -156,14 +176,14 @@ void *memory_gDrainMemoryPool(unsigned *rsize, int type)
 {
     MemoryPool *pool = &maMemoryBanks[type];
     uint32_t old_free = pool->memFree;
-    uint32_t size = memory_align_eight(old_free);
+    int32_t size = memory_align_eight_signed((int32_t)old_free);
     char *result;
 
     if (rsize != NULL) {
-        *rsize = size;
+        *rsize = (uint32_t)size;
     }
-    pool->memUsed += size;
-    pool->memFree = old_free - size;
+    pool->memUsed += (uint32_t)size;
+    pool->memFree = old_free - (uint32_t)size;
     result = pool->pMemPool + (pool->memSize - old_free);
     return result;
 }
@@ -188,13 +208,14 @@ int memory_gTestMemoryPool(int type)
 {
     MemoryPool *pool = &maMemoryBanks[type];
     int garbage = 0;
-    uint32_t offset = pool->memSize - pool->memFree;
+    int start = (int)(pool->memSize - pool->memFree);
+    int x = (int)pool->memSize;
 
-    while (offset < pool->memSize) {
-        if (pool->pMemPool[offset] != 0) {
+    while (start < x) {
+        if (pool->pMemPool[start] != 0) {
             ++garbage;
         }
-        ++offset;
+        ++start;
     }
     return garbage;
 }

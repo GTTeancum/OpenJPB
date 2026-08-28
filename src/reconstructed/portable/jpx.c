@@ -1,6 +1,5 @@
 /*
- * Bounded portable reconstruction of the data path in InitJPX
- * (reference RVA 0xB4B30).
+ * Bounded portable JPX inspection and loading utilities.
  *
  * The reference reads into a fixed 5 MiB arena, resolves material names, and
  * replaces every 16-byte strip header with data from the selected renderer
@@ -16,9 +15,6 @@
 _Static_assert(sizeof(JPBJpxMaterialDef) == 4, "MATHEAD must be 4 bytes");
 _Static_assert(sizeof(JPBJpxBinHeader) == 4102,
                "_BINHEADER must be 4102 bytes");
-
-static JPBJpxLoadConfig jpx_runtime_config;
-static JPBJpxView jpx_runtime_view;
 
 static uint16_t jpx_read_u16(const uint8_t *bytes)
 {
@@ -483,40 +479,4 @@ int jpx_LoadFile(
         config->descriptorCapacity,
         config->progress,
         config->userData);
-}
-
-void jpx_SetRuntimeConfig(const JPBJpxLoadConfig *config)
-{
-    memset(&jpx_runtime_config, 0, sizeof(jpx_runtime_config));
-    memset(&jpx_runtime_view, 0, sizeof(jpx_runtime_view));
-    WorldmeshData = NULL;
-    gJpxWorldmeshSize = 0;
-    if (config != NULL) {
-        jpx_runtime_config = *config;
-    }
-}
-
-const JPBJpxView *jpx_GetRuntimeView(void)
-{
-    return &jpx_runtime_view;
-}
-
-/*
- * Reference RVA 0xB4B30, 644 bytes. The reference terminates the process on
- * file/header failure; this bounded platform seam returns a negative status
- * so PC and nxdk front ends can report the error.
- */
-int InitJPX(char *name)
-{
-    int result =
-        jpx_LoadFile(name, &jpx_runtime_config, &jpx_runtime_view);
-
-    if (result != JPB_JPX_OK) {
-        return result;
-    }
-    WorldmeshData = (int32_t *)(
-        jpx_runtime_view.data + jpx_runtime_view.worldOffset);
-    gJpxWorldmeshSize =
-        jpx_runtime_view.size - jpx_runtime_view.worldOffset;
-    return 0;
 }

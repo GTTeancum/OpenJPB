@@ -1,10 +1,5 @@
 /*
- * PARTIALLY REVIEWED RECONSTRUCTION.
- *
- * InitJPX is implemented in ../portable/jpx.c as a bounded reconstruction
- * with caller-owned storage and renderer bindings. This unit now also
- * contains the reviewed library-vertex and walk-height map traversal;
- * unrecovered procedures remain as evidence shells.
+ * REVIEWED RECONSTRUCTION.
  * PDB module: 0046
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\jonny.obj
  * Primary source: W:\SWJediPowerBattles\work\jonny.c
@@ -16,11 +11,20 @@
 
 #include "jpb/jonny.h"
 #include "jpb/anim.h"
+#include "jpb/io.h"
+#include "jpb/jpx.h"
+#include "jpb/loader.h"
+#include "jpb/memory.h"
+#include "jpb/menu.h"
 #include "jpb/physics.h"
 #include "jpb/player.h"
+#include "jpb/texture.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int32_t jonny_wrapped_orient_xz(
@@ -61,6 +65,16 @@ static int16_t jonny_read_i16(const void *base, size_t offset)
     int16_t value;
 
     memcpy(&value, (const uint8_t *)base + offset, sizeof(value));
+    return value;
+}
+
+static float jonny_toggle_float_sign(float value)
+{
+    uint32_t bits;
+
+    memcpy(&bits, &value, sizeof(bits));
+    bits ^= UINT32_C(0x80000000);
+    memcpy(&value, &bits, sizeof(value));
     return value;
 }
 
@@ -344,6 +358,82 @@ int HitsHit(
  * PDB type: void (int)
  * Source: W:\SWJediPowerBattles\work\jonny.c
  */
+int InitJPX(char *name)
+{
+    JPBJpxBinHeader knobber;
+    JPBFileHandle fd;
+    uint64_t file_size;
+    int i;
+    int32_t *strip;
+
+    if (!file_OPEN(name, &fd)) {
+        exit(0);
+    }
+    file_size = file_GETSIZE(&fd);
+    (void)file_READ(
+        &fd, (char *)&knobber, 0x1000, JPB_FILE_READ_STREAM);
+    if (knobber.worldOffset > 0x1000) {
+        exit(0);
+    }
+    (void)file_CLOSE(&fd);
+
+    for (i = 0; i < knobber.numMaterials; ++i) {
+        JPBJpxMaterialDef *md = &knobber.materialDefs[i];
+
+        menu_addTotal(100);
+        if (md->nameOffset != 0) {
+            char buf[256];
+            char *p;
+
+            sprintf(
+                buf,
+                "../../../res/level\\jpx\\\\%s\\%s",
+                loader_GetLevelName(),
+                (char *)&knobber + md->nameOffset);
+            p = buf;
+            while (*p != '.') {
+                ++p;
+            }
+            p[1] = '\0';
+            p = buf;
+            while (*p != '\0') {
+                ++p;
+            }
+            memcpy(p, "pvr", 4);
+            level_materials[i] =
+                _LoadTexture(buf, TT_LEVEL, UINT32_C(0x02000000));
+        }
+    }
+
+    WorldmeshData = (int32_t *)(void *)mem_pool_3a;
+    (void)file_OPEN(name, &fd);
+    (void)file_READ(
+        &fd,
+        (char *)WorldmeshData,
+        (int32_t)file_size,
+        4);
+    WorldmeshData = (int32_t *)(
+        (uint8_t *)WorldmeshData + knobber.worldOffset);
+    strip = (int32_t *)(
+        (uint8_t *)WorldmeshData + knobber.firstStripOffset);
+    do {
+        int stripofs = strip[0];
+        int32_t *std =
+            (int32_t *)level_materials[strip[1]]->texture;
+
+        menu_addTotal(100);
+        strip[0] = std[0];
+        strip[1] = std[1];
+        strip[2] = std[2];
+        strip[3] = std[3];
+        strip = (int32_t *)((uint8_t *)strip + stripofs);
+        if (stripofs == 0) {
+            break;
+        }
+    } while (1);
+    (void)file_CLOSE(&fd);
+    return 0;
+}
 void MTV(int cubeshite)
 {
     int slot = cubeshite + 1;
@@ -406,6 +496,9 @@ void MTV(int cubeshite)
  * PDB type: void ()
  * Source: W:\SWJediPowerBattles\work\jonny.c
  */
+void band_lights(void)
+{
+}
 
 /* 0xB4F70, 3 bytes, global, 2 named locals
  * calc_frustrum
@@ -436,12 +529,20 @@ void clear_eventlist(void)
  * PDB type: void (void*)
  * Source: W:\SWJediPowerBattles\work\jonny.c
  */
+void contraband_cluts(void *cluts)
+{
+    (void)cluts;
+}
 
 /* 0xB4FC0, 3 bytes, global, 1 named locals
  * contraband_lights
  * PDB type: void (void*)
  * Source: W:\SWJediPowerBattles\work\jonny.c
  */
+void contraband_lights(void *mapbase)
+{
+    (void)mapbase;
+}
 
 /* 0xB4FD0, 620 bytes, local, 23 named locals
  * intersec_WankCheck
@@ -705,6 +806,71 @@ int32_t *jon_getlibpartfloat(
  * PDB type: int (int, int, int)
  * Source: W:\SWJediPowerBattles\work\jonny.c
  */
+int32_t *jon_getlibpartint32_t(
+    int32_t *cube,
+    VECTOR *cubeorg,
+    int32_t *mapbase)
+{
+    VECTOR *output = (VECTOR *)(void *)gaScratch;
+    int32_t *lib = mapbase + (uint16_t)*cube;
+    uint32_t libword = (uint32_t)lib[0];
+    int numun = ((lib[1] >> 15) & 0xf) + 1;
+    const uint16_t *verts = (const uint16_t *)(
+        (const uint8_t *)mapbase +
+        ((libword & UINT32_C(0xffff)) +
+         (uint32_t)((mapbase[-1] >> 2) * 2)) *
+            2U);
+    int vs = (int)((libword >> 16) & UINT32_C(0x1f));
+    int vst;
+
+    output[0].vx = cubeorg->vx + 256;
+    output[0].vy = cubeorg->vy;
+    output[0].vz = cubeorg->vz;
+    output[1].vx = cubeorg->vx;
+    output[1].vy = cubeorg->vy;
+    output[1].vz = cubeorg->vz;
+    output[2].vx = cubeorg->vx + 256;
+    output[2].vy = cubeorg->vy;
+    output[2].vz = cubeorg->vz + 256;
+    output[3].vx = cubeorg->vx;
+    output[3].vy = cubeorg->vy;
+    output[3].vz = cubeorg->vz + 256;
+    output[4].vx = cubeorg->vx + 256;
+    output[4].vy = cubeorg->vy + numun * 256;
+    output[4].vz = cubeorg->vz;
+    output[5].vx = cubeorg->vx;
+    output[5].vy = cubeorg->vy + numun * 256;
+    output[5].vz = cubeorg->vz;
+    output[6].vx = cubeorg->vx + 256;
+    output[6].vy = cubeorg->vy + numun * 256;
+    output[6].vz = cubeorg->vz + 256;
+    output[7].vx = cubeorg->vx;
+    output[7].vy = cubeorg->vy + numun * 256;
+    output[7].vz = cubeorg->vz + 256;
+
+    for (vst = 0; vst < vs; ++vst) {
+        uint16_t packed = verts[vst];
+        VECTOR *vertex = &output[vst + 8];
+
+        vertex->vx =
+            cubeorg->vx + 256 -
+            (int)((packed & UINT16_C(0x001f)) << 4);
+        vertex->vy =
+            cubeorg->vy +
+            (int)(((packed >> 7) & UINT16_C(0x01f8)) * numun);
+        vertex->vz =
+            cubeorg->vz +
+            (int)(((int16_t)packed >> 1) & INT16_C(0x01f0));
+    }
+    return lib;
+}
+int jon_otagpos(int x, int y, int z)
+{
+    (void)x;
+    (void)y;
+    (void)z;
+    return 0;
+}
 
 /* 0xB5A70, 3 bytes, global, 5 named locals
  * jon_plumbgeneral
@@ -717,6 +883,20 @@ int32_t *jon_getlibpartfloat(
  * PDB type: int (void*, void*, VECTOR*, int,...
  * Source: W:\SWJediPowerBattles\work\jonny.c
  */
+int jon_plumbgeneral(
+    _svector *verts,
+    _svector *norms,
+    unsigned *index,
+    int npolys,
+    VECTOR *pos)
+{
+    (void)verts;
+    (void)norms;
+    (void)index;
+    (void)npolys;
+    (void)pos;
+    return 0;
+}
 int jon_plumbline(
     void *mapbase_pointer,
     void *pointspace,
@@ -903,6 +1083,124 @@ void jon_texscroll(void *mapbase, int frame_step)
  * PDB type: void (FVECTOR4*, MATRIX*, FVECTO...
  * Source: W:\SWJediPowerBattles\work\jonny.c
  */
+void *jpb_render(
+    MATRIX *cammat,
+    void *mapbase,
+    void *pbuf,
+    int globaltimer,
+    void *otagbase,
+    int showmask,
+    int minx,
+    int maxx,
+    int miny,
+    int maxy,
+    int subdisable)
+{
+    (void)cammat;
+    (void)mapbase;
+    (void)globaltimer;
+    (void)otagbase;
+    (void)showmask;
+    (void)minx;
+    (void)maxx;
+    (void)miny;
+    (void)maxy;
+    (void)subdisable;
+    return pbuf;
+}
+void makecull(
+    FVECTOR4 *planes,
+    MATRIX *camera,
+    FVECTOR *camera_position,
+    float clip_radius,
+    float screen_width,
+    float screen_height,
+    float screen_distance,
+    float far_clip)
+{
+    float half_width = screen_width * 0.5f;
+    float half_height = screen_height * 0.5f;
+    float hyp_x = (float)sqrt((double)(
+        half_width * half_width + screen_distance * screen_distance));
+    float hyp_y = (float)sqrt((double)(
+        half_height * half_height + screen_distance * screen_distance));
+    float width_normal = half_width / hyp_x;
+    float height_normal = half_height / hyp_y;
+    float distance_x = screen_distance / hyp_x;
+    float distance_y = screen_distance / hyp_y;
+    float depth_x = camera->m[2][0];
+    float depth_y = camera->m[2][1];
+    float depth_z = camera->m[2][2];
+    float depth_plane;
+
+    planes[0].vx = distance_x * camera->m[0][0] +
+                   width_normal * depth_x;
+    planes[0].vy = distance_x * camera->m[0][1] +
+                   width_normal * depth_y;
+    planes[0].vz = distance_x * camera->m[0][2] +
+                   width_normal * depth_z;
+    planes[0].vw = 1.0f -
+        (planes[0].vx * camera_position->vx +
+         planes[0].vy * camera_position->vy +
+         planes[0].vz * camera_position->vz) +
+        clip_radius;
+
+    planes[1].vx = width_normal * depth_x -
+                   distance_x * camera->m[0][0];
+    planes[1].vy = width_normal * depth_y -
+                   distance_x * camera->m[0][1];
+    planes[1].vz = width_normal * depth_z -
+                   distance_x * camera->m[0][2];
+    planes[1].vw = 1.0f -
+        (planes[1].vx * camera_position->vx +
+         planes[1].vy * camera_position->vy +
+         planes[1].vz * camera_position->vz) +
+        clip_radius;
+
+    planes[2].vx = height_normal * depth_x +
+                   distance_y * camera->m[1][0];
+    planes[2].vy = height_normal * depth_y +
+                   distance_y * camera->m[1][1];
+    planes[2].vz = height_normal * depth_z +
+                   distance_y * camera->m[1][2];
+    planes[2].vw = 1.0f -
+        (planes[2].vx * camera_position->vx +
+         planes[2].vy * camera_position->vy +
+         planes[2].vz * camera_position->vz) +
+        clip_radius;
+
+    depth_plane = 1.0f -
+        (depth_x * camera_position->vx +
+         depth_y * camera_position->vy +
+         depth_z * camera_position->vz) +
+        clip_radius;
+    planes[3].vx = depth_x;
+    planes[3].vy = depth_y;
+    planes[3].vz = depth_z;
+    planes[3].vw = depth_plane;
+    planes[6] = planes[3];
+
+    planes[4].vx = height_normal * depth_x -
+                   distance_y * camera->m[1][0];
+    planes[4].vy = height_normal * depth_y -
+                   distance_y * camera->m[1][1];
+    planes[4].vz = height_normal * depth_z -
+                   distance_y * camera->m[1][2];
+    planes[4].vw = 1.0f -
+        (planes[4].vx * camera_position->vx +
+         planes[4].vy * camera_position->vy +
+         planes[4].vz * camera_position->vz) +
+        clip_radius;
+
+    planes[5].vx = jonny_toggle_float_sign(depth_x);
+    planes[5].vy = jonny_toggle_float_sign(depth_y);
+    planes[5].vz = jonny_toggle_float_sign(depth_z);
+    planes[5].vw = far_clip -
+        (planes[5].vx * camera_position->vx +
+         planes[5].vy * camera_position->vy +
+         planes[5].vz * camera_position->vz) +
+        1.0f + clip_radius;
+}
 
 /* 0xB62F0, 122 bytes, global, 6 named locals
  * restore_events
@@ -952,9 +1250,27 @@ void set_camera(MATRIX *matrix)
  * PDB type: void (MATRIX*, _svector*, VECTOR...
  * Source: W:\SWJediPowerBattles\work\jonny.c
  */
+void spack_frustrum(
+    MATRIX *cammat,
+    _svector *fuckoff,
+    VECTOR *camtwat)
+{
+    (void)cammat;
+    (void)fuckoff;
+    (void)camtwat;
+}
 
 /* 0xB6390, 3 bytes, global, 3 named locals
  * spackdivver_frustrum
  * PDB type: void (MATRIX*, _svector*, VECTOR...
  * Source: W:\SWJediPowerBattles\work\jonny.c
  */
+void spackdivver_frustrum(
+    MATRIX *cammat,
+    _svector *fuckoff,
+    VECTOR *camtwat)
+{
+    (void)cammat;
+    (void)fuckoff;
+    (void)camtwat;
+}

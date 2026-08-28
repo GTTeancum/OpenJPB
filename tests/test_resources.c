@@ -1,4 +1,5 @@
 #include "jpb/resources.h"
+#include "jpb/win_movie_player.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -18,6 +19,12 @@
 
 static unsigned update_milliseconds;
 static int update_calls;
+static char played_video[JPB_RESOURCE_PATH_CAPACITY];
+
+void PlayVideo(char *filename)
+{
+    snprintf(played_video, sizeof(played_video), "%s", filename);
+}
 
 static void update_hook(unsigned milliseconds, void *user_data)
 {
@@ -78,6 +85,20 @@ int main(void)
     long_path[sizeof(long_path) - 1] = '\0';
     CHECK(jpb_ResourceSetBasePath(long_path) == 0);
     CHECK(resource_getPath("x", JPB_RESOURCE_TEMP) == NULL);
+
+    CHECK(jpb_ResourceSetBasePath("C:/game") == 1);
+    winMovie_Init();
+    winMovie_Play(9, (void *)1);
+    CHECK(strcmp(
+              played_video,
+              "C:/game/res/movies/1080\\flipped\\"
+              "photo_warning_English_1080_Flipped.ogg") == 0);
+    CHECK(strcmp(
+              ptrMovies[0],
+              "1080\\flipped\\IntroFlippedVertical_converted.ogg") == 0);
+    CHECK(strcmp(
+              ptrMovies[7],
+              "1080\\flipped\\End1080Flipped_converted.ogg") == 0);
 
     puts("resource tests passed");
     return 0;

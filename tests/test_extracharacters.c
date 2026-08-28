@@ -17,34 +17,43 @@
 
 static int test_exact_table(void)
 {
-    static const model_id expected_ids[JPB_EXTRA_CHARACTER_COUNT] = {
-        battle_d_model,
-        pilot_model,
-        rifle_model,
-        flame_model,
-        destroye_model,
-        loader_model,
-        tusken_s_model,
-        tusken_r_model,
-        thug_1_model,
-        thug_2_model,
-        thug_3_model,
-        thug_4_model,
-        jar_jar_playable_model,
-        gungan_1_model
-    };
-    static const int expected_text[JPB_EXTRA_CHARACTER_COUNT] = {
-        342, 341, 343, 344, 346, 347, 348,
-        349, 351, 352, 353, 354, 357, 356
+    static const ExtraCharacter expected[JPB_EXTRA_CHARACTER_COUNT] = {
+        {battle_d_model, 342, 0, 1, 1, 1},
+        {pilot_model, 341, 1, 1, 1, 0},
+        {rifle_model, 343, 0, 1, 1, 0},
+        {flame_model, 344, 1, 1, 1, 0},
+        {destroye_model, 346, 0, 1, 0, 0},
+        {loader_model, 347, 1, 1, 0, 0},
+        {tusken_s_model, 348, 1, 1, 1, 0},
+        {tusken_r_model, 349, 0, 1, 1, 0},
+        {thug_1_model, 351, 0, 1, 1, 0},
+        {thug_2_model, 352, 1, 1, 1, 0},
+        {thug_3_model, 353, 0, 1, 1, 0},
+        {thug_4_model, 354, 1, 1, 1, 0},
+        {jar_jar_playable_model, 357, 1, 1, 1, 0},
+        {gungan_1_model, 356, 1, 1, 1, 0}
     };
     size_t i;
 
     CHECK(ExtraCharactersSize == JPB_EXTRA_CHARACTER_COUNT);
     for (i = 0; i < ExtraCharactersSize; ++i) {
-        CHECK(ExtraCharacters[i].ID == expected_ids[i]);
-        CHECK(ExtraCharacters[i].TextIndex == expected_text[i]);
-        CHECK(GetCharacterByID(expected_ids[i]) == &ExtraCharacters[i]);
-        CHECK(IsExtraCharacter(expected_ids[i]) == 1);
+        CHECK(ExtraCharacters[i].ID == expected[i].ID);
+        CHECK(ExtraCharacters[i].TextIndex == expected[i].TextIndex);
+        CHECK(ExtraCharacters[i].CanReflect == expected[i].CanReflect);
+        CHECK(ExtraCharacters[i].CanForcePower == expected[i].CanForcePower);
+        CHECK(ExtraCharacters[i].CanLedgeClimb == expected[i].CanLedgeClimb);
+        CHECK(ExtraCharacters[i].Unlocked == expected[i].Unlocked);
+        CHECK(GetCharacterByID(expected[i].ID) == &ExtraCharacters[i]);
+        CHECK(IsExtraCharacter(expected[i].ID) == 1);
+        CHECK(
+            extracharacter_CanReflect(expected[i].ID) ==
+            expected[i].CanReflect);
+        CHECK(
+            extracharacter_CanForcePower(expected[i].ID) ==
+            expected[i].CanForcePower);
+        CHECK(
+            extracharacter_CanLedgeClimb(expected[i].ID) ==
+            expected[i].CanLedgeClimb);
     }
     return 0;
 }

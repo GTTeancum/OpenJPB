@@ -1,11 +1,16 @@
 #include "jpb/projection.h"
 #include "jpb/fx.h"
 #include "jpb/game.h"
+#include "jpb/generic_hook.h"
+#include "jpb/jedi.h"
 #include "jpb/level.h"
 #include "jpb/physics.h"
 #include "jpb/player.h"
+#include "jpb/resources.h"
 #include "jpb/scene.h"
 #include "jpb/software_renderer.h"
+#include "jpb/sprite.h"
+#include "jpb/texture.h"
 #include "jpb/whook.h"
 #include "jpb/world.h"
 
@@ -29,6 +34,7 @@
 typedef struct ScreenPolyTrace {
     int calls;
     _Material *material;
+    uint32_t materialFlags;
     int vertexCount;
     int noScale;
     JPBScreenPolyVertex vertices[4];
@@ -62,9 +68,26 @@ static int capture_screen_poly_triangle(
     return 1;
 }
 
+static void *load_test_texture(
+    void *user_data,
+    const char *filename,
+    unsigned option,
+    int material_type,
+    int16_t *width,
+    int16_t *height)
+{
+    (void)filename;
+    (void)option;
+    (void)material_type;
+    *width = 1;
+    *height = 1;
+    return user_data;
+}
+
 static void capture_screen_poly(
     void *user_data,
     _Material *material,
+    uint32_t material_flags,
     int vertex_count,
     const JPBScreenPolyVertex *vertices,
     int no_scale)
@@ -74,6 +97,7 @@ static void capture_screen_poly(
 
     ++trace->calls;
     trace->material = material;
+    trace->materialFlags = material_flags;
     trace->vertexCount = vertex_count;
     trace->noScale = no_scale;
     if (vertex_count > 0 && vertex_count <= 4) {
@@ -105,10 +129,14 @@ int main(void)
         poly_depth_values, 64, 64, 64};
     JPBSoftwareRenderStats poly_stats = {0};
     JPBScreenPolyVertex software_quad[4] = {
-        {20.0f, 20.0f, 0.5f, UINT32_C(0xffffffff), 0.0f, 0.0f},
-        {20.0f, 44.0f, 0.5f, UINT32_C(0xffffffff), 0.0f, 1.0f},
-        {44.0f, 20.0f, 0.5f, UINT32_C(0xffffffff), 1.0f, 0.0f},
-        {44.0f, 44.0f, 0.5f, UINT32_C(0xffffffff), 1.0f, 1.0f}
+        {267.857147f, 153.940887f, 0.5f,
+         UINT32_C(0xffffffff), 0.0f, 0.0f},
+        {267.857147f, 338.669952f, 0.5f,
+         UINT32_C(0xffffffff), 0.0f, 1.0f},
+        {589.285706f, 153.940887f, 0.5f,
+         UINT32_C(0xffffffff), 1.0f, 0.0f},
+        {589.285706f, 338.669952f, 0.5f,
+         UINT32_C(0xffffffff), 1.0f, 1.0f}
     };
     JPBScreenPolyVertex camera_quad[4] = {
         {-50.0f, 20.0f, 200.0f, UINT32_C(0xffffffff), 0.0f, 0.0f},
@@ -116,11 +144,16 @@ int main(void)
         {-50.0f, 20.0f, 100.0f, UINT32_C(0xffffffff), 0.0f, 1.0f},
         {50.0f, 20.0f, 100.0f, UINT32_C(0xffffffff), 1.0f, 1.0f}
     };
+    FRONTENDVERT frontend_vertices[2] = {
+        {12.0f, 34.0f, 0.25f, 0.5f, 1, 2, 3, (int)UINT32_C(0xff123456)},
+        {56.0f, 78.0f, 0.75f, 1.0f, 4, 5, 6, (int)UINT32_C(0xffabcdef)}
+    };
     _svector glow_start = {-10, 0, 0, 0};
     _svector glow_end = {10, 0, 0, 0};
     short clipped[2];
     ScreenPolyTrace poly_trace = {0};
     _Material material = {0};
+    JPBSoftwareTexture hook_texture = {0};
     physicsObject arrow_physics = {0};
     playerObject arrow_player = {0};
     sceneObject arrow_scene = {0};
@@ -128,6 +161,11 @@ int main(void)
 
     OptionStruct.ScreenWidth = 1920;
     OptionStruct.ScreenHeight = 1080;
+    CHECK(jpb_ResourceSetBasePath("C:/jpb-projection-test"));
+    jpb_TextureSetPlatformHooks(
+        load_test_texture, NULL, &hook_texture);
+    fx_Init();
+    CHECK(fx_DefaultTexturesReady());
     clipped[0] = 320;
     clipped[1] = 240;
     CHECK(cliptoscreen(clipped) == 255);
@@ -141,7 +179,10 @@ int main(void)
 
     jpb_WHookSetScreenPolyHook(
         capture_screen_poly, &poly_trace);
+    material.texture = &hook_texture;
+    material.flags = JPB_MATERIAL_MODE_TWO_SIDED;
     _StartPoly(4, &material);
+    material.flags = JPB_MATERIAL_MODE_SCREEN_TILE;
     _SetVert(0, 10.0f, 20.0f, 0.0001f, 0xff010203, 0.0f, 1.0f);
     _SetVert(1, 30.0f, 40.0f, 0.0001f, 0xff040506, 1.0f, 0.0f);
     _SetVert(2, 50.0f, 60.0f, 0.0001f, 0xff070809, 1.0f, 1.0f);
@@ -151,6 +192,7 @@ int main(void)
     CHECK(poly_trace.material == &material);
     CHECK(poly_trace.vertexCount == 4);
     CHECK(poly_trace.noScale == 0);
+    CHECK(poly_trace.materialFlags == JPB_MATERIAL_MODE_TWO_SIDED);
     CHECK(poly_trace.vertices[0].x == 10.0f);
     CHECK(poly_trace.vertices[0].y == 20.0f);
     CHECK(poly_trace.vertices[0].argb == UINT32_C(0xff010203));
@@ -162,6 +204,17 @@ int main(void)
     CHECK(poly_trace.vertexCount == 1);
     CHECK(poly_trace.noScale == 1);
     CHECK(poly_trace.vertices[0].x == 90.0f);
+    CHECK(sizeof(FRONTENDVERT) == 32);
+    frontEndPoly(&material, 2, frontend_vertices, 0.625f);
+    CHECK(poly_trace.calls == 3);
+    CHECK(poly_trace.vertexCount == 2);
+    CHECK(poly_trace.vertices[0].x == 12.0f);
+    CHECK(poly_trace.vertices[0].y == 34.0f);
+    CHECK(poly_trace.vertices[0].z == 0.625f);
+    CHECK(poly_trace.vertices[0].tu == 0.25f);
+    CHECK(poly_trace.vertices[0].tv == 0.5f);
+    CHECK(poly_trace.vertices[0].argb == UINT32_C(0xff123456));
+    CHECK(poly_trace.vertices[1].argb == UINT32_C(0xff123456));
 
     memset(&CameraMatrix, 0, sizeof(CameraMatrix));
     CameraMatrix.m[0][0] = 1.0f;
@@ -500,18 +553,30 @@ int main(void)
             CHECK(triangle_trace.calls == 2);
             CHECK(triangle_trace.textures[0] == &smoke_texture);
             CHECK(triangle_trace.textures[1] == &smoke_texture);
-            CHECK(triangle_trace.vertices[0].x == software_quad[0].x);
-            CHECK(triangle_trace.vertices[0].y == software_quad[0].y);
-            CHECK(triangle_trace.vertices[1].x == software_quad[1].x);
-            CHECK(triangle_trace.vertices[1].y == software_quad[1].y);
-            CHECK(triangle_trace.vertices[2].x == software_quad[2].x);
-            CHECK(triangle_trace.vertices[2].y == software_quad[2].y);
-            CHECK(triangle_trace.vertices[3].x == software_quad[1].x);
-            CHECK(triangle_trace.vertices[3].y == software_quad[1].y);
-            CHECK(triangle_trace.vertices[4].x == software_quad[3].x);
-            CHECK(triangle_trace.vertices[4].y == software_quad[3].y);
-            CHECK(triangle_trace.vertices[5].x == software_quad[2].x);
-            CHECK(triangle_trace.vertices[5].y == software_quad[2].y);
+            CHECK(fabsf(triangle_trace.vertices[0].x - 20.0f) <
+                  0.0001f);
+            CHECK(fabsf(triangle_trace.vertices[0].y - 20.0f) <
+                  0.0001f);
+            CHECK(fabsf(triangle_trace.vertices[1].x - 20.0f) <
+                  0.0001f);
+            CHECK(fabsf(triangle_trace.vertices[1].y - 44.0f) <
+                  0.0001f);
+            CHECK(fabsf(triangle_trace.vertices[2].x - 44.0f) <
+                  0.0001f);
+            CHECK(fabsf(triangle_trace.vertices[2].y - 20.0f) <
+                  0.0001f);
+            CHECK(fabsf(triangle_trace.vertices[3].x - 20.0f) <
+                  0.0001f);
+            CHECK(fabsf(triangle_trace.vertices[3].y - 44.0f) <
+                  0.0001f);
+            CHECK(fabsf(triangle_trace.vertices[4].x - 44.0f) <
+                  0.0001f);
+            CHECK(fabsf(triangle_trace.vertices[4].y - 44.0f) <
+                  0.0001f);
+            CHECK(fabsf(triangle_trace.vertices[5].x - 44.0f) <
+                  0.0001f);
+            CHECK(fabsf(triangle_trace.vertices[5].y - 20.0f) <
+                  0.0001f);
             CHECK(sink_stats.triangles == 2);
             CHECK(sink_stats.pixels == 2);
         }
@@ -548,6 +613,46 @@ int main(void)
                   &poly_depth,
                   &poly_stats) == JPB_SOFTWARE_RENDER_OK);
         CHECK(poly_pixels[32 * 64 + 32] == UINT32_C(0x00608040));
+
+        /*
+         * D3DTransparencyPass::CreatePipelineState installs LESS_EQUAL with
+         * depth writes disabled for both transparency classes. Equal-depth
+         * glow cards therefore draw where an opaque card is rejected.
+         */
+        for (size_t depth_index = 0;
+             depth_index < sizeof(poly_depth_values) /
+                               sizeof(poly_depth_values[0]);
+             ++depth_index) {
+            poly_depth_values[depth_index] = 0.5f;
+        }
+        memset(poly_pixels, 0x20, sizeof(poly_pixels));
+        CHECK(jpb_SoftwareDrawScreenPoly(
+                  &material,
+                  4,
+                  software_quad,
+                  0,
+                  &poly_framebuffer,
+                  &poly_depth,
+                  &poly_stats) == JPB_SOFTWARE_RENDER_OK);
+        CHECK(poly_pixels[32 * 64 + 32] == UINT32_C(0x00608040));
+
+        smoke_texture.materialType = 0;
+        for (size_t depth_index = 0;
+             depth_index < sizeof(poly_depth_values) /
+                               sizeof(poly_depth_values[0]);
+             ++depth_index) {
+            poly_depth_values[depth_index] = 0.49f;
+        }
+        memset(poly_pixels, 0x20, sizeof(poly_pixels));
+        CHECK(jpb_SoftwareDrawScreenPoly(
+                  &material,
+                  4,
+                  software_quad,
+                  0,
+                  &poly_framebuffer,
+                  &poly_depth,
+                  &poly_stats) == JPB_SOFTWARE_RENDER_OK);
+        CHECK(poly_pixels[32 * 64 + 32] == UINT32_C(0x20202020));
         smoke_texture.materialType = 2;
 
         memcpy(clamp_quad, software_quad, sizeof(clamp_quad));
@@ -613,6 +718,12 @@ int main(void)
             {4600.0f, 300.0f, 350.0f, UINT32_C(0xffffffff), 0.0f, 1.0f},
             {5400.0f, 300.0f, 350.0f, UINT32_C(0xffffffff), 1.0f, 1.0f}
         };
+        JPBScreenPolyVertex saber_cap_quad[4] = {
+            {3.0f, 88.8f, 496.0f, UINT32_C(0xffffffff), 0.99f, 0.01f},
+            {-10.2f, 97.9f, 496.0f, UINT32_C(0xffffffff), 0.01f, 0.01f},
+            {12.0f, 102.0f, 496.0f, UINT32_C(0xffffffff), 0.99f, 0.99f},
+            {-1.2f, 111.0f, 496.0f, UINT32_C(0xffffffff), 0.01f, 0.99f}
+        };
 
         material.texture = &class_two_texture;
         material.flags = JPB_MATERIAL_MODE_BACKFACE_REJECT;
@@ -629,6 +740,29 @@ int main(void)
                   &poly_stats) == JPB_SOFTWARE_RENDER_OK);
         CHECK(poly_stats.triangles == 2);
         CHECK(poly_stats.pixels == 0);
+        {
+            ScreenPolyTriangleTrace saber_trace = {0};
+
+            memset(&poly_stats, 0, sizeof(poly_stats));
+            CHECK(jpb_SoftwareClearDepthBuffer(&poly_depth));
+            CHECK(jpb_SoftwareDrawScreenPolyToSink(
+                      &material,
+                      4,
+                      saber_cap_quad,
+                      1,
+                      &poly_framebuffer,
+                      &poly_depth,
+                      capture_screen_poly_triangle,
+                      &saber_trace,
+                      &poly_stats) == JPB_SOFTWARE_RENDER_OK);
+            /*
+             * NoScaleEndPoly truncates this tiny negative NDC winding to
+             * zero. The former pixel-space test rejected the same canonical
+             * level-two saber cap and made the blade flash as it rotated.
+             */
+            CHECK(saber_trace.calls == 2);
+            CHECK(poly_stats.triangles == 2);
+        }
         class_two_texture.materialType = 0;
         memset(poly_pixels, 0, sizeof(poly_pixels));
         memset(&poly_stats, 0, sizeof(poly_stats));
@@ -657,7 +791,226 @@ int main(void)
                   &poly_depth,
                   &poly_stats) == JPB_SOFTWARE_RENDER_OK);
         CHECK(poly_stats.pixels > 0);
+        {
+            ScreenPolyTriangleTrace depth_trace = {0};
+
+            CHECK(jpb_SoftwareDrawScreenPolyToSink(
+                      &material,
+                      4,
+                      camera_quad,
+                      1,
+                      &poly_framebuffer,
+                      &poly_depth,
+                      capture_screen_poly_triangle,
+                      &depth_trace,
+                      &poly_stats) == JPB_SOFTWARE_RENDER_OK);
+            CHECK(depth_trace.calls == 2);
+            CHECK(depth_trace.vertices[0].depth == 0.0001f);
+            CHECK(depth_trace.vertices[0].clipDepth == 0.0001f);
+            CHECK(depth_trace.vertices[0].inverseDepth == 1.0f);
+
+            class_two_texture.materialType = 0;
+            memset(&depth_trace, 0, sizeof(depth_trace));
+            CHECK(jpb_SoftwareDrawScreenPolyToSink(
+                      &material,
+                      4,
+                      camera_quad,
+                      1,
+                      &poly_framebuffer,
+                      &poly_depth,
+                      capture_screen_poly_triangle,
+                      &depth_trace,
+                      &poly_stats) == JPB_SOFTWARE_RENDER_OK);
+            CHECK(depth_trace.calls == 2);
+            CHECK(depth_trace.vertices[0].depth ==
+                  camera_quad[0].z / 10240.0f);
+            CHECK(fabsf(
+                      depth_trace.vertices[0].clipDepth -
+                      0.9950995f) < 0.000001f);
+            CHECK(depth_trace.vertices[0].inverseDepth == 1.0f);
+        }
         material.texture = NULL;
+    }
+
+    {
+        const uint32_t white_texel = UINT32_C(0xffffffff);
+        JPBSoftwareTexture option_texture = {
+            &white_texel, 1, 1, 1,
+            0, TEXTURESAMPLER_LINEARCLAMP, -1, 2, 17
+        };
+        JPBScreenPolyVertex negative_triangle[3] = {
+            {-40.0f, -40.0f, 100.0f,
+             UINT32_C(0xffffffff), 0.0f, 0.0f},
+            {-40.0f, 40.0f, 100.0f,
+             UINT32_C(0xffffffff), 0.0f, 1.0f},
+            {40.0f, -40.0f, 100.0f,
+             UINT32_C(0xffffffff), 1.0f, 0.0f}
+        };
+        JPBScreenPolyVertex screen_outside_triangle[3] = {
+            {2001.0f, 10.0f, 0.0001f,
+             UINT32_C(0xffffffff), 0.0f, 0.0f},
+            {2101.0f, 10.0f, 0.0001f,
+             UINT32_C(0xffffffff), 1.0f, 0.0f},
+            {2001.0f, 110.0f, 0.0001f,
+             UINT32_C(0xffffffff), 0.0f, 1.0f}
+        };
+        ScreenPolyTriangleTrace triangle_trace = {0};
+        char old_level = LevelSelect;
+
+        material.texture = &option_texture;
+        material.flags = JPB_MATERIAL_MODE_TWO_SIDED;
+        CHECK(jpb_SoftwareClearDepthBuffer(&poly_depth));
+        CHECK(jpb_SoftwareDrawScreenPolyToSink(
+                  &material,
+                  3,
+                  negative_triangle,
+                  1,
+                  &poly_framebuffer,
+                  &poly_depth,
+                  capture_screen_poly_triangle,
+                  &triangle_trace,
+                  &poly_stats) == JPB_SOFTWARE_RENDER_OK);
+        CHECK(triangle_trace.calls == 1);
+
+        option_texture.materialType = 0;
+        memset(&triangle_trace, 0, sizeof(triangle_trace));
+        CHECK(jpb_SoftwareDrawScreenPolyToSink(
+                  &material,
+                  3,
+                  negative_triangle,
+                  1,
+                  &poly_framebuffer,
+                  &poly_depth,
+                  capture_screen_poly_triangle,
+                  &triangle_trace,
+                  &poly_stats) == JPB_SOFTWARE_RENDER_OK);
+        CHECK(triangle_trace.calls == 0);
+
+        memset(&triangle_trace, 0, sizeof(triangle_trace));
+        CHECK(jpb_SoftwareDrawScreenPolyToSink(
+                  &material,
+                  3,
+                  negative_triangle,
+                  0,
+                  &poly_framebuffer,
+                  &poly_depth,
+                  capture_screen_poly_triangle,
+                  &triangle_trace,
+                  &poly_stats) == JPB_SOFTWARE_RENDER_OK);
+        CHECK(triangle_trace.calls == 1);
+
+        memset(&triangle_trace, 0, sizeof(triangle_trace));
+        CHECK(jpb_SoftwareDrawScreenPolyToSink(
+                  &material,
+                  3,
+                  screen_outside_triangle,
+                  0,
+                  &poly_framebuffer,
+                  &poly_depth,
+                  capture_screen_poly_triangle,
+                  &triangle_trace,
+                  &poly_stats) == JPB_SOFTWARE_RENDER_OK);
+        CHECK(triangle_trace.calls == 0);
+
+        ClearCachedTextureIndices();
+        LevelSelect = 6;
+        memcpy(
+            material.filename,
+            "models/bus.tga",
+            sizeof("models/bus.tga"));
+        memset(&triangle_trace, 0, sizeof(triangle_trace));
+        CHECK(jpb_SoftwareDrawScreenPolyToSink(
+                  &material,
+                  3,
+                  negative_triangle,
+                  1,
+                  &poly_framebuffer,
+                  &poly_depth,
+                  capture_screen_poly_triangle,
+                  &triangle_trace,
+                  &poly_stats) == JPB_SOFTWARE_RENDER_OK);
+        CHECK(triangle_trace.calls == 1);
+        LevelSelect = old_level;
+        material.filename[0] = '\0';
+        material.texture = NULL;
+    }
+
+    {
+        _Material blur_material = {0};
+        VECTOR base = {100, 200, 300, 0};
+        _svector base_velocity = {4, 0, 0, 0};
+        _svector tip = {200, 300, 400, 0};
+        _svector tip_velocity = {0, 40, 0, 0};
+
+        memset(&poly_trace, 0, sizeof(poly_trace));
+        blur_material.texture = &hook_texture;
+        memset(&CameraMatrix, 0, sizeof(CameraMatrix));
+        CameraMatrix.m[0][0] = 1.0f;
+        CameraMatrix.m[1][1] = 1.0f;
+        CameraMatrix.m[2][2] = 1.0f;
+        whitematAdd = &blur_material;
+        jpb_WHookSetScreenPolyHook(
+            capture_screen_poly, &poly_trace);
+        jedi_DrawBlur(
+            &base, &base_velocity, &tip, &tip_velocity,
+            UINT32_C(0x1f112233));
+        CHECK(poly_trace.calls == 1);
+        CHECK(poly_trace.material == &blur_material);
+        CHECK(poly_trace.vertexCount == 4);
+        CHECK(poly_trace.noScale == 1);
+        CHECK(poly_trace.vertices[0].x == 100.0f);
+        CHECK(poly_trace.vertices[0].y == 200.0f);
+        CHECK(poly_trace.vertices[0].z == 300.0f);
+        CHECK(poly_trace.vertices[1].x == 90.0f);
+        CHECK(poly_trace.vertices[1].y == 200.0f);
+        CHECK(poly_trace.vertices[2].x == 200.0f);
+        CHECK(poly_trace.vertices[2].y == 300.0f);
+        CHECK(poly_trace.vertices[3].x == 200.0f);
+        CHECK(poly_trace.vertices[3].y == 260.0f);
+        CHECK(poly_trace.vertices[0].argb ==
+              UINT32_C(0x5f112233));
+        CHECK(poly_trace.vertices[0].tu == 0.0f);
+        CHECK(poly_trace.vertices[0].tv == 0.0f);
+        whitematAdd = NULL;
+        jpb_WHookSetScreenPolyHook(NULL, NULL);
+    }
+
+    {
+        _Material cylinder_material = {0};
+        VECTOR location = {10, 20, 100, 0};
+        _svector rotation = {0, 0, 0, 0};
+
+        memset(&poly_trace, 0, sizeof(poly_trace));
+        cylinder_material.texture = &hook_texture;
+        memset(&CameraMatrix, 0, sizeof(CameraMatrix));
+        memset(&gSceneGeometryEnv, 0, sizeof(gSceneGeometryEnv));
+        CameraMatrix.m[0][0] = 1.0f;
+        CameraMatrix.m[1][1] = 1.0f;
+        CameraMatrix.m[2][2] = 1.0f;
+        effects1Handle[3] = &cylinder_material;
+        jpb_WHookSetScreenPolyHook(
+            capture_screen_poly, &poly_trace);
+        drawCylinder(
+            &location, &rotation, 2.0f, 4.0f, 1.0f, 5.0f,
+            UINT32_C(0x7f123456), 0, 3, 0, 2);
+        CHECK(poly_trace.calls == 16);
+        CHECK(poly_trace.material == &cylinder_material);
+        CHECK(poly_trace.vertexCount == 4);
+        CHECK(poly_trace.noScale == 1);
+        CHECK(poly_trace.captured[0][0].x == 12.0f);
+        CHECK(poly_trace.captured[0][0].y == 21.0f);
+        CHECK(poly_trace.captured[0][0].z == 100.0f);
+        CHECK(poly_trace.captured[0][2].x == 14.0f);
+        CHECK(poly_trace.captured[0][2].y == 25.0f);
+        CHECK(poly_trace.captured[0][2].z == 100.0f);
+        CHECK(poly_trace.captured[0][0].argb ==
+              UINT32_C(0x7f123456));
+        CHECK(poly_trace.captured[0][0].tu == 0.0f);
+        CHECK(poly_trace.captured[0][1].tu == 1.0f);
+        CHECK(poly_trace.captured[0][2].tv == 1.0f);
+        CHECK(poly_trace.captured[0][3].tv == 1.0f);
+        effects1Handle[3] = NULL;
+        jpb_WHookSetScreenPolyHook(NULL, NULL);
     }
 
     {
@@ -745,5 +1098,6 @@ int main(void)
     }
 
     puts("projection tests passed");
+    jpb_TextureSetPlatformHooks(NULL, NULL, NULL);
     return 0;
 }

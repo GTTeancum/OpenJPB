@@ -551,10 +551,9 @@ int RaycastCheck(
                 s->coords != NULL &&
                 s->normals != NULL &&
                 s->geometry != NULL) {
-                int16_t *index =
-                    (int16_t *)jpb_PhysicsResolveGeometryStream(
-                        s->geometry,
-                        JPB_POINTER_ARRAY_INDEX);
+                int16_t *index = (int16_t *)getPtr(
+                    s->geometry->pIndex,
+                    JPB_POINTER_ARRAY_INDEX);
 
                 if (index != NULL) {
                     int polynum;
@@ -801,9 +800,9 @@ int intersec_FindWalkHeight(
             }
 
             {
-                int16_t *index =
-                    (int16_t *)jpb_PhysicsResolveGeometryStream(
-                        s->geometry, JPB_POINTER_ARRAY_INDEX);
+                int16_t *index = (int16_t *)getPtr(
+                    s->geometry->pIndex,
+                    JPB_POINTER_ARRAY_INDEX);
                 int polyY;
 
                 if (index == NULL || s->normals == NULL) {

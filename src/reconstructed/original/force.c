@@ -1,5 +1,5 @@
 /*
- * PARTIAL RECONSTRUCTION.
+ * REVIEWED RECONSTRUCTION.
  * PDB module: 0037
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\force.obj
  * Primary source: W:\SWJediPowerBattles\Work\force.c
@@ -116,27 +116,14 @@ static void jpb_force_set_star_effect_timing(
     }
 }
 
-/*
- * Resolve the authored motion currently owned by the player's animation
- * object. This is a portable, inferred helper rather than a PDB symbol.
- */
+/* Exact dereference chain emitted by both callback bodies. */
 static Motion *jpb_force_current_motion(
     playerObject *player)
 {
-    sceneObject *scene;
-    animObject *animation;
-
-    if (player == NULL ||
-        player->playerRoot.pParent == NULL) {
-        return NULL;
-    }
-    scene =
+    sceneObject *scene =
         (sceneObject *)player->playerRoot.pParent;
-    animation = (animObject *)scene->pAnim;
-    if (animation == NULL ||
-        animation->pCurrentAnimSeq == NULL) {
-        return NULL;
-    }
+    animObject *animation = (animObject *)scene->pAnim;
+
     return animation->pCurrentAnimSeq->pMotion;
 }
 
@@ -205,15 +192,10 @@ int force_AbsorbReflectCallBack(
     int force;
     VECTOR *pos0;
 
-    if (player == NULL) {
-        return 1;
-    }
     motion = jpb_force_current_motion(player);
     force = game_gGetForce(player->playernum);
 
-    if (motion != NULL &&
-        cpad != NULL &&
-        force > 3 &&
+    if (force > 3 &&
         (cpad[1] & INT32_C(0x20)) != 0 &&
         game_gGetEnergy(player->playernum) > 0) {
         pos0 =
@@ -253,10 +235,7 @@ int force_AbsorbReflectCallBack(
     player->forceFlags &=
         UINT32_C(0xffffffae);
     player->fScale = INT32_C(0x6db);
-    if (motion != NULL) {
-        motion->motionFlags &=
-            UINT32_C(0x7fffffff);
-    }
+    motion->motionFlags &= UINT32_C(0x7fffffff);
     return 1;
 }
 
@@ -345,15 +324,10 @@ int force_AttackSpinCallBack(
     Motion *motion;
     int force;
 
-    if (player == NULL) {
-        return 1;
-    }
     motion = jpb_force_current_motion(player);
     force = game_gGetForce(player->playernum);
 
-    if (motion != NULL &&
-        cpad != NULL &&
-        force > 3 &&
+    if (force > 3 &&
         (cpad[1] & INT32_C(0x10)) != 0) {
         ++player->forceData[0];
         if (player->forceData[0] > 2) {
@@ -373,10 +347,7 @@ int force_AttackSpinCallBack(
         return 0;
     }
 
-    if (motion != NULL) {
-        motion->motionFlags &=
-            UINT32_C(0x7fffffff);
-    }
+    motion->motionFlags &= UINT32_C(0x7fffffff);
     player->forceFlags &=
         UINT32_C(0xffffffdd);
     return 1;

@@ -17,14 +17,6 @@ typedef void (*JPBFxScreenGlowHook)(
     const _svector *end,
     int width,
     uint32_t color);
-typedef void (*JPBFxGlowingManHook)(
-    void *user_data,
-    objectRoot *object,
-    int width,
-    int height,
-    uint32_t inner_color,
-    uint32_t outer_color);
-
 /* Exact matched-PC PDB type 0x142A. */
 typedef struct _plasma_zapvars {
     int32_t inited;
@@ -37,6 +29,57 @@ typedef struct _plasma_zapvars {
     int32_t sinusyvel;
     int32_t sinuszvel;
 } _plasma_zapvars;
+
+/* Exact matched-PC PDB particle records. */
+typedef struct _particle_launcher {
+    int32_t number;
+    float pitch;
+    float yaw;
+    float angle;
+    float tail;
+    float scale;
+    uint32_t startcolor1;
+    uint32_t startcolor2;
+    uint32_t startcolorrand1;
+    uint32_t startcolorrand2;
+    uint32_t endcolor1;
+    uint32_t endcolor2;
+    int32_t lifeoffset;
+    int32_t lifeoffsetrand;
+    int32_t decayrate;
+    int32_t decayrand;
+    int32_t velocity;
+    int32_t velocityrand;
+} _particle_launcher;
+
+typedef struct _particle {
+    FVECTOR org;
+    FVECTOR vel;
+    uint32_t color1;
+    uint32_t color2;
+    int32_t life;
+    int32_t decay;
+} _particle;
+
+typedef struct _particle_8 {
+    _particle p[8];
+    float weight;
+    float bounce;
+    float decel;
+    float ground;
+    int32_t decay;
+    int32_t launchtime;
+    struct _particle_8 *next;
+} _particle_8;
+
+typedef struct _particle_list {
+    _particle_8 *plist;
+    _particle_launcher *launcher;
+    FVECTOR accel;
+    struct _particle_list *next;
+} _particle_list;
+
+typedef struct Mnode Mnode;
 
 enum { JPB_PLASMA_ZAP_CHANNELS = 8 };
 
@@ -52,8 +95,7 @@ extern int32_t zpush;
 
 void jpb_FxSetScreenGlowHook(
     JPBFxScreenGlowHook hook, void *user_data);
-void jpb_FxSetGlowingManHook(
-    JPBFxGlowingManHook hook, void *user_data);
+void jpb_FxInvalidateTextureCache(void);
 
 void fx_Init(void);
 int fx_DefaultTexturesReady(void);
@@ -90,6 +132,26 @@ void fx_screenGlow(
     _svector *end,
     int width,
     uint32_t color);
+void fx_screenGlowFV(
+    FVECTOR *start,
+    FVECTOR *end,
+    int width,
+    uint32_t color);
+void fx_screenSection(
+    _svector *start,
+    _svector *end,
+    int width,
+    uint32_t color);
+void fx_ZappingMan(objectRoot *object, uint32_t color);
+void particle_CleanUp(void);
+void particle_Init(void);
+void particle_Launch(
+    _particle_launcher *launcher,
+    FVECTOR *origin,
+    float groundplane);
+void particle_Update(void);
+void traverseModel(Mnode *node, Mnode *parent);
+void traverseModel2(Mnode *node, Mnode *parent);
 
 #if defined(__cplusplus)
 #define JPB_FX_STATIC_ASSERT(condition, message) static_assert(condition, message)
@@ -106,6 +168,26 @@ JPB_FX_STATIC_ASSERT(
 JPB_FX_STATIC_ASSERT(
     offsetof(_plasma_zapvars, sinusxvel) == 144,
     "_plasma_zapvars sinus velocity layout changed");
+JPB_FX_STATIC_ASSERT(
+    sizeof(_particle_launcher) == 72,
+    "_particle_launcher must match PDB layout");
+JPB_FX_STATIC_ASSERT(
+    sizeof(_particle) == 40,
+    "_particle must match PDB layout");
+#if UINTPTR_MAX == UINT64_MAX
+JPB_FX_STATIC_ASSERT(
+    sizeof(_particle_8) == 352,
+    "_particle_8 must match PDB layout");
+JPB_FX_STATIC_ASSERT(
+    offsetof(_particle_8, next) == 344,
+    "_particle_8.next layout changed");
+JPB_FX_STATIC_ASSERT(
+    sizeof(_particle_list) == 40,
+    "_particle_list must match PDB layout");
+JPB_FX_STATIC_ASSERT(
+    offsetof(_particle_list, next) == 32,
+    "_particle_list.next layout changed");
+#endif
 
 #undef JPB_FX_STATIC_ASSERT
 

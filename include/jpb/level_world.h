@@ -48,6 +48,17 @@ int jpb_LevelTransformFbxVertex(
     FVECTOR *game_vertex);
 
 /*
+ * Exact InitFBXLevelData per-material UV scroll selector. The returned pair
+ * is stored on every vertex and consumed by LevelVertexShader.hlsl together
+ * with g_levelUVScroll.
+ */
+void jpb_LevelFbxUvScroll(
+    int level_index,
+    const char *texture_name,
+    float *scroll_u,
+    float *scroll_v);
+
+/*
  * DrawLevel derives the Streets cullmesh slot from each FBX node name:
  * WallNN_Broken -> NN * 2 - 1, WallNN_Solid -> NN * 2. Other name
  * lengths retain atoi(name + 4), which maps the shipped streets_A0 base

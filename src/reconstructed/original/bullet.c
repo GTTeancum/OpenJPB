@@ -75,17 +75,15 @@ static void bullet_spawn_effect(
 {
     EffectHeader *effect;
 
-    if (effect_index < 0 || effect_index >= JPB_EFFECT_COUNT) {
+    if (effect_index < 0) {
         return;
     }
     effect = paEffects[effect_index];
-    if (effect != NULL) {
-        (void)sprite_AddSpriteEffect(
-            effect->aEffects,
-            (int)effect->num,
-            position,
-            velocity);
-    }
+    (void)sprite_AddSpriteEffect(
+        effect->aEffects,
+        (int)effect->num,
+        position,
+        velocity);
 }
 
 static uint32_t bullet_owner_mask(const playerObject *owner)
@@ -354,14 +352,7 @@ terminate_projectile:
             object->physicsRoot.pParent;
         int collision_result;
 
-        target = scene != NULL
-            ? (playerObject *)(void *)scene->pPlayer
-            : NULL;
-        if (target == NULL) {
-            object = physics_FindWithinRange(
-                &proj->pj_Start, &mask, 0x200);
-            continue;
-        }
+        target = (playerObject *)(void *)scene->pPlayer;
         proj->pj_Target = (int32_t *)(void *)target;
 
         if (owner != NULL && owner->playernum < 2) {
@@ -380,12 +371,10 @@ terminate_projectile:
                 (proj->pj_Flags & UINT32_C(0x6000)) == 0) {
                 sceneObject *target_scene = (sceneObject *)(void *)
                     target->playerRoot.pParent;
-                modelObject *model = target_scene != NULL
-                    ? (modelObject *)(void *)target_scene->pModel
-                    : NULL;
+                modelObject *model =
+                    (modelObject *)(void *)target_scene->pModel;
 
-                if (model != NULL &&
-                    (model->flags & UINT32_C(4)) != 0) {
+                if ((model->flags & UINT32_C(4)) != 0) {
                     proj->pj_Flags |= UINT32_C(0x6000);
                 }
             }
@@ -604,9 +593,7 @@ void bullet_ShootProjectile(
     proj->pj_Range = (int16_t)((int16_t)type->range * 2);
     proj->pj_Owner = (int32_t *)(void *)player;
     proj->pj_Target = (int32_t *)(void *)player->target;
-    proj->pj_User = player->pMotion != NULL
-        ? (int32_t *)(void *)*player->pMotion
-        : NULL;
+    proj->pj_User = (int32_t *)(void *)*player->pMotion;
     vec_RotFromNormalS(&rot, (_svector *)(void *)&proj->pj_Dir);
 
     if ((type->flag & UINT16_C(8)) == 0) {

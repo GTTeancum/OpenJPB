@@ -1,12 +1,13 @@
 /*
- * PARTIAL REVIEWED RECONSTRUCTION of
+ * COMPLETE REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\Work\scene.c.
  *
- * The reviewed subset owns gameplay view records, current/destination
+ * The reviewed module owns gameplay view records, current/destination
  * world-to-screen matrices, scene transform publication, player death, and
  * post-render timing/double-buffer state, off-screen player warning
- * presentation, and the main render scheduler. Level-specific callbacks are
- * being restored individually from their owning modules.
+ * presentation, the main render scheduler, and direct level-special dispatch.
+ * Optional portable hooks observe exact scheduler boundaries or replace only
+ * the platform model-submission boundary.
  *
  * Provenance:
  *   direct     - names/signatures from the exact PDB; sceneGeometryEnv from
@@ -514,9 +515,8 @@ void scene_gInitRoot(void)
 }
 /*
  * Exact pool-reset block from scene_gInitScenes, RVAs 0xF5A24..0xF5A90.
- * The remaining original routine registers three developer-console commands;
- * that console integration stays pending rather than pulling placeholder
- * callbacks into the portable gameplay core.
+ * The complete owner also registers the three shipped developer-console
+ * commands below.
  */
 void jpb_SceneInitPool(int start)
 {
@@ -704,9 +704,6 @@ static float scene_collision_frustum_percent(void)
 static void scene_run_level_owner(void)
 {
     int level = (uint8_t)LevelSelect;
-    int argument0 = 0;
-    int argument1 = 0;
-    int argument2 = 0;
 
     switch (level) {
     case 1:
@@ -721,13 +718,24 @@ static void scene_run_level_owner(void)
     case 6:
         level_Corus();
         return;
+    case 7:
+        level_Ruins();
+        return;
     case 9:
         level_Hangar();
         return;
+    case 10:
+        core_specials();
+        return;
     case 11:
-        argument0 = 150;
-        argument1 = 21;
-        break;
+        level_Mini1(150, 21);
+        return;
+    case 12:
+        level_Mini2();
+        return;
+    case 13:
+        level_Mini3();
+        return;
     case 14:
         level_CountDown(0, 100, 0);
         return;
@@ -757,14 +765,6 @@ static void scene_run_level_owner(void)
         return;
     default:
         break;
-    }
-    if (scene_middle_render_hooks.levelOwner != NULL) {
-        scene_middle_render_hooks.levelOwner(
-            scene_middle_render_user_data,
-            level,
-            argument0,
-            argument1,
-            argument2);
     }
 }
 

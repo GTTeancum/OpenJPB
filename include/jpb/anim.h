@@ -201,17 +201,16 @@ void jpb_AnimResetObjectSlot(int index);
 void jpb_AnimApplyMotionPhysics(playerObject *player, const Motion *motion);
 
 /*
- * Descriptive, portable activation stage shared with the exact
- * anim_ForceNextAnimSeq owner and retained as a focused test boundary. Frame
- * decompression, tween generation, motion sound scheduling, and callback
- * selection are handled by their reviewed original owners.
+ * Descriptive bounded facade retained as a focused test boundary for the
+ * reviewed activation state. The exact anim_ForceNextAnimSeq owner performs
+ * its canonical queue transition directly.
  */
 JPBAnimPartialResult jpb_AnimActivateQueuedMotionState(
     animObject *animation);
 /*
- * Reviewed sequence-end decision from anim_GoNextAnimFrame. It loops
- * authored looping motions, activates queued successors, and uses the
- * original anim_MotionRecovery path when a non-looping queue runs empty.
+ * Bounded facade for the reviewed sequence-end decision in
+ * anim_GoNextAnimFrame. It loops authored motions, activates queued
+ * successors, and uses anim_MotionRecovery when a non-looping queue is empty.
  */
 JPBAnimPartialResult jpb_AnimAdvanceQueuedMotionAtEnd(
     animObject *animation);

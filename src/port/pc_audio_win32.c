@@ -70,6 +70,10 @@ typedef struct JPBPCAudioVoice {
     int quiet;
     int nonSpatial;
     int voiceSound;
+    int mixerLeft;
+    int mixerRight;
+    int mixerDistance;
+    int mixerVolume;
     ULONGLONG fadeStart;
     uint32_t fadeDuration;
 } JPBPCAudioVoice;
@@ -944,61 +948,25 @@ static JPBPCAudioVoice *pc_audio_choose_voice(
 }
 
 static void pc_audio_gains(
-    const VECTOR *position,
-    int quiet,
-    int non_spatial,
-    int voice_sound,
-    int looping,
+    const JPBPCAudioVoice *voice,
     float *left_gain,
     float *right_gain)
 {
-    float left = 200.0f;
-    float right = 200.0f;
-    float mixer_volume;
+    float attenuation =
+        (255.0f - (float)voice->mixerDistance) / 255.0f;
+    float mixer_volume = (float)voice->mixerVolume;
 
-    if (!non_spatial && position != NULL) {
-        VECTOR listener = convert_svector_to_vector(cameraLocation);
-        uint8_t distance = 0;
-        int left_volume = 128;
-        int right_volume = 128;
-        float attenuation;
-
-        get_sound_volume(
-            listener,
-            *position,
-            &distance,
-            &left_volume,
-            &right_volume);
-        attenuation = (255.0f - (float)distance) / 255.0f;
-        left = (float)left_volume * attenuation;
-        right = (float)right_volume * attenuation;
-    }
-    if (voice_sound) {
-        left *= 1.2f;
-        right *= 1.2f;
-        if (left > 128.0f) {
-            left = 128.0f;
-        }
-        if (right > 128.0f) {
-            right = 128.0f;
-        }
-    } else if (quiet) {
-        left *= 0.2f;
-        right *= 0.2f;
-    }
-    /*
-     * Exact sound_playSfx Mix_Volume arithmetic: ordinary channels use the
-     * executable's 0.92 multiplier, while the six infinite loops use 1.0.
-     * SDL_mixer clamps its channel volume to MIX_MAX_VOLUME (128).
-     */
-    mixer_volume = (float)(int)(
-        (float)OptionStruct.SFXVolume *
-        (looping ? 1.0f : 0.92f));
     if (mixer_volume > 128.0f) {
         mixer_volume = 128.0f;
     }
-    *left_gain = (left / 255.0f) * (mixer_volume / 128.0f);
-    *right_gain = (right / 255.0f) * (mixer_volume / 128.0f);
+    *left_gain =
+        ((float)voice->mixerLeft / 255.0f) *
+        attenuation *
+        (mixer_volume / 128.0f);
+    *right_gain =
+        ((float)voice->mixerRight / 255.0f) *
+        attenuation *
+        (mixer_volume / 128.0f);
 }
 
 static void pc_audio_set_voice_volume(
@@ -1014,14 +982,7 @@ static void pc_audio_set_voice_volume(
     if (voice == NULL || voice->output == NULL) {
         return;
     }
-    pc_audio_gains(
-        voice->loopPosition,
-        voice->quiet,
-        voice->nonSpatial,
-        voice->voiceSound,
-        voice->looping,
-        &left,
-        &right);
+    pc_audio_gains(voice, &left, &right);
     if (voice->fadeDuration != 0) {
         ULONGLONG elapsed = GetTickCount64() - voice->fadeStart;
 
@@ -1100,7 +1061,28 @@ void jpb_PCAudioGetStats(
     *stats = audio->stats;
 }
 
+static void *pc_audio_chunk_load_hook(
+    const char *path, void *user_data)
+{
+    JPBPCAudio *audio = (JPBPCAudio *)user_data;
+
+    if (audio == NULL || !audio->outputEnabled || path == NULL) {
+        return NULL;
+    }
+    return pc_audio_cached_sample(audio, path);
+}
+
+static void pc_audio_chunk_free_hook(
+    void *chunk, void *user_data)
+{
+    /* Samples are shared by authored path and released with JPBPCAudio. */
+    (void)chunk;
+    (void)user_data;
+}
+
 static uint16_t pc_audio_play_hook(
+    void *chunk,
+    int loops,
     VECTOR *position,
     int bank_id,
     char *sound,
@@ -1109,36 +1091,29 @@ static uint16_t pc_audio_play_hook(
 {
     JPBPCAudio *audio = (JPBPCAudio *)user_data;
     JPBPCAudioVoice *voice = NULL;
-    JPBPCAudioSample *sample;
+    JPBPCAudioSample *sample = (JPBPCAudioSample *)chunk;
     JPBPCAudioWavInfo info;
     WAVEFORMATEX format;
-    char path[JPB_PC_AUDIO_PATH_CAPACITY];
     const char *name = pc_audio_sound_name(sound);
     size_t index = 0;
     MMRESULT result;
 
     (void)flag;
+    (void)bank_id;
     if (audio == NULL || !audio->outputEnabled || name == NULL ||
-        !jpb_PCAudioResolveSound(
-            audio, bank_id, sound, path, sizeof(path))) {
-        return 0;
+        sample == NULL) {
+        return UINT16_MAX;
     }
     pc_audio_reap(audio);
-    sample = pc_audio_cached_sample(audio, path);
-    if (sample == NULL) {
-        jpb_PCLog(
-            "audio sample play failed path=%s reason=cache-load",
-            path);
-        return 0;
-    }
     info = sample->info;
     pc_audio_format_from_wav(&info, &format);
     voice = pc_audio_choose_voice(audio, &info, &index);
     if (voice == NULL) {
-        return 0;
+        return UINT16_MAX;
     }
-    if (!pc_audio_prepare_voice_output(voice, &info, &format, path)) {
-        return 0;
+    if (!pc_audio_prepare_voice_output(
+            voice, &info, &format, sample->path)) {
+        return UINT16_MAX;
     }
     voice->fileBytes = sample->bytes;
     voice->borrowedFileBytes = 1;
@@ -1146,7 +1121,7 @@ static uint16_t pc_audio_play_hook(
     voice->header.lpData =
         (LPSTR)(voice->fileBytes + info.dataOffset);
     voice->header.dwBufferLength = info.dataSize;
-    voice->looping = pc_audio_is_looping(name);
+    voice->looping = loops == -1;
     if (voice->looping) {
         voice->header.dwFlags = WHDR_BEGINLOOP | WHDR_ENDLOOP;
         voice->header.dwLoops = UINT32_MAX;
@@ -1156,10 +1131,10 @@ static uint16_t pc_audio_play_hook(
     if (result != MMSYSERR_NOERROR) {
         jpb_PCLog(
             "audio stream prepare failed path=%s result=%u",
-            path,
+            sample->path,
             (unsigned)result);
         pc_audio_release_voice(voice);
-        return 0;
+        return UINT16_MAX;
     }
     voice->prepared = 1;
     voice->active = 1;
@@ -1171,6 +1146,10 @@ static uint16_t pc_audio_play_hook(
         strchr(sound, '!') == sound ||
         (sound[0] == '-' && sound[1] == '!');
     voice->voiceSound = name[0] == 'v';
+    voice->mixerLeft = 255;
+    voice->mixerRight = 255;
+    voice->mixerDistance = 0;
+    voice->mixerVolume = 128;
     voice->loopPosition = voice->looping ? position : NULL;
     if (!voice->looping) {
         voice->loopPosition = position;
@@ -1181,16 +1160,16 @@ static uint16_t pc_audio_play_hook(
     if (result != MMSYSERR_NOERROR) {
         jpb_PCLog(
             "audio stream write failed path=%s result=%u",
-            path,
+            sample->path,
             (unsigned)result);
         pc_audio_release_voice(voice);
-        return 0;
+        return UINT16_MAX;
     }
     if (!voice->looping) {
         voice->loopPosition = NULL;
     }
     ++audio->stats.sfxStarted;
-    return (uint16_t)(index + 1);
+    return (uint16_t)index;
 }
 
 static void pc_audio_stop_hook(
@@ -1200,10 +1179,10 @@ static void pc_audio_stop_hook(
     JPBPCAudio *audio = (JPBPCAudio *)user_data;
     size_t index;
 
-    if (audio == NULL || handle == 0) {
+    if (audio == NULL) {
         return;
     }
-    index = (size_t)handle - 1;
+    index = (size_t)handle;
     if (index < JPB_PC_AUDIO_VOICE_COUNT &&
         audio->voices[index].active) {
         pc_audio_recycle_voice(&audio->voices[index]);
@@ -1218,10 +1197,10 @@ static void pc_audio_fade_hook(
     JPBPCAudio *audio = (JPBPCAudio *)user_data;
     size_t index;
 
-    if (audio == NULL || handle == 0) {
+    if (audio == NULL) {
         return;
     }
-    index = (size_t)handle - 1;
+    index = (size_t)handle;
     if (index >= JPB_PC_AUDIO_VOICE_COUNT ||
         !audio->voices[index].active) {
         return;
@@ -1263,6 +1242,77 @@ static int pc_audio_bank_hook(
         audio->bankPathCount[bank_id] = 0;
     }
     return 1;
+}
+
+static int pc_audio_setup_hook(
+    JPBSoundSetupOperation operation,
+    int value0,
+    int value1,
+    int value2,
+    int value3,
+    void *user_data)
+{
+    JPBPCAudio *audio = (JPBPCAudio *)user_data;
+
+    (void)value1;
+    (void)value2;
+    (void)value3;
+    if (audio == NULL) {
+        return -1;
+    }
+    switch (operation) {
+    case JPB_SOUND_SETUP_INIT:
+        return 0;
+    case JPB_SOUND_SETUP_OPEN_AUDIO:
+        return 0;
+    case JPB_SOUND_SETUP_ALLOCATE_CHANNELS:
+        return value0 < JPB_PC_AUDIO_VOICE_COUNT
+            ? value0
+            : JPB_PC_AUDIO_VOICE_COUNT;
+    default:
+        return -1;
+    }
+}
+
+static void pc_audio_channel_hook(
+    JPBSoundChannelOperation operation,
+    int channel,
+    int value0,
+    int value1,
+    void *user_data)
+{
+    JPBPCAudio *audio = (JPBPCAudio *)user_data;
+    JPBPCAudioVoice *voice;
+
+    if (audio == NULL || channel < 0 ||
+        channel >= JPB_PC_AUDIO_VOICE_COUNT) {
+        return;
+    }
+    voice = &audio->voices[channel];
+    if (!voice->active) {
+        return;
+    }
+    switch (operation) {
+    case JPB_SOUND_CHANNEL_PANNING:
+        voice->mixerLeft = value0;
+        voice->mixerRight = value1;
+        pc_audio_set_voice_volume(voice);
+        break;
+    case JPB_SOUND_CHANNEL_DISTANCE:
+        voice->mixerDistance = value0;
+        pc_audio_set_voice_volume(voice);
+        break;
+    case JPB_SOUND_CHANNEL_VOLUME:
+        voice->mixerVolume = value0;
+        pc_audio_set_voice_volume(voice);
+        break;
+    case JPB_SOUND_CHANNEL_PAUSE:
+        (void)waveOutPause(voice->output);
+        break;
+    case JPB_SOUND_CHANNEL_RESUME:
+        (void)waveOutRestart(voice->output);
+        break;
+    }
 }
 
 static void pc_audio_control_hook(
@@ -1582,6 +1632,12 @@ JPBPCAudio *jpb_PCAudioCreate(
     audio->outputEnabled = enable_output != 0;
     audio->musicVolume = 128;
     jpb_SoundSetBankHook(pc_audio_bank_hook, audio);
+    jpb_SoundSetChunkHooks(
+        pc_audio_chunk_load_hook,
+        pc_audio_chunk_free_hook,
+        audio);
+    jpb_SoundSetSetupHook(pc_audio_setup_hook, audio);
+    jpb_SoundSetChannelHook(pc_audio_channel_hook, audio);
     jpb_SoundSetControlHook(pc_audio_control_hook, audio);
     if (audio->outputEnabled) {
         jpb_SoundSetPlaySfxHook(pc_audio_play_hook, audio);
@@ -1625,10 +1681,13 @@ void jpb_PCAudioDestroy(JPBPCAudio *audio)
     if (audio == NULL) {
         return;
     }
-    for (bank = 0; bank < 5; ++bank) {
+    for (bank = 0; bank < 4; ++bank) {
         sound_FreeBank(bank);
     }
     jpb_SoundSetBankHook(NULL, NULL);
+    jpb_SoundSetChunkHooks(NULL, NULL, NULL);
+    jpb_SoundSetSetupHook(NULL, NULL);
+    jpb_SoundSetChannelHook(NULL, NULL);
     jpb_SoundSetControlHook(NULL, NULL);
     if (audio->outputEnabled) {
         jpb_SoundSetPlaySfxHook(NULL, NULL);

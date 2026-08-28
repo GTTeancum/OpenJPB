@@ -54,12 +54,14 @@ static void capture_texture(
 static void capture_polygon(
     void *user_data,
     _Material *material,
+    uint32_t material_flags,
     int vertex_count,
     const JPBScreenPolyVertex *vertices,
     int no_scale)
 {
     SpriteDrawTrace *trace = (SpriteDrawTrace *)user_data;
 
+    (void)material_flags;
     ++trace->polygon_calls;
     trace->texture = material;
     trace->vertex_count = vertex_count;
@@ -114,6 +116,7 @@ static void reset_sprite_runtime(void)
     sprite_gInitSprites();
     GameStruct.GameState &= ~UINT32_C(0x02000000);
     OptionStruct.FunFactor &= UINT8_C(0xfe);
+    OptionStruct.overlayMode = 1;
     gGlobalFrameRate = 4096;
     framerate = 1.0f;
     mDrawingSurfaceId = 0;
@@ -241,6 +244,7 @@ static int test_render_sprite_paths(void)
     memset(&material, 0, sizeof(material));
     memset(&scb, 0, sizeof(scb));
     memset(&matrix, 0, sizeof(matrix));
+    material.texture = &material;
     material.iw = 32;
     material.ih = 16;
     scb.scb_Texture = &material;
@@ -319,6 +323,7 @@ static int test_sprite_rot_scale_and_work(void)
     memset(&trace, 0, sizeof(trace));
     memset(&material, 0, sizeof(material));
     memset(&matrix, 0, sizeof(matrix));
+    material.texture = &material;
     material.iw = 10;
     material.ih = 6;
     sptr = sprite_gAllocSprite(8);
@@ -368,20 +373,38 @@ static int test_sprite_rot_scale_and_work(void)
     return 0;
 }
 
-static int test_double_buffer_selector_recovery(void)
+static int test_set_sprite_position_storage_order(void)
 {
-    MATRIX matrix;
+    _Material material;
+    Sprite *sptr;
+    SCB *scb;
 
     reset_sprite_runtime();
-    memset(&matrix, 0, sizeof(matrix));
-    matrix.m[0][0] = 1.0f;
-    matrix.m[1][1] = 1.0f;
-    matrix.m[2][2] = 1.0f;
-    mCurSCBList = 6;
-    sprite_SpriteWork(&matrix);
-    CHECK(jpb_sprite_list_recovery_count == 1);
-    CHECK(jpb_sprite_last_invalid_selector == 6);
-    CHECK(mCurSCBList == 1);
+    memset(&material, 0, sizeof(material));
+    material.iw = 10;
+    material.ih = 6;
+    sptr = sprite_gAllocSprite(8);
+    CHECK(sptr != NULL);
+    scb = sptr->sp_SCB;
+    CHECK(scb != NULL);
+    scb->scb_Texture = &material;
+
+    sprite_gSetSpritePosition(sptr, 100, 200, 300);
+    CHECK(sptr->sp_Pos.vx == 100.0f);
+    CHECK(sptr->sp_Pos.vy == 200.0f);
+    CHECK(sptr->sp_Pos.vz == 300.0f);
+    CHECK(scb->scb_vertex0.vx == 300.0f);
+    CHECK(scb->scb_vertex1.vx == 300.0f);
+    CHECK(scb->scb_vertex2.vx == 300.0f);
+    CHECK(scb->scb_vertex3.vx == 300.0f);
+    CHECK(scb->scb_vertex0.vy == 197.0f);
+    CHECK(scb->scb_vertex1.vy == 197.0f);
+    CHECK(scb->scb_vertex2.vy == 203.0f);
+    CHECK(scb->scb_vertex3.vy == 203.0f);
+    CHECK(scb->scb_vertex0.vz == 95.0f);
+    CHECK(scb->scb_vertex1.vz == 105.0f);
+    CHECK(scb->scb_vertex2.vz == 95.0f);
+    CHECK(scb->scb_vertex3.vz == 105.0f);
     return 0;
 }
 
@@ -453,14 +476,14 @@ static int test_add_normal_effect(void)
     CHECK(sptr->sp_cScale.limit == 5000);
     CHECK((uint32_t)sptr->sp_Flags == UINT32_C(0x00100000));
     CHECK((uint32_t)scb->scb_flags == UINT32_C(0x00100208));
-    CHECK(scb->scb_vertex0.vx == 97.0f);
+    CHECK(scb->scb_vertex0.vx == 304.0f);
     CHECK(scb->scb_vertex0.vy == 200.0f);
-    CHECK(scb->scb_vertex0.vz == 304.0f);
-    CHECK(scb->scb_vertex3.vx == 107.0f);
+    CHECK(scb->scb_vertex0.vz == 97.0f);
+    CHECK(scb->scb_vertex3.vx == 304.0f);
     CHECK(scb->scb_vertex3.vy == 206.0f);
-    CHECK(scb->scb_vertex3.vz == 304.0f);
+    CHECK(scb->scb_vertex3.vz == 107.0f);
     CHECK(scb->scb_cvertex.vx == 9.0f);
-    CHECK(scb->scb_cvertex.vz == 7.0f);
+    CHECK(scb->scb_cvertex.pad == 7);
     return 0;
 }
 
@@ -478,15 +501,15 @@ static int test_ring_effects(void)
     data.rot.vy = 2;
     data.rot.vz = 3;
     data.b.init = 4;
-    data.b.acc = 5;
+    data.b.vel = 5;
     data.r1.init = 6;
-    data.r1.acc = 7;
+    data.r1.vel = 7;
     data.r2.init = 8;
-    data.r2.acc = 9;
+    data.r2.vel = 9;
     data.h1.init = 10;
-    data.h1.acc = 11;
+    data.h1.vel = 11;
     data.h2.init = 12;
-    data.h2.acc = 13;
+    data.h2.vel = 13;
     data.time = 14;
     gGlobalTimer = 100;
 
@@ -529,6 +552,71 @@ static int test_ring_effects(void)
         cursor = (Ring *)cursor->sp_Next;
     }
     CHECK(count == 16);
+    return 0;
+}
+
+static int test_ring_callback_paths(void)
+{
+    SpriteDrawTrace trace;
+    _Material textured_material;
+    _Material white_material;
+    RingData data;
+    Ring ring;
+
+    reset_sprite_runtime();
+    memset(&trace, 0, sizeof(trace));
+    memset(&textured_material, 0, sizeof(textured_material));
+    memset(&white_material, 0, sizeof(white_material));
+    memset(&data, 0, sizeof(data));
+    memset(&ring, 0, sizeof(ring));
+    vec_IdentMatrix(&CameraMatrix);
+    memset(&gSceneGeometryEnv.pos, 0, sizeof(gSceneGeometryEnv.pos));
+    textured_material.texture = &textured_material;
+    white_material.texture = &white_material;
+    effects1Handle[5] = &textured_material;
+    whitemat = &white_material;
+    data.type = 5;
+    data.rvel = 7;
+    ring.pRingData = &data;
+    ring.time = 1;
+    ring.rad1 = 10;
+    ring.rad2 = 20;
+    ring.h1 = 30;
+    ring.h2 = 40;
+    gGlobalTimer = 0;
+    gGlobalFrameRate = 0;
+    jpb_WHookSetScreenPolyHook(capture_polygon, &trace);
+
+    CHECK(sprite_RingCallBack(&ring) == 0);
+    CHECK(trace.polygon_calls == 16);
+    CHECK(trace.texture == &textured_material);
+    CHECK(ring.rot.vx == 0);
+    CHECK(ring.rot.vy == 7);
+
+    memset(&trace, 0, sizeof(trace));
+    ring.rot.pad = (int16_t)UINT16_C(0x80);
+    CHECK(sprite_RingCallBack(&ring) == 0);
+    CHECK(trace.polygon_calls == 16);
+    CHECK(trace.texture == &white_material);
+    CHECK(ring.rot.vy == 14);
+    jpb_WHookSetScreenPolyHook(NULL, NULL);
+    whitemat = NULL;
+    return 0;
+}
+
+static int test_orbit_uses_unclamped_time_step(void)
+{
+    VECTOR center = {10, 20, 30, 0};
+    Sprite sprite;
+
+    memset(&sprite, 0, sizeof(sprite));
+    sprite.sp_User = (int32_t *)(void *)&center;
+    sprite.sp_Time = 0;
+    CHECK(sprite_OrbitNode((int32_t *)(void *)&sprite) == 0);
+    CHECK(sprite.sp_Time == 0);
+    CHECK(sprite.sp_Pos.vx == 1802.0f);
+    CHECK(sprite.sp_Pos.vy == 20.0f);
+    CHECK(sprite.sp_Pos.vz == 30.0f);
     return 0;
 }
 
@@ -654,9 +742,9 @@ static int test_add_callback_recursion(void)
     CHECK(mSCBDraw[0].head != NULL);
     spawned_scb = (SCB *)mSCBDraw[0].head;
     CHECK(spawned_scb->scb_Texture == &material);
-    CHECK(spawned_scb->scb_vertex0.vx == 115.0f);
+    CHECK(spawned_scb->scb_vertex0.vx == 300.0f);
     CHECK(spawned_scb->scb_vertex0.vy == 200.0f);
-    CHECK(spawned_scb->scb_vertex0.vz == 300.0f);
+    CHECK(spawned_scb->scb_vertex0.vz == 115.0f);
     return 0;
 }
 
@@ -792,13 +880,19 @@ int main(void)
     if (test_sprite_rot_scale_and_work() != 0) {
         return 1;
     }
-    if (test_double_buffer_selector_recovery() != 0) {
+    if (test_set_sprite_position_storage_order() != 0) {
         return 1;
     }
     if (test_add_normal_effect() != 0) {
         return 1;
     }
     if (test_ring_effects() != 0) {
+        return 1;
+    }
+    if (test_ring_callback_paths() != 0) {
+        return 1;
+    }
+    if (test_orbit_uses_unclamped_time_step() != 0) {
         return 1;
     }
     if (test_add_effect_at_node() != 0) {

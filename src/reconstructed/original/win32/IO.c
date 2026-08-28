@@ -1,5 +1,5 @@
 /*
- * REVIEWED PORTABLE RECONSTRUCTION of
+ * COMPLETE REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\work\win32\IO.c.
  *
  * This is the game's existing file-I/O seam. The reference delegates to the
@@ -11,8 +11,9 @@
  *   decompiled - mode dispatch and wrapper calls checked against Ghidra.
  *   assembly   - memory-source cursor advancement and return values checked
  *                at RVAs 0x128630 through 0x12897F.
- *   substituted- diagnostic console writes are omitted; standard "ab" is
- *                used for the reference CRT's equivalent "awb" mode.
+ *
+ * All eleven emitted procedures have been checked instruction by instruction
+ * against the shipped executable at RVAs 0x128630 through 0x12897F.
  *
  * PDB module: 0096
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\IO.obj
@@ -23,6 +24,8 @@
  * Use inventory/function_map.tsv with ExportReconstruction.java.
  */
 
+#include "jpb/bucket.h"
+#include "jpb/debugtext.h"
 #include "jpb/filesys.h"
 #include "jpb/io.h"
 
@@ -35,18 +38,37 @@ static FILE *io_file_from_handle(JPBFileHandle handle)
     return (FILE *)(uintptr_t)handle;
 }
 
+#if defined(JPB_IO_TESTING)
+static JPBFileAppendOpenTestHook file_append_open_test_hook;
+
+void jpb_IOSetFileAppendOpenTestHook(JPBFileAppendOpenTestHook hook)
+{
+    file_append_open_test_hook = hook;
+}
+#endif
+
 /* Reference RVA 0x128630, 164 bytes. */
 uint64_t file_AppendFile(char *name, char *buf, int32_t size)
 {
-    FILE *file = fopen(name, "ab");
+    FILE *file;
     size_t written;
 
+    (void)debug_printf("write:%s\n", name);
+#if defined(JPB_IO_TESTING)
+    if (file_append_open_test_hook != NULL) {
+        file = (FILE *)file_append_open_test_hook(name, "awb");
+    } else
+#endif
+    {
+    file = fopen(name, "awb");
+    }
     if (file == NULL) {
+        (void)debug_printf("can't open APPEND:%s\n", name);
         return 0;
     }
     written = fwrite(buf, (size_t)size, 1, file);
     if (written == 0) {
-        /* The reference also leaves the stream open on this error path. */
+        (void)debug_printf("APPEND error:%s\n", name);
         return 0;
     }
     (void)fclose(file);
@@ -84,8 +106,7 @@ int file_OPEN(char *name, JPBFileHandle *fd)
         return 0;
     }
     *fd = (JPBFileHandle)(uintptr_t)file;
-
-    /* The reference additionally records the path in its debug tracker. */
+    updateBucket(name);
     return 1;
 }
 
@@ -121,9 +142,6 @@ unsigned file_ReadPC(char *name, char *buf)
 {
     (void)name;
     (void)buf;
-
-    /* The reference is an empty stub with an indeterminate EAX result. */
-    return 0;
 }
 
 /* Reference RVA 0x128870, 22 bytes. */
@@ -137,15 +155,18 @@ uint64_t file_SEEK(JPBFileHandle *fd, int bytes)
 /* Reference RVA 0x128890, 164 bytes. */
 uint64_t file_WriteFile(char *name, char *buf, int32_t size)
 {
-    FILE *file = fopen(name, "wb");
+    FILE *file;
     size_t written;
 
+    (void)debug_printf("write:%s\n", name);
+    file = fopen(name, "wb");
     if (file == NULL) {
+        (void)debug_printf("can't create:%s\n", name);
         return 0;
     }
     written = fwrite(buf, (size_t)size, 1, file);
     if (written == 0) {
-        /* The reference also leaves the stream open on this error path. */
+        (void)debug_printf("write error:%s\n", name);
         return 0;
     }
     (void)fclose(file);

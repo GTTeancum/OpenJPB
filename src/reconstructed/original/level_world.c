@@ -211,6 +211,31 @@ int jpb_LevelTransformFbxVertex(
     return 1;
 }
 
+void jpb_LevelFbxUvScroll(
+    int level_index,
+    const char *texture_name,
+    float *scroll_u,
+    float *scroll_v)
+{
+    float u = 0.0f;
+    float v = 0.0f;
+
+    if (texture_name != NULL) {
+        if (level_index == 1 && strcmp(texture_name, "belt.bmp") == 0) {
+            u = 0.082f;
+        } else if (level_index == 9 &&
+                   strcmp(texture_name, "t_water.tga") == 0) {
+            u = 0.001f;
+            v = 0.001f;
+        } else if (level_index == 9 &&
+                   strcmp(texture_name, "t_waterStatic.tga") == 0) {
+            v = -0.1f;
+        }
+    }
+    if (scroll_u != NULL) *scroll_u = u;
+    if (scroll_v != NULL) *scroll_v = v;
+}
+
 int jpb_StreetsCullMeshIndexFromName(const char *mesh_name)
 {
     const char *cursor;
@@ -280,12 +305,9 @@ int jpb_ShouldDrawFbxMesh(
         return cull_index != JPB_LEVEL_INDEX_NONE &&
                cullmesh[cull_index] == 1;
     }
-    /*
-     * Non-Streets live FBX nodes do not carry the original DrawLevel mesh
-     * partition indices. Applying cullmesh by FBX node index drops authored
-     * room geometry and exposes the void as the camera changes dolly. JPX
-     * rendering still uses the original cullmesh path; the FBX bridge only
-     * culls where a data-backed Streets name map exists.
-     */
-    return 1;
+    if (pass != JPB_LEVEL_FBX_PASS_OPAQUE ||
+        mesh_count > JPB_CULL_MESH_COUNT - 1) {
+        return 1;
+    }
+    return cullmesh[mesh_index] == 1;
 }

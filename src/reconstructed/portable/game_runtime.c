@@ -45,6 +45,7 @@
 #include "jpb/sprite.h"
 #include "jpb/tga.h"
 #include "jpb/text.h"
+#include "jpb/utf16.h"
 #include "jpb/texture.h"
 #include "jpb/whook.h"
 
@@ -86,9 +87,7 @@ enum {
     JPB_GAME_RUNTIME_MODEL_TEXTURE_CAPACITY =
         JPB_BMD_NODE_CAPACITY,
     JPB_GAME_RUNTIME_ENEMY_CLASS_CAPACITY =
-        JPB_ACTOR_NAME_COUNT,
-    JPB_GAME_RUNTIME_POWERUP_MODEL_COUNT = 17,
-    JPB_GAME_RUNTIME_POWERUP_DRAW_CAPACITY = 128
+        JPB_ACTOR_NAME_COUNT
 };
 
 static const char *game_runtime_last_failure_stage = "none";
@@ -148,39 +147,26 @@ typedef struct JPBGameRuntimeTexture {
     JPBSoftwareTexture texture;
 } JPBGameRuntimeTexture;
 
-typedef struct JPBGameRuntimePowerupAsset {
-    uint8_t *bmdStorage;
-    JPBBmdView bmdView;
-    JPBGameRuntimeTextureCache *textureCache;
-    modelObject model;
-    Mnode nodes[JPB_MODEL_NODE_CAPACITY];
-    int loaded;
-} JPBGameRuntimePowerupAsset;
-
-typedef struct JPBGameRuntimePowerupDraw {
-    _svector position;
-    unsigned type;
-    _svector rotation;
-    VECTOR scale;
-    _svector offset;
-} JPBGameRuntimePowerupDraw;
-
 typedef struct JPBGameRuntimePowerupState {
-    JPBGameRuntimePowerupAsset
-        assets[JPB_GAME_RUNTIME_POWERUP_MODEL_COUNT];
-    JPBGameRuntimePowerupDraw
-        pending[JPB_GAME_RUNTIME_POWERUP_DRAW_CAPACITY];
-    size_t pendingCount;
-    size_t droppedCount;
+    JPBGameRuntimeTextureCache *textureCache;
 } JPBGameRuntimePowerupState;
 
-static void game_runtime_capture_draw_texture(
+static void game_runtime_capture_screen_poly(
+    void *user_data,
+    _Material *material,
+    uint32_t material_flags,
+    int vertex_count,
+    const JPBScreenPolyVertex *vertices,
+    int no_scale);
+
+static void game_runtime_capture_draw_texture_common(
     void *user_data,
     _Material *texture,
     const SCREENRECT *destination,
     const SCREENRECT *source,
     CVECTOR color,
-    float layer_depth)
+    float layer_depth,
+    const SCREENRECT *scissor)
 {
     JPBGameRuntime *runtime =
         (JPBGameRuntime *)user_data;
@@ -204,12 +190,65 @@ static void game_runtime_capture_draw_texture(
     draw->color = color;
     draw->layerDepth = layer_depth;
     draw->hasSource = source != NULL;
+    draw->hasScissor = scissor != NULL &&
+        scissor->left != -1 && scissor->top != -1 &&
+        scissor->right != -1 && scissor->bottom != -1;
     draw->isPlayerHudTile = 0;
     if (source != NULL) {
         draw->source = *source;
     } else {
         memset(&draw->source, 0, sizeof(draw->source));
     }
+    if (draw->hasScissor) {
+        draw->scissor = *scissor;
+    } else {
+        memset(&draw->scissor, 0, sizeof(draw->scissor));
+    }
+}
+
+static void game_runtime_capture_draw_texture(
+    void *user_data,
+    _Material *texture,
+    const SCREENRECT *destination,
+    const SCREENRECT *source,
+    CVECTOR color,
+    float layer_depth)
+{
+    game_runtime_capture_draw_texture_common(
+        user_data, texture, destination, source, color,
+        layer_depth, NULL);
+}
+
+static void game_runtime_capture_clear_window(void *user_data)
+{
+    JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
+
+    if (runtime != NULL) {
+        runtime->clearWindowRequested = 1;
+    }
+}
+
+static void game_runtime_capture_render_load(void *user_data)
+{
+    JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
+
+    if (runtime != NULL) {
+        ++runtime->loadScreenPresentCount;
+    }
+}
+
+static void game_runtime_capture_draw_texture_clipped(
+    void *user_data,
+    _Material *texture,
+    const SCREENRECT *destination,
+    const SCREENRECT *source,
+    CVECTOR color,
+    float layer_depth,
+    const SCREENRECT *scissor)
+{
+    game_runtime_capture_draw_texture_common(
+        user_data, texture, destination, source, color,
+        layer_depth, scissor);
 }
 
 static void game_runtime_capture_player_tile(
@@ -265,47 +304,11 @@ static void game_runtime_capture_player_tile(
     draw->color.cd = (uint8_t)(color >> 24);
     draw->layerDepth = position->vz;
     draw->hasSource = 0;
+    draw->hasScissor = 0;
     draw->isPlayerHudTile = 1;
     memset(&draw->source, 0, sizeof(draw->source));
+    memset(&draw->scissor, 0, sizeof(draw->scissor));
     ++runtime->playerHudTileDrawCount;
-}
-
-static void game_runtime_capture_bar(
-    void *user_data,
-    int x,
-    int y,
-    int width,
-    int height,
-    uint32_t color)
-{
-    JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
-    JPBGameRuntimeScreenDraw *draw;
-
-    if (runtime == NULL || width <= 0 || height <= 0) {
-        return;
-    }
-    if (runtime->screenDrawCount >=
-        JPB_GAME_RUNTIME_SCREEN_DRAW_CAPACITY) {
-        ++runtime->screenDrawDroppedCount;
-        return;
-    }
-    draw = &runtime->screenDraws[runtime->screenDrawCount++];
-    draw->order = runtime->drawOrder++;
-    draw->texture = NULL;
-    draw->destination.left = x;
-    draw->destination.top = y;
-    draw->destination.right = x + width;
-    draw->destination.bottom = y + height;
-    draw->textureWidth = 0;
-    draw->textureHeight = 0;
-    draw->color.r = (uint8_t)(color >> 16);
-    draw->color.g = (uint8_t)(color >> 8);
-    draw->color.b = (uint8_t)color;
-    draw->color.cd = (uint8_t)(color >> 24);
-    draw->layerDepth = 0.0f;
-    draw->hasSource = 0;
-    draw->isPlayerHudTile = 0;
-    memset(&draw->source, 0, sizeof(draw->source));
 }
 
 static void game_runtime_capture_screen_glow(
@@ -346,64 +349,46 @@ static void game_runtime_capture_cylinder(
     uint32_t color2)
 {
     JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
-    MATRIX matrix;
-    _svector start;
-    _svector end;
-    float radius = radius1 > radius2 ? radius1 : radius2;
 
-    (void)color2;
     if (runtime == NULL || location == NULL || rotation == NULL) {
         return;
     }
-    fRotMatrix((_svector *)(void *)rotation, &matrix);
-    start.vx = (int16_t)(
-        (float)location->vx + matrix.m[0][1] * height1);
-    start.vy = (int16_t)(
-        (float)location->vy + matrix.m[1][1] * height1);
-    start.vz = (int16_t)(
-        (float)location->vz + matrix.m[2][1] * height1);
-    start.pad = 0;
-    end.vx = (int16_t)(
-        (float)location->vx + matrix.m[0][1] * height2);
-    end.vy = (int16_t)(
-        (float)location->vy + matrix.m[1][1] * height2);
-    end.vz = (int16_t)(
-        (float)location->vz + matrix.m[2][1] * height2);
-    end.pad = 0;
-    if (radius < 0.0f) {
-        radius = -radius;
-    }
+    (void)radius1;
+    (void)radius2;
+    (void)height1;
+    (void)height2;
+    (void)color1;
+    (void)color2;
     ++runtime->cylinderDrawCount;
-    game_runtime_capture_screen_glow(
-        runtime,
-        &start,
-        &end,
-        (int)(radius + 0.5f),
-        color1);
 }
 
-static int game_runtime_capture_text(
+static int game_runtime_capture_text_command(
     void *user_data,
     int tint,
     int alpha,
+    uint32_t color,
     int mode,
     int x,
     int y,
     float scale,
     float scale_adjustment,
     int font_style,
-    const wchar_t *text)
+    int depth_enabled,
+    float depth,
+    const uint16_t *text)
 {
     JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
     JPBGameRuntimeTextDraw *draw;
     JPBPortableTextControlGlyph control_glyphs[
         JPB_PORTABLE_TEXT_CONTROL_GLYPH_CAPACITY];
-    wchar_t prepared_text[JPB_GAME_RUNTIME_TEXT_CAPACITY];
-    const wchar_t *captured_text = text;
+    uint16_t prepared_text[JPB_GAME_RUNTIME_TEXT_CAPACITY];
+    const uint16_t *captured_text = text;
     int prepared_x = x;
+    int measured_width = 0;
     int control_glyph_count;
     size_t length;
     int control_glyph_index;
+    SCREENRECT scissor = {-1, -1, -1, -1};
 
     if (runtime == NULL || text == NULL) {
         return 0;
@@ -413,12 +398,12 @@ static int game_runtime_capture_text(
         ++runtime->textDrawDroppedCount;
         return 0;
     }
-    length = wcslen(text);
+    length = jpb_utf16_length(text);
     if (length >= JPB_GAME_RUNTIME_TEXT_CAPACITY) {
         length = JPB_GAME_RUNTIME_TEXT_CAPACITY - 1;
     }
-    wmemcpy(prepared_text, text, length);
-    prepared_text[length] = L'\0';
+    jpb_utf16_copy(prepared_text, text, length);
+    prepared_text[length] = 0;
     control_glyph_count = jpb_PortableTextPrepareControlGlyphs(
         prepared_text,
         JPB_GAME_RUNTIME_TEXT_CAPACITY,
@@ -430,8 +415,12 @@ static int game_runtime_capture_text(
         OptionStruct.Language,
         scale_adjustment,
         &prepared_x,
+        &measured_width,
         control_glyphs,
         JPB_PORTABLE_TEXT_CONTROL_GLYPH_CAPACITY);
+    (void)jpb_TextGetClipRect(
+        &scissor.left, &scissor.top,
+        &scissor.right, &scissor.bottom);
     if (control_glyph_count > 0) {
         for (control_glyph_index = 0;
              control_glyph_index < control_glyph_count;
@@ -439,13 +428,17 @@ static int game_runtime_capture_text(
             const JPBPortableTextControlGlyph *glyph =
                 &control_glyphs[control_glyph_index];
 
-            newDrawControllerIcon(
-                glyph->iconIndex,
-                0.35f,
-                glyph->x,
-                glyph->y,
-                glyph->alpha,
-                font_style);
+            if (depth_enabled) {
+                newDrawControllerIconDepth(
+                    glyph->iconIndex, 0.35f,
+                    glyph->x, glyph->y, glyph->alpha,
+                    0, scissor, depth);
+            } else {
+                newDrawControllerIcon(
+                    glyph->iconIndex, 0.35f,
+                    glyph->x, glyph->y, glyph->alpha,
+                    0, scissor);
+            }
         }
         captured_text = prepared_text;
         x = prepared_x;
@@ -455,25 +448,120 @@ static int game_runtime_capture_text(
     draw->order = runtime->drawOrder++;
     draw->tint = tint;
     draw->alpha = alpha;
+    draw->color = color;
     draw->mode = mode;
     draw->x = x;
     draw->y = y;
     draw->scale = scale;
     draw->scaleAdjustment = scale_adjustment;
+    draw->pointSize = jpb_PortableTextPointSize(
+        scale, scale_adjustment);
     draw->fontStyle = font_style;
+    draw->depthEnabled = depth_enabled;
+    draw->depth = depth;
     draw->clipEnabled = jpb_TextGetClipRect(
         &draw->clipLeft,
         &draw->clipTop,
         &draw->clipRight,
         &draw->clipBottom);
     draw->compositePixels = 0;
-    length = wcslen(captured_text);
+    length = jpb_utf16_length(captured_text);
     if (length >= JPB_GAME_RUNTIME_TEXT_CAPACITY) {
         length = JPB_GAME_RUNTIME_TEXT_CAPACITY - 1;
     }
-    wmemcpy(draw->text, captured_text, length);
-    draw->text[length] = L'\0';
-    return (int)length;
+    jpb_utf16_copy(draw->text, captured_text, length);
+    draw->text[length] = 0;
+    return measured_width;
+}
+
+static int game_runtime_text_tint_from_color(CVECTOR color)
+{
+    int index;
+
+    for (index = 0; index < JPB_TEXT_COLOR_COUNT; ++index) {
+        if (Colors[index].r == color.r &&
+            Colors[index].g == color.g &&
+            Colors[index].b == color.b) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+static void game_runtime_capture_ui_text_utf16(
+    void *user_data,
+    const uint16_t *text,
+    const SCREENRECT *destination,
+    int font_style,
+    int point_size,
+    CVECTOR color,
+    int depth_enabled,
+    float depth)
+{
+    uint32_t packed_color;
+    int tint;
+
+    if (destination == NULL) {
+        return;
+    }
+    packed_color =
+        ((uint32_t)color.cd << 24) |
+        ((uint32_t)color.b << 16) |
+        ((uint32_t)color.g << 8) |
+        (uint32_t)color.r;
+    tint = game_runtime_text_tint_from_color(color);
+    (void)game_runtime_capture_text_command(
+        user_data,
+        tint,
+        color.cd,
+        packed_color,
+        0,
+        destination->left,
+        destination->top,
+        (float)point_size / 24.0f,
+        1.0f,
+        font_style,
+        depth_enabled,
+        depth,
+        text);
+}
+
+static void game_runtime_capture_text_3d_glyph(
+    void *user_data,
+    _Material *material,
+    const JPBScreenPolyVertex *vertices)
+{
+    game_runtime_capture_screen_poly(
+        user_data,
+        material,
+        material->flags,
+        4,
+        vertices,
+        1);
+}
+
+static void game_runtime_capture_ui_text_utf16_3d(
+    void *user_data,
+    const uint16_t *text,
+    float x,
+    float y,
+    float z,
+    int font_style,
+    int point_size,
+    uint32_t color)
+{
+    (void)jpb_PortableTextEmit3DPointSize(
+        text,
+        color,
+        0,
+        x,
+        y,
+        z,
+        point_size,
+        font_style,
+        OptionStruct.Language,
+        game_runtime_capture_text_3d_glyph,
+        user_data);
 }
 
 static void game_runtime_capture_draw3d_text(
@@ -546,70 +634,7 @@ static void game_runtime_capture_sprite_display(
     draw->textureHeight = material != NULL ? material->ih : 0;
 }
 
-static int game_runtime_capture_psx_texture(
-    void *user_data,
-    unsigned texture,
-    float x,
-    float y,
-    float width,
-    float height,
-    unsigned transparency,
-    int red,
-    int green,
-    int blue)
-{
-    JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
-    wchar_t digit[2];
-
-    if (runtime != NULL) {
-        if (runtime->psxTextureDrawCount >=
-            JPB_GAME_RUNTIME_PSX_TEXTURE_DRAW_CAPACITY) {
-            ++runtime->psxTextureDrawDroppedCount;
-        } else {
-            JPBGameRuntimePsxTextureDraw *draw =
-                &runtime->psxTextureDraws[
-                    runtime->psxTextureDrawCount++];
-            draw->order = runtime->drawOrder;
-            draw->texture = texture;
-            draw->x = x;
-            draw->y = y;
-            draw->width = width;
-            draw->height = height;
-            draw->transparency = transparency;
-            draw->red = red;
-            draw->green = green;
-            draw->blue = blue;
-        }
-    }
-    if (texture >= UINT32_C(0xe8) &&
-        texture <= UINT32_C(0xf1)) {
-        digit[0] = (wchar_t)(L'0' + texture - UINT32_C(0xe8));
-    } else if (texture >= UINT32_C(0xb5) &&
-               texture <= UINT32_C(0xbe)) {
-        digit[0] = (wchar_t)(L'0' + texture - UINT32_C(0xb5));
-    } else {
-        return 0;
-    }
-    digit[1] = L'\0';
-    return game_runtime_capture_text(
-        user_data,
-        11,
-        (int)(transparency & UINT32_C(0xff)),
-        0,
-        (int)x,
-        (int)y,
-        2.0f,
-        scaleAdjustment,
-        2,
-        digit);
-}
-
-/*
- * Dependency-light PC realization of DrawPowerUp's recovered submission
- * boundary. The original owner still determines type, transform, culling,
- * and lifetime; the portable renderer queues the requested pickup model and
- * submits it inside the normal model-render bracket.
- */
+/* Observation only; DrawPowerUp performs the canonical submission itself. */
 static void game_runtime_capture_powerup_draw(
     void *user_data,
     _svector *position,
@@ -620,31 +645,16 @@ static void game_runtime_capture_powerup_draw(
 {
     JPBGameRuntime *runtime =
         (JPBGameRuntime *)user_data;
-    JPBGameRuntimePowerupState *state;
-    JPBGameRuntimePowerupDraw *draw;
 
-    if (runtime == NULL || position == NULL ||
-        rotation == NULL || scale == NULL || offset == NULL ||
-        type >= JPB_GAME_RUNTIME_POWERUP_MODEL_COUNT) {
+    (void)position;
+    (void)type;
+    (void)rotation;
+    (void)scale;
+    (void)offset;
+    if (runtime == NULL) {
         return;
     }
     ++runtime->powerupDrawCount;
-    state =
-        (JPBGameRuntimePowerupState *)runtime->powerupModelState;
-    if (state == NULL) {
-        return;
-    }
-    if (state->pendingCount >=
-        JPB_GAME_RUNTIME_POWERUP_DRAW_CAPACITY) {
-        ++state->droppedCount;
-        return;
-    }
-    draw = &state->pending[state->pendingCount++];
-    draw->position = *position;
-    draw->type = type;
-    draw->rotation = *rotation;
-    draw->scale = *scale;
-    draw->offset = *offset;
 }
 
 static uint32_t game_runtime_blend_rgba(
@@ -873,6 +883,12 @@ static void game_runtime_flush_screen_draw_range(
         }
         if (bottom > framebuffer->height) {
             bottom = framebuffer->height;
+        }
+        if (draw->hasScissor) {
+            if (left < draw->scissor.left) left = draw->scissor.left;
+            if (top < draw->scissor.top) top = draw->scissor.top;
+            if (right > draw->scissor.right) right = draw->scissor.right;
+            if (bottom > draw->scissor.bottom) bottom = draw->scissor.bottom;
         }
         if (left >= right || top >= bottom) {
             continue;
@@ -1113,11 +1129,13 @@ static uint64_t game_runtime_hash_hud_draws(
         }
         hash = game_runtime_hash_screen_rect(hash, draw->destination);
         hash = game_runtime_hash_screen_rect(hash, draw->source);
+        hash = game_runtime_hash_screen_rect(hash, draw->scissor);
         hash = game_runtime_hash_int(hash, draw->textureWidth);
         hash = game_runtime_hash_int(hash, draw->textureHeight);
         hash = game_runtime_hash_color(hash, draw->color);
         hash = game_runtime_hash_float(hash, draw->layerDepth);
         hash = game_runtime_hash_int(hash, draw->hasSource);
+        hash = game_runtime_hash_int(hash, draw->hasScissor);
         hash = game_runtime_hash_int(hash, draw->isPlayerHudTile);
     }
     for (draw_index = 0;
@@ -1125,16 +1143,18 @@ static uint64_t game_runtime_hash_hud_draws(
          ++draw_index) {
         const JPBGameRuntimeTextDraw *draw =
             &runtime->textDraws[draw_index];
-        size_t text_length = wcslen(draw->text);
+        size_t text_length = jpb_utf16_length(draw->text);
 
         hash = game_runtime_hash_uint64(hash, draw->order);
         hash = game_runtime_hash_int(hash, draw->tint);
         hash = game_runtime_hash_int(hash, draw->alpha);
+        hash = game_runtime_hash_uint64(hash, draw->color);
         hash = game_runtime_hash_int(hash, draw->mode);
         hash = game_runtime_hash_int(hash, draw->x);
         hash = game_runtime_hash_int(hash, draw->y);
         hash = game_runtime_hash_float(hash, draw->scale);
         hash = game_runtime_hash_float(hash, draw->scaleAdjustment);
+        hash = game_runtime_hash_int(hash, draw->pointSize);
         hash = game_runtime_hash_int(hash, draw->fontStyle);
         hash = game_runtime_hash_int(hash, draw->clipEnabled);
         hash = game_runtime_hash_int(hash, draw->clipLeft);
@@ -1222,59 +1242,12 @@ static void game_runtime_apply_hud_cache_metrics(
     }
 }
 
-/* Compact dependency-light glyphs used by the recovered in-game HUD. */
-static uint8_t game_runtime_glyph_row(wchar_t glyph, int row)
-{
-    static const uint8_t digits[10][7] = {
-        {14, 17, 19, 21, 25, 17, 14},
-        {4, 12, 4, 4, 4, 4, 14},
-        {14, 17, 1, 2, 4, 8, 31},
-        {30, 1, 1, 14, 1, 1, 30},
-        {2, 6, 10, 18, 31, 2, 2},
-        {31, 16, 16, 30, 1, 1, 30},
-        {6, 8, 16, 30, 17, 17, 14},
-        {31, 1, 2, 4, 8, 8, 8},
-        {14, 17, 17, 14, 17, 17, 14},
-        {14, 17, 17, 15, 1, 2, 12}
-    };
-    static const uint8_t plus[7] = {0, 4, 4, 31, 4, 4, 0};
-    static const uint8_t minus[7] = {0, 0, 0, 31, 0, 0, 0};
-
-    if (row < 0 || row >= 7) {
-        return 0;
-    }
-    if (glyph >= L'0' && glyph <= L'9') {
-        return digits[glyph - L'0'][row];
-    }
-    if (glyph == L'+') {
-        return plus[row];
-    }
-    if (glyph == L'-') {
-        return minus[row];
-    }
-    if (glyph == L' ') {
-        return 0;
-    }
-    return row == 0 || row == 6 ? 31 : 17;
-}
-
 static void game_runtime_flush_text_draw(
     JPBGameRuntime *runtime,
     JPBSoftwareFramebuffer *framebuffer,
     JPBGameRuntimeTextDraw *draw)
 {
     JPBPortableTextMetrics metrics;
-    size_t length;
-    float scaled_size;
-    int pixel_size;
-    int text_width;
-    int origin_x;
-    int alpha;
-    uint32_t tint;
-    uint8_t red;
-    uint8_t green;
-    uint8_t blue;
-    size_t glyph_index;
 
     if (runtime == NULL || framebuffer == NULL || draw == NULL ||
         framebuffer->pixels == NULL ||
@@ -1283,27 +1256,15 @@ static void game_runtime_flush_text_draw(
         framebuffer->stridePixels < framebuffer->width) {
         return;
     }
-    length = wcslen(draw->text);
-    scaled_size = draw->scale * draw->scaleAdjustment;
-    pixel_size = (int)(scaled_size + 0.5f);
-    origin_x = draw->x;
-    alpha = draw->alpha;
-    tint = jpb_PortableTextTint(draw->tint);
-    red = (uint8_t)(tint & UINT32_C(0xff));
-    green = (uint8_t)((tint >> 8) & UINT32_C(0xff));
-    blue = (uint8_t)((tint >> 16) & UINT32_C(0xff));
-
-    if (jpb_PortableTextDraw(
+    if (jpb_PortableTextDrawPointSize(
             draw->text,
-            draw->tint,
-            draw->alpha,
+            draw->color,
             draw->mode,
             draw->x,
             draw->y,
-            draw->scale,
+            draw->pointSize,
             draw->fontStyle,
             OptionStruct.Language,
-            draw->scaleAdjustment,
             draw->clipEnabled,
             draw->clipLeft,
             draw->clipTop,
@@ -1330,95 +1291,7 @@ static void game_runtime_flush_text_draw(
         }
         return;
     }
-    ++runtime->textFallbackDrawCount;
-    {
-        int point_size = jpb_PortableTextPointSize(
-            draw->scale, draw->scaleAdjustment);
-
-        if (point_size > runtime->maximumTextPointSize) {
-            runtime->maximumTextPointSize = point_size;
-        }
-    }
-    if (pixel_size < 1) pixel_size = 1;
-    if (pixel_size > 16) pixel_size = 16;
-    if (alpha < 0) alpha = 0;
-    if (alpha > 255) alpha = 255;
-    text_width = length != 0
-        ? (int)(length * (size_t)(6 * pixel_size) -
-                (size_t)pixel_size)
-        : 0;
-    if (text_width > runtime->maximumTextMeasuredWidth) {
-        runtime->maximumTextMeasuredWidth = text_width;
-    }
-    if (7 * pixel_size > runtime->maximumTextMeasuredHeight) {
-        runtime->maximumTextMeasuredHeight = 7 * pixel_size;
-    }
-    if ((draw->mode & 0x7f) == 1) {
-        origin_x -= text_width;
-    } else if ((draw->mode & 0x7f) == 2) {
-        origin_x -= text_width / 2;
-    }
-
-    for (glyph_index = 0;
-         glyph_index < length;
-         ++glyph_index) {
-        int glyph_x = origin_x +
-            (int)glyph_index * 6 * pixel_size;
-        int glyph_y;
-
-        for (glyph_y = 0; glyph_y < 7; ++glyph_y) {
-            uint8_t bits = game_runtime_glyph_row(
-                draw->text[glyph_index], glyph_y);
-            int glyph_column;
-
-            for (glyph_column = 0;
-                 glyph_column < 5;
-                 ++glyph_column) {
-                int block_x;
-                int block_y;
-
-                if ((bits & (uint8_t)(
-                        1u << (4 - glyph_column))) == 0) {
-                    continue;
-                }
-                for (block_y = 0;
-                     block_y < pixel_size;
-                     ++block_y) {
-                    int output_y = draw->y +
-                        glyph_y * pixel_size + block_y;
-                    uint32_t *row;
-
-                    if (output_y < 0 ||
-                        output_y >= framebuffer->height) {
-                        continue;
-                    }
-                    row = framebuffer->pixels +
-                        (size_t)output_y *
-                            (size_t)framebuffer->stridePixels;
-                    for (block_x = 0;
-                         block_x < pixel_size;
-                         ++block_x) {
-                        int output_x = glyph_x +
-                            glyph_column * pixel_size +
-                            block_x;
-
-                        if (output_x < 0 ||
-                            output_x >= framebuffer->width) {
-                            continue;
-                        }
-                        row[output_x] = game_runtime_blend_rgba(
-                            row[output_x],
-                            red,
-                            green,
-                            blue,
-                            (uint8_t)alpha);
-                        ++runtime->textDrawCompositePixelCount;
-                        ++draw->compositePixels;
-                    }
-                }
-            }
-        }
-    }
+    ++runtime->textFailedDrawCount;
 }
 
 static void game_runtime_flush_text_draws(
@@ -1444,39 +1317,73 @@ static void game_runtime_flush_ordered_title_draws(
     JPBGameRuntime *runtime,
     JPBSoftwareFramebuffer *framebuffer)
 {
-    size_t screen_index = 0;
-    size_t text_index = 0;
+    typedef struct JPBOrderedHudDraw {
+        size_t index;
+        uint32_t order;
+        float depth;
+        int isText;
+    } JPBOrderedHudDraw;
+    JPBOrderedHudDraw draws[
+        JPB_GAME_RUNTIME_SCREEN_DRAW_CAPACITY +
+        JPB_GAME_RUNTIME_TEXT_DRAW_CAPACITY];
+    size_t draw_count = 0;
+    size_t index;
 
     if (runtime == NULL) {
         return;
     }
-    while (screen_index < runtime->screenDrawCount ||
-           text_index < runtime->textDrawCount) {
-        int has_next_text = text_index < runtime->textDrawCount;
-        uint32_t next_text_order = has_next_text
-            ? runtime->textDraws[text_index].order
-            : UINT32_MAX;
-        size_t screen_start = screen_index;
+    for (index = 0; index < runtime->screenDrawCount; ++index) {
+        draws[draw_count].index = index;
+        draws[draw_count].order = runtime->screenDraws[index].order;
+        draws[draw_count].depth =
+            runtime->screenDraws[index].layerDepth;
+        draws[draw_count].isText = 0;
+        ++draw_count;
+    }
+    for (index = 0; index < runtime->textDrawCount; ++index) {
+        draws[draw_count].index = index;
+        draws[draw_count].order = runtime->textDraws[index].order;
+        draws[draw_count].depth =
+            runtime->textDraws[index].depthEnabled
+                ? runtime->textDraws[index].depth
+                : 0.0f;
+        draws[draw_count].isText = 1;
+        ++draw_count;
+    }
+    for (index = 1; index < draw_count; ++index) {
+        size_t insertion = index;
 
-        while (screen_index < runtime->screenDrawCount &&
-               (!has_next_text ||
-                runtime->screenDraws[screen_index].order <
-                    next_text_order)) {
-            ++screen_index;
+        while (insertion > 0) {
+            const JPBOrderedHudDraw *previous = &draws[insertion - 1];
+            const JPBOrderedHudDraw *current = &draws[insertion];
+            int ordered = previous->depth > current->depth ||
+                (previous->depth == current->depth &&
+                 previous->order <= current->order);
+
+            if (ordered) {
+                break;
+            }
+            {
+                JPBOrderedHudDraw swap = draws[insertion - 1];
+
+                draws[insertion - 1] = draws[insertion];
+                draws[insertion] = swap;
+            }
+            --insertion;
         }
-        if (screen_index > screen_start) {
-            game_runtime_flush_screen_draw_range(
-                runtime,
-                framebuffer,
-                screen_start,
-                screen_index - screen_start);
-        }
-        if (has_next_text) {
+    }
+    for (index = 0; index < draw_count; ++index) {
+        if (draws[index].isText) {
             game_runtime_flush_text_draw(
                 runtime,
                 framebuffer,
-                &runtime->textDraws[text_index]);
-            ++text_index;
+                &runtime->textDraws[draws[index].index]);
+        } else {
+            game_runtime_flush_screen_draw_range(
+                runtime,
+                framebuffer,
+                draws[index].index,
+                1);
         }
     }
 }
@@ -1551,15 +1458,10 @@ static void game_runtime_scene_after_physics(
     void *user_data, MATRIX *view);
 static void game_runtime_scene_after_level_owner(
     void *user_data, MATRIX *view);
-static void game_runtime_scene_level_owner(
-    void *user_data,
-    int level,
-    int argument0,
-    int argument1,
-    int argument2);
 static void game_runtime_capture_screen_poly(
     void *user_data,
     _Material *material,
+    uint32_t material_flags,
     int vertex_count,
     const JPBScreenPolyVertex *vertices,
     int no_scale);
@@ -1596,7 +1498,7 @@ typedef struct JPBGameRuntimeEnemyClass {
 typedef struct JPBGameRuntimeEnemyActor {
     objectRoot actorRoot;
     sceneObject *scene;
-    modelObject model;
+    modelObject *model;
     physicsObject *physics;
     animObject *animation;
     playerObject *player;
@@ -1669,6 +1571,89 @@ static int game_runtime_build_model(
     return 1;
 }
 
+static size_t game_runtime_count_model_nodes(
+    const Mnode *node, size_t remaining)
+{
+    size_t count = 1;
+    int child;
+
+    if (node == NULL || remaining == 0 ||
+        node->numChildNodes < 0 ||
+        node->numChildNodes > JPB_BMD_CHILD_CAPACITY ||
+        (node->numChildNodes != 0 && node->aChildNode == NULL)) {
+        return 0;
+    }
+    for (child = 0; child < node->numChildNodes; ++child) {
+        size_t child_count;
+
+        if (count >= remaining) {
+            return 0;
+        }
+        child_count = game_runtime_count_model_nodes(
+            &node->aChildNode[child], remaining - count);
+        if (child_count == 0 || child_count > remaining - count) {
+            return 0;
+        }
+        count += child_count;
+    }
+    return count;
+}
+
+static int game_runtime_bind_relocated_bmd_view(
+    JPBBmdView *view,
+    void *payload,
+    const modelObject *model)
+{
+    uint8_t *payload_bytes = (uint8_t *)payload;
+    uint32_t payload_size;
+    size_t node_count;
+
+    if (view == NULL || payload_bytes == NULL || model == NULL ||
+        model->pRootNode == NULL) {
+        return 0;
+    }
+    memcpy(
+        &payload_size,
+        payload_bytes - sizeof(payload_size),
+        sizeof(payload_size));
+    if (payload_size < 2u * sizeof(geomData) ||
+        model->pRootNode->pGeomData !=
+            (geomData *)(void *)(payload_bytes + sizeof(geomData))) {
+        return 0;
+    }
+    node_count = game_runtime_count_model_nodes(
+        model->pRootNode, JPB_MODEL_NODE_CAPACITY);
+    if (node_count == 0) {
+        return 0;
+    }
+    memset(view, 0, sizeof(*view));
+    view->file_data = payload_bytes - sizeof(payload_size);
+    view->file_size = (size_t)payload_size + sizeof(payload_size);
+    view->payload = payload_bytes;
+    view->payload_size = payload_size;
+    view->root = (geomData *)(void *)(payload_bytes + sizeof(geomData));
+    view->node_count = node_count;
+    view->geometry_streams_relocated = 1;
+    view->material_handles_relocated = 1;
+    return 1;
+}
+
+static modelObject *game_runtime_scene_model(
+    sceneObject *scene, modelObject *fallback)
+{
+    return scene != NULL && scene->pModel != NULL
+        ? (modelObject *)(void *)scene->pModel
+        : fallback;
+}
+
+static objectRoot *game_runtime_scene_actor_root(
+    sceneObject *scene, objectRoot *fallback)
+{
+    return scene != NULL && scene->pScene != NULL
+        ? scene->pScene
+        : fallback;
+}
+
 struct JPBGameRuntimeEnemyState {
     JPBGameRuntimeEnemyActor
         actors[JPB_GAME_RUNTIME_ENEMY_CAPACITY];
@@ -1730,91 +1715,6 @@ static char game_runtime_effect_directory[
     JPB_GAME_RUNTIME_PATH_CAPACITY];
 static char game_runtime_resource_path[
     JPB_GAME_RUNTIME_PATH_CAPACITY];
-
-static void *game_runtime_resolve_bmd_geometry_stream(
-    const JPBBmdView *view,
-    const geomData *geometry,
-    int pointer_type)
-{
-    JPBBmdGeometryView geometry_view;
-    uintptr_t payload_address;
-    uintptr_t geometry_address;
-    uintptr_t payload_end;
-
-    if (view == NULL || view->payload == NULL ||
-        geometry == NULL) {
-        return NULL;
-    }
-    payload_address = (uintptr_t)view->payload;
-    geometry_address = (uintptr_t)geometry;
-    if ((uintptr_t)view->payload_size >
-            UINTPTR_MAX - payload_address) {
-        return NULL;
-    }
-    payload_end =
-        payload_address + (uintptr_t)view->payload_size;
-    if (geometry_address < payload_address ||
-        geometry_address > payload_end ||
-        sizeof(*geometry) >
-            (size_t)(payload_end - geometry_address) ||
-        jpb_BmdGetGeometry(
-            view, geometry, &geometry_view) != JPB_BMD_OK) {
-        return NULL;
-    }
-
-    switch (pointer_type) {
-    case JPB_POINTER_ARRAY_VERTEX:
-        return (void *)geometry_view.packed_vertices;
-    case JPB_POINTER_ARRAY_NORMAL:
-        return (void *)geometry_view.packed_normals;
-    case JPB_POINTER_ARRAY_UV:
-        return (void *)geometry_view.face_uvs;
-    case JPB_POINTER_ARRAY_COLOR:
-        return (void *)geometry_view.colors;
-    case JPB_POINTER_ARRAY_INDEX:
-        if (geometry_view.face_encoding ==
-            JPB_BMD_FACE_SIGNED_16) {
-            return (void *)geometry_view.faces;
-        }
-        return (void *)geometry_view.packed_faces;
-    default:
-        return NULL;
-    }
-}
-
-static void *game_runtime_resolve_geometry_stream(
-    const geomData *geometry,
-    int pointer_type,
-    void *user_data)
-{
-    JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
-    void *resolved;
-    size_t class_index;
-
-    if (runtime == NULL) {
-        return NULL;
-    }
-    resolved = game_runtime_resolve_bmd_geometry_stream(
-        &runtime->bmdView, geometry, pointer_type);
-    if (resolved != NULL) {
-        return resolved;
-    }
-    if (runtime->enemyState == NULL) {
-        return NULL;
-    }
-    for (class_index = 0;
-         class_index < runtime->enemyState->classCount;
-         ++class_index) {
-        resolved = game_runtime_resolve_bmd_geometry_stream(
-            &runtime->enemyState->classes[class_index].bmdView,
-            geometry,
-            pointer_type);
-        if (resolved != NULL) {
-            return resolved;
-        }
-    }
-    return NULL;
-}
 
 static int game_runtime_is_separator(char value)
 {
@@ -1931,7 +1831,6 @@ static const char *game_runtime_resolve_resource(
     size_t directory_bytes;
     size_t name_bytes;
 
-    (void)extension;
     if (resource_type == JPB_RESOURCE_EFFECT_TEXTURE) {
         return resource_getPath(
             resource_name,
@@ -1939,7 +1838,17 @@ static const char *game_runtime_resolve_resource(
     }
     if (resource_type != JPB_RESOURCE_EFFECT ||
         game_runtime_effect_directory[0] == '\0') {
-        return resource_name;
+        if ((unsigned)resource_type >= JPB_RESOURCE_TYPE_COUNT) {
+            return NULL;
+        }
+        return extension != NULL && extension[0] != '\0'
+            ? resource_getPathWithExtension(
+                  resource_name,
+                  (ResourceType)resource_type,
+                  (char *)(void *)extension)
+            : resource_getPath(
+                  resource_name,
+                  (ResourceType)resource_type);
     }
     directory_bytes =
         strlen(game_runtime_effect_directory);
@@ -2136,9 +2045,7 @@ static int game_runtime_prepare_archive_memory(void)
     int pool;
 
     if (!game_runtime_archive_memory_initialized) {
-        if (memory_InitMemorySystem() != 0) {
-            return 0;
-        }
+        (void)memory_InitMemorySystem();
         game_runtime_archive_memory_initialized = 1;
     } else {
         for (pool = 0; pool < MEMORY_POOL_COUNT; ++pool) {
@@ -2459,6 +2366,67 @@ static int game_runtime_is_default_white_texture(
     return segment_bytes == 1 && segment_start[0] == 's';
 }
 
+static int game_runtime_is_default_placeholder_texture(
+    const char *texture_name)
+{
+    const char *base_name = texture_name;
+    const char *base_separator;
+    const char *default_segment;
+    const char *default_separator;
+    const char *res_segment;
+
+    if (texture_name == NULL) {
+        return 0;
+    }
+    for (const char *cursor = texture_name;
+         *cursor != '\0'; ++cursor) {
+        if (*cursor == '/' || *cursor == '\\') {
+            base_name = cursor + 1;
+        }
+    }
+    if (strcmp(base_name, "o_default.tga") != 0 ||
+        base_name == texture_name) {
+        return 0;
+    }
+    base_separator = base_name - 1;
+    default_segment = base_separator;
+    while (default_segment > texture_name &&
+           default_segment[-1] != '/' &&
+           default_segment[-1] != '\\') {
+        --default_segment;
+    }
+    if ((size_t)(base_separator - default_segment) !=
+            sizeof("default") - 1u ||
+        memcmp(default_segment, "default", sizeof("default") - 1u) != 0 ||
+        default_segment == texture_name) {
+        return 0;
+    }
+    default_separator = default_segment - 1;
+    res_segment = default_separator;
+    while (res_segment > texture_name &&
+           res_segment[-1] != '/' &&
+           res_segment[-1] != '\\') {
+        --res_segment;
+    }
+    return (size_t)(default_separator - res_segment) ==
+               sizeof("res") - 1u &&
+           memcmp(res_segment, "res", sizeof("res") - 1u) == 0;
+}
+
+static int game_runtime_path_is_absolute(const char *path)
+{
+    if (path == NULL || path[0] == '\0') {
+        return 0;
+    }
+    if (path[0] == '/' || path[0] == '\\') {
+        return 1;
+    }
+    return ((path[0] >= 'A' && path[0] <= 'Z') ||
+            (path[0] >= 'a' && path[0] <= 'z')) &&
+           path[1] == ':' &&
+           (path[2] == '/' || path[2] == '\\');
+}
+
 static int game_runtime_load_texture(
     JPBGameRuntimeTextureCache *cache,
     JPBGameRuntimeTexture *entry,
@@ -2475,19 +2443,28 @@ static int game_runtime_load_texture(
     size_t path_bytes;
     size_t path_index;
     size_t name_bytes = strlen(texture_name);
+    int exact_path = game_runtime_path_is_absolute(texture_name);
 
-    if (name_bytes >= sizeof(entry->name) ||
-        !game_runtime_texture_path(
-            cache,
-            texture_name,
-            path,
-            sizeof(path))) {
+    if (name_bytes >= sizeof(entry->name)) {
         return 0;
     }
     memcpy(entry->name, texture_name, name_bytes + 1);
     texture_name = entry->name;
+    if (exact_path && name_bytes < sizeof(path)) {
+        memcpy(path, texture_name, name_bytes + 1);
+        (void)file_OPEN(path, &file);
+    }
+    if (file == 0) {
+        if (!game_runtime_texture_path(
+                cache,
+                texture_name,
+                path,
+                sizeof(path))) {
+            return 0;
+        }
+    }
     memcpy(local_path, path, strlen(path) + 1);
-    if (!file_OPEN(path, &file)) {
+    if (file == 0 && !file_OPEN(path, &file)) {
         const char *slash = strrchr(texture_name, '/');
         const char *backslash = strrchr(texture_name, '\\');
         const char *base_name = texture_name;
@@ -2507,7 +2484,28 @@ static int game_runtime_load_texture(
             return 0;
         }
         resource_path = NULL;
-        if (game_runtime_is_default_white_texture(texture_name)) {
+        if (game_runtime_is_default_placeholder_texture(texture_name)) {
+            resource_path = resource_getPath(
+                "o_default.tga", JPB_RESOURCE_DEFAULT);
+            if (resource_path == NULL ||
+                strlen(resource_path) >= sizeof(path)) {
+                fprintf(
+                    stderr,
+                    "texture_load_failed=(name=%s,local=%s,"
+                    "retail=<unresolved>,reason=resource-path)\n",
+                    texture_name, local_path);
+                return 0;
+            }
+            memcpy(path, resource_path, strlen(resource_path) + 1);
+            if (!file_OPEN(path, &file)) {
+                fprintf(
+                    stderr,
+                    "texture_load_failed=(name=%s,local=%s,"
+                    "retail=%s,reason=file-not-found)\n",
+                    texture_name, local_path, path);
+                return 0;
+            }
+        } else if (game_runtime_is_default_white_texture(texture_name)) {
             resource_path = resource_getPath(
                 "white.tga", JPB_RESOURCE_DEFAULT);
             if (resource_path == NULL ||
@@ -2708,6 +2706,8 @@ static int game_runtime_resolve_texture(
         --cache->textureCount;
         return 0;
     }
+    entry->texture.descriptorIndex =
+        (int32_t)(cache->textureCount - 1u);
     ++cache->loadedTextureCount;
     *texture = entry->texture;
     return 1;
@@ -2717,25 +2717,15 @@ static void game_runtime_free_powerup_models(
     JPBGameRuntime *runtime)
 {
     JPBGameRuntimePowerupState *state;
-    size_t index;
 
     if (runtime == NULL || runtime->powerupModelState == NULL) {
         return;
     }
     state =
         (JPBGameRuntimePowerupState *)runtime->powerupModelState;
-    for (index = 0;
-         index < JPB_GAME_RUNTIME_POWERUP_MODEL_COUNT;
-         ++index) {
-        JPBGameRuntimePowerupAsset *asset =
-            &state->assets[index];
-
-        free(asset->bmdStorage);
-        game_runtime_free_texture_cache(asset->textureCache);
-        asset->bmdStorage = NULL;
-        asset->textureCache = NULL;
-        asset->loaded = 0;
-    }
+    game_runtime_free_texture_cache(state->textureCache);
+    state->textureCache = NULL;
+    memset(powerUpData, 0, sizeof(powerUpData));
     free(state);
     runtime->powerupModelState = NULL;
 }
@@ -2744,6 +2734,9 @@ static int game_runtime_load_powerup_models(
     JPBGameRuntime *runtime)
 {
     JPBGameRuntimePowerupState *state;
+    const char *path;
+    size_t expected = 0;
+    size_t loaded;
     unsigned type;
 
     if (runtime == NULL) {
@@ -2754,62 +2747,33 @@ static int game_runtime_load_powerup_models(
         return 0;
     }
     runtime->powerupModelState = state;
-    for (type = 0;
-         type < JPB_GAME_RUNTIME_POWERUP_MODEL_COUNT;
-         ++type) {
-        JPBGameRuntimePowerupAsset *asset =
-            &state->assets[type];
-        const char *path;
-
-        if (powerUpFiles[type] == NULL ||
-            powerUpFiles[type][0] == '\0') {
-            continue;
-        }
-        path = resource_getPathWithExtension(
-            powerUpFiles[type], JPB_RESOURCE_MODEL, "bmd");
-        if (path == NULL) {
-            continue;
-        }
-        asset->textureCache = game_runtime_create_texture_cache(
-            JPB_GAME_RUNTIME_MODEL_TEXTURE_CAPACITY,
-            JPB_LEVEL_INDEX_NONE);
-        asset->bmdStorage =
-            (uint8_t *)malloc(JPB_BMD_REFERENCE_CAPACITY);
-        if (asset->textureCache == NULL ||
-            asset->bmdStorage == NULL ||
-            !game_runtime_texture_directory(
-                path,
-                asset->textureCache->directory,
-                sizeof(asset->textureCache->directory))) {
-            free(asset->bmdStorage);
-            game_runtime_free_texture_cache(asset->textureCache);
-            asset->bmdStorage = NULL;
-            asset->textureCache = NULL;
-            continue;
-        }
-        if (jpb_BmdLoadFile(
-                path,
-                asset->bmdStorage,
-                JPB_BMD_REFERENCE_CAPACITY,
-                &asset->bmdView) != JPB_BMD_OK ||
-            jpb_BmdBuildModel(
-                &asset->bmdView,
-                &asset->model,
-                asset->nodes,
-                JPB_MODEL_NODE_CAPACITY,
-                -1) != JPB_BMD_OK) {
-            free(asset->bmdStorage);
-            game_runtime_free_texture_cache(asset->textureCache);
-            asset->bmdStorage = NULL;
-            asset->textureCache = NULL;
-            memset(&asset->bmdView, 0, sizeof(asset->bmdView));
-            memset(&asset->model, 0, sizeof(asset->model));
-            memset(asset->nodes, 0, sizeof(asset->nodes));
-            continue;
-        }
-        asset->loaded = 1;
+    path = resource_getPathWithExtension(
+        powerUpFiles[0], JPB_RESOURCE_MODEL, "BMD");
+    state->textureCache = game_runtime_create_texture_cache(
+        JPB_GAME_RUNTIME_MODEL_TEXTURE_CAPACITY,
+        JPB_LEVEL_INDEX_NONE);
+    if (path == NULL || state->textureCache == NULL ||
+        !game_runtime_texture_directory(
+            path,
+            state->textureCache->directory,
+            sizeof(state->textureCache->directory))) {
+        return 0;
     }
-    return 1;
+    for (type = 0; powerUpFiles[type] != NULL; ++type) {
+        if (powerUpFiles[type][0] != '\0') {
+            ++expected;
+        }
+    }
+    jpb_TextureSetPlatformHooks(
+        game_runtime_load_material_texture,
+        NULL,
+        state->textureCache);
+    loaded = jpb_LoaderLoadPowerupModels();
+    jpb_TextureSetPlatformHooks(
+        game_runtime_load_material_texture,
+        NULL,
+        runtime->uiTextureCache);
+    return loaded == expected;
 }
 
 static void *game_runtime_load_material_texture(
@@ -2822,41 +2786,46 @@ static void *game_runtime_load_material_texture(
 {
     JPBGameRuntimeTextureCache *cache =
         (JPBGameRuntimeTextureCache *)user_data;
-    JPBSoftwareTexture texture;
-    const char *base_name;
+    const char *texture_name = filename;
     const char *slash;
     const char *backslash;
+    JPBSoftwareTexture texture;
     size_t index;
 
-    (void)option;
+    (void)material_type;
     if (cache == NULL || filename == NULL ||
         width == NULL || height == NULL) {
         return NULL;
     }
-    slash = strrchr(filename, '/');
-    backslash = strrchr(filename, '\\');
-    base_name = filename;
-    if (slash != NULL) {
-        base_name = slash + 1;
-    }
-    if (backslash != NULL && backslash + 1 > base_name) {
-        base_name = backslash + 1;
+    /* model_MakeNode passes absolute MODEL_TEXTURE resource paths. Preserve
+     * those paths; relative texture references retain the original basename
+     * cache contract used by the powerup and level loaders. */
+    if (!game_runtime_path_is_absolute(filename) &&
+        !game_runtime_is_default_placeholder_texture(filename)) {
+        slash = strrchr(filename, '/');
+        backslash = strrchr(filename, '\\');
+        if (slash != NULL) texture_name = slash + 1;
+        if (backslash != NULL && backslash + 1 > texture_name) {
+            texture_name = backslash + 1;
+        }
     }
     if (!game_runtime_resolve_texture(
-            cache, base_name, &texture)) {
+            cache, texture_name, &texture)) {
         return NULL;
     }
     for (index = 0; index < cache->textureCount; ++index) {
         JPBGameRuntimeTexture *entry = &cache->textures[index];
 
-        if (strcmp(entry->name, base_name) == 0) {
+        if (strcmp(entry->name, texture_name) == 0) {
             if (entry->texture.width > INT16_MAX ||
                 entry->texture.height > INT16_MAX) {
                 return NULL;
             }
             *width = (int16_t)entry->texture.width;
             *height = (int16_t)entry->texture.height;
-            entry->texture.materialType = material_type;
+            entry->texture.materialType =
+                (int32_t)(option & UINT32_C(0xff));
+            entry->texture.descriptorIndex = (int32_t)index;
             return &entry->texture;
         }
     }
@@ -3183,6 +3152,7 @@ static int game_runtime_load_huffman(
 static int game_runtime_publish_authored_frame(
     JPBGameRuntime *runtime, int32_t previous_index)
 {
+    modelObject *model;
     _animFrame *decoded_frame;
 
     if (!runtime->authoredMotionReady ||
@@ -3197,14 +3167,18 @@ static int game_runtime_publish_authored_frame(
         &runtime->animation->tweenAnimFrame) {
         ++runtime->authoredTweenFrameCount;
     }
-    if (runtime->actorModel.pRootNode != NULL &&
+    model = game_runtime_scene_model(
+        runtime->actorScene, &runtime->actorModel);
+    if (model->pRootNode != NULL &&
         jpb_ModelPublishAnimFrame(
-            &runtime->actorModel,
+            model,
             decoded_frame,
-            &runtime->actorRoot) != JPB_MODEL_POSE_OK) {
+            game_runtime_scene_actor_root(
+                runtime->actorScene,
+                &runtime->actorRoot)) != JPB_MODEL_POSE_OK) {
         return 0;
     }
-    if (runtime->actorModel.pRootNode != NULL) {
+    if (model->pRootNode != NULL) {
         size_t node_index;
         uint32_t hot_nodes = 0;
 
@@ -3239,6 +3213,7 @@ static int game_runtime_publish_second_player_frame(
     JPBGameRuntime *runtime, int32_t previous_index)
 {
     JPBGameRuntimeSecondPlayerState *state;
+    modelObject *model;
     _animFrame *decoded_frame;
 
     if (runtime == NULL || runtime->secondPlayerState == NULL) {
@@ -3254,16 +3229,20 @@ static int game_runtime_publish_second_player_frame(
     if (decoded_frame == NULL) {
         return 0;
     }
-    if (state->model.pRootNode != NULL &&
+    model = game_runtime_scene_model(
+        runtime->inactivePlayerScene, &state->model);
+    if (model->pRootNode != NULL &&
         jpb_ModelPublishAnimFrame(
-            &state->model,
+            model,
             decoded_frame,
-            &runtime->inactivePlayerActorRoot) !=
+            game_runtime_scene_actor_root(
+                runtime->inactivePlayerScene,
+                &runtime->inactivePlayerActorRoot)) !=
             JPB_MODEL_POSE_OK) {
         return 0;
     }
     state->authoredPoseReady =
-        state->model.pRootNode != NULL;
+        model->pRootNode != NULL;
     state->authoredFrameReady = 1;
     if (state->animation->animFrameIndex != previous_index) {
         ++state->decodedFrameCount;
@@ -3284,14 +3263,15 @@ static int game_runtime_publish_enemy_frame(
     if (decoded_frame == NULL) {
         return 0;
     }
-    if (actor->model.pRootNode != NULL &&
+    if (actor->model != NULL &&
+        actor->model->pRootNode != NULL &&
         jpb_ModelPublishAnimFrame(
-            &actor->model,
+            actor->model,
             decoded_frame,
-            &actor->actorRoot) != JPB_MODEL_POSE_OK) {
+            &actor->scene->sceneRoot) != JPB_MODEL_POSE_OK) {
         return 0;
     }
-    if (actor->model.pRootNode != NULL) {
+    if (actor->model != NULL && actor->model->pRootNode != NULL) {
         actor->authoredPoseReady = 1;
     }
     actor->authoredFrameReady = 1;
@@ -3700,19 +3680,20 @@ int jpb_GameRuntimeInitWithPlayerAssets(
             JPB_GAME_RUNTIME_OUT_OF_MEMORY);
     }
     runtime->actorScene = scene_gGetNewSceneObject(0);
-    runtime->physics = physics_gGetNewObject(0);
+    runtime->physics = runtime->actorScene != NULL
+        ? physics_gCreateObject(runtime->actorScene)
+        : NULL;
     runtime->player = NULL;
     runtime->inactivePlayerScene =
         scene_gGetNewSceneObject(1);
     runtime->inactivePlayerPhysics =
-        physics_gGetNewObject(1);
-    runtime->inactivePlayer =
-        player_gGetNewPlayerObject(1);
+        runtime->inactivePlayerScene != NULL
+            ? physics_gCreateObject(runtime->inactivePlayerScene)
+            : NULL;
     if (runtime->actorScene == NULL ||
         runtime->physics == NULL ||
         runtime->inactivePlayerScene == NULL ||
-        runtime->inactivePlayerPhysics == NULL ||
-        runtime->inactivePlayer == NULL) {
+        runtime->inactivePlayerPhysics == NULL) {
         return game_runtime_fail(
             runtime, "init:actor-or-player-slot",
             JPB_GAME_RUNTIME_OUT_OF_MEMORY);
@@ -3731,8 +3712,6 @@ int jpb_GameRuntimeInitWithPlayerAssets(
         runtime->actorScene, &runtime->actorRoot, 0);
     obj_gSetChildObject(
         runtime->actorScene, &runtime->actorModel.modelRoot, 1);
-    obj_gSetChildObject(
-        runtime->actorScene, &runtime->physics->physicsRoot, 2);
     /*
      * The exact AI target selectors always dereference both world player
      * slots. Preserve the original single-player invariant with a valid,
@@ -3745,8 +3724,6 @@ int jpb_GameRuntimeInitWithPlayerAssets(
     runtime->inactivePlayerActorRoot.flags =
         UINT32_C(0x20);
     runtime->inactivePlayerModel.modelRoot.objectID = 1;
-    runtime->inactivePlayer->playerRoot.flags =
-        UINT32_C(0x20);
     memcpy(
         runtime->inactivePlayerActorRoot.objectName,
         "ACTOR",
@@ -3763,21 +3740,11 @@ int jpb_GameRuntimeInitWithPlayerAssets(
         runtime->inactivePlayerScene,
         &runtime->inactivePlayerModel.modelRoot,
         1);
-    obj_gSetChildObject(
-        runtime->inactivePlayerScene,
-        &runtime->inactivePlayerPhysics->physicsRoot,
-        2);
-    obj_gSetChildObject(
-        runtime->inactivePlayerScene,
-        &runtime->inactivePlayer->playerRoot,
-        4);
     /*
      * The exact game-system owner populates the callback table before
      * loader_CreateCharacter invokes ai_InitPlayer.
      */
     game_setFuncArray();
-    jpb_PhysicsSetGeometryStreamResolver(
-        game_runtime_resolve_geometry_stream, runtime);
     if (bmd_path != NULL) {
         runtime->textureCache =
             game_runtime_create_texture_cache(
@@ -3813,6 +3780,12 @@ int jpb_GameRuntimeInitWithPlayerAssets(
                 "PLAYER",
                 0,
                 &runtime->actorModel,
+                runtime->textureCache) ||
+            !game_runtime_build_model(
+                &runtime->bmdView,
+                "PLAYER",
+                1,
+                &runtime->inactivePlayerModel,
                 runtime->textureCache)) {
             return game_runtime_fail(
                 runtime, "init:bmd-load-or-build-player-model",
@@ -3848,7 +3821,13 @@ int jpb_GameRuntimeInitWithPlayerAssets(
             runtime->cadView.payload,
             NULL,
             0);
-        if (runtime->animation == NULL) {
+        runtime->inactivePlayerAnimation = anim_CreateObject(
+            runtime->inactivePlayerScene,
+            runtime->cadView.payload,
+            NULL,
+            1);
+        if (runtime->animation == NULL ||
+            runtime->inactivePlayerAnimation == NULL) {
             return game_runtime_fail(
                 runtime, "init:animation-create",
                 JPB_GAME_RUNTIME_LOAD_FAILED);
@@ -3860,6 +3839,12 @@ int jpb_GameRuntimeInitWithPlayerAssets(
             runtime->actorScene,
             &runtime->animation->animRoot,
             3);
+        runtime->inactivePlayerAnimation = &maAnimationData[1];
+        runtime->inactivePlayerAnimation->animRoot.objectID = 1;
+        obj_gSetChildObject(
+            runtime->inactivePlayerScene,
+            &runtime->inactivePlayerAnimation->animRoot,
+            3);
     }
     runtime->player = player_gCreateObject(
         runtime->actorScene,
@@ -3870,6 +3855,17 @@ int jpb_GameRuntimeInitWithPlayerAssets(
     if (runtime->player == NULL) {
         return game_runtime_fail(
             runtime, "init:player-create",
+            JPB_GAME_RUNTIME_LOAD_FAILED);
+    }
+    runtime->inactivePlayer = player_gCreateObject(
+        runtime->inactivePlayerScene,
+        player_model_id,
+        bmd_path != NULL
+            ? jedi_InitPlayer
+            : NULL);
+    if (runtime->inactivePlayer == NULL) {
+        return game_runtime_fail(
+            runtime, "init:hidden-player-create",
             JPB_GAME_RUNTIME_LOAD_FAILED);
     }
     if (cad_path != NULL) {
@@ -3887,7 +3883,37 @@ int jpb_GameRuntimeInitWithPlayerAssets(
         runtime->player->oldmaxCMotions =
             (int16_t)runtime->cadView.sequence_count;
         runtime->authoredMotionReady = 1;
+
+        /*
+         * Exact loader_LoadJedi creates the hidden single-player P2 with
+         * P1's same CAD buffer, then connects that buffer before hiding the
+         * actor. Level Mini3 consequently writes both players' Motion[1]
+         * records unconditionally. Preserve that loader-owned invariant for
+         * the portable inactive slot as well.
+         */
+        player_gConnectMotionData(
+            runtime->inactivePlayer,
+            runtime->cadView.payload);
+        if (runtime->inactivePlayer->paMotions !=
+                runtime->cadView.motions ||
+            runtime->inactivePlayer->maxMotions !=
+                (int16_t)runtime->cadView.sequence_count) {
+            return game_runtime_fail(
+                runtime,
+                "init:connect-hidden-player-motion-data",
+                JPB_GAME_RUNTIME_LOAD_FAILED);
+        }
     }
+    obj_gSetObjectFlag(
+        &runtime->inactivePlayer->playerRoot, 4, UINT32_C(0x20));
+    obj_gSetObjectFlag(
+        &runtime->inactivePlayer->playerRoot, 3, UINT32_C(0x20));
+    obj_gSetObjectFlag(
+        &runtime->inactivePlayer->playerRoot, 0, UINT32_C(0x20));
+    obj_gSetObjectFlag(
+        &runtime->inactivePlayer->playerRoot, 2, UINT32_C(0x20));
+    obj_gSetObjectFlag(
+        &runtime->inactivePlayer->playerRoot, 1, UINT32_C(0x20));
     /*
      * Single-player still owns a valid inactive player-1 slot. Match the
      * original player-pair target invariant until combat/collision owners
@@ -3930,12 +3956,8 @@ int jpb_GameRuntimeInitWithPlayerAssets(
      * game_initPerLevel copies the current level's five authored tuning
      * bytes. Use that reviewed data path here instead of a runtime constant.
      */
-    if (!jpb_game_ApplyLevelDifficulty(
-            (unsigned)GameStruct.CurrentLevel, 1)) {
-        return game_runtime_fail(
-            runtime, "init:level-difficulty",
-            JPB_GAME_RUNTIME_LOAD_FAILED);
-    }
+    GameStruct.difficulty = 1;
+    jpb_game_ApplyLevelDifficulty((unsigned)GameStruct.CurrentLevel);
     gGlobalTimer = 0;
     totalframes = 0;
     /*
@@ -3953,7 +3975,7 @@ int jpb_GameRuntimeInitWithPlayerAssets(
     runtime->targetY = runtime->physics->pos.vy;
     runtime->targetZ = runtime->physics->pos.vz;
     result = jpb_PhysicsUpdateSceneObject(runtime->physics);
-    if (result != JPB_PHYSICS_PARTIAL_OK) {
+    if (result != JPB_PHYSICS_RESULT_OK) {
         return game_runtime_fail(
             runtime, "init:physics-update-player",
             JPB_GAME_RUNTIME_LOAD_FAILED);
@@ -3994,19 +4016,26 @@ int jpb_GameRuntimeInitWithPlayerAssets(
     }
     jpb_WHookSetDrawTextureHook(
         game_runtime_capture_draw_texture, runtime);
+    jpb_WHookSetDrawTextureClippedHook(
+        game_runtime_capture_draw_texture_clipped, runtime);
+    jpb_WHookSetDrawUITextUTF16Hook(
+        game_runtime_capture_ui_text_utf16, runtime);
+    jpb_WHookSetDrawUITextUTF163DHook(
+        game_runtime_capture_ui_text_utf16_3d, runtime);
     runtime->drawTextureHookReady = 1;
+    jpb_WHookSetClearWindowHook(
+        game_runtime_capture_clear_window, runtime);
+    runtime->clearWindowHookReady = 1;
+    jpb_WHookSetRenderLoadHook(
+        game_runtime_capture_render_load, runtime);
+    runtime->renderLoadHookReady = 1;
     jpb_WHookSetScreenPolyHook(
         game_runtime_capture_screen_poly, runtime);
     runtime->screenPolyHookReady = 1;
-    jpb_GameSetBarHook(game_runtime_capture_bar, runtime);
-    runtime->barHookReady = 1;
     jpb_PlayerSetTileHook(
         game_runtime_capture_player_tile, runtime);
     runtime->playerTileHookReady = 1;
-    jpb_TextSetDrawHook(
-        game_runtime_capture_text, runtime);
-    jpb_TextSetPsxTextureHook(
-        game_runtime_capture_psx_texture, runtime);
+    jpb_PortableTextInstallHooks();
     runtime->textHookReady = 1;
     jpb_DebugTextSetDraw3dHook(
         game_runtime_capture_draw3d_text, runtime);
@@ -4059,10 +4088,112 @@ int jpb_GameRuntimeInitWithPlayerAssets(
             game_runtime_scene_after_physics;
         hooks.afterLevelOwner =
             game_runtime_scene_after_level_owner;
-        hooks.levelOwner = game_runtime_scene_level_owner;
         jpb_SceneSetMiddleRenderHooks(&hooks, runtime);
         runtime->sceneMiddleRenderHooksReady = 1;
     }
+    game_runtime_set_failure_stage("none");
+    return JPB_GAME_RUNTIME_OK;
+}
+
+int jpb_GameRuntimeRunCanonicalConstructor(JPBGameRuntime *runtime)
+{
+    modelObject *player_model;
+
+    if (runtime == NULL || runtime->world == NULL ||
+        gpWorld != runtime->world) {
+        game_runtime_set_failure_stage(
+            "canonical-constructor:invalid-runtime");
+        return JPB_GAME_RUNTIME_INVALID_ARGUMENT;
+    }
+
+    /* The retail mode transition releases these three pointer tables before
+     * game_initVar(3) clears WorldData and lets loader_LevelLoad replace them. */
+    CleanupLevelData();
+    /* game_initVar(3) runs the complete retail loader chain, including every
+     * player, enemy, powerup, and effect material load. Keep that chain on a
+     * cache sized for model archives; the four-entry default-effects cache
+     * cannot own the constructor's material set. */
+    jpb_TextureSetPlatformHooks(
+        game_runtime_load_material_texture,
+        NULL,
+        runtime->textureCache);
+    file_SetChunkLoadHooks(game_runtime_resolve_resource, NULL);
+    gFileNotFound = 0;
+    game_initVar(3);
+    file_SetChunkLoadHooks(NULL, NULL);
+
+    runtime->player = &gaPlayerData[0];
+    runtime->inactivePlayer = &gaPlayerData[1];
+    runtime->actorScene =
+        (sceneObject *)runtime->player->playerRoot.pParent;
+    runtime->inactivePlayerScene =
+        (sceneObject *)runtime->inactivePlayer->playerRoot.pParent;
+    runtime->physics = runtime->actorScene != NULL
+        ? (physicsObject *)runtime->actorScene->pPhysics
+        : NULL;
+    runtime->animation = runtime->actorScene != NULL
+        ? (animObject *)runtime->actorScene->pAnim
+        : NULL;
+    runtime->inactivePlayerPhysics =
+        runtime->inactivePlayerScene != NULL
+            ? (physicsObject *)runtime->inactivePlayerScene->pPhysics
+            : NULL;
+    runtime->inactivePlayerAnimation =
+        runtime->inactivePlayerScene != NULL
+            ? (animObject *)runtime->inactivePlayerScene->pAnim
+            : NULL;
+
+    if (gFileNotFound != 0 || runtime->actorScene == NULL ||
+        runtime->physics == NULL || runtime->animation == NULL ||
+        runtime->inactivePlayerScene == NULL ||
+        runtime->inactivePlayerPhysics == NULL ||
+        runtime->inactivePlayerAnimation == NULL ||
+        runtime->animation->pCurrentAnimSeq == NULL) {
+        game_runtime_set_failure_stage(
+            "canonical-constructor:loader-chain");
+        return JPB_GAME_RUNTIME_LOAD_FAILED;
+    }
+
+    player_model = game_runtime_scene_model(
+        runtime->actorScene, NULL);
+    if ((uint32_t)GameStruct.ModelSelect[0] >= JPB_MODEL_NAME_COUNT ||
+        !game_runtime_bind_relocated_bmd_view(
+            &runtime->bmdView,
+            maModelData[GameStruct.ModelSelect[0]],
+            player_model)) {
+        game_runtime_set_failure_stage(
+            "canonical-constructor:player-model-view");
+        return JPB_GAME_RUNTIME_LOAD_FAILED;
+    }
+    if (runtime->secondPlayerState != NULL) {
+        JPBGameRuntimeSecondPlayerState *state =
+            runtime->secondPlayerState;
+        modelObject *second_model = game_runtime_scene_model(
+            runtime->inactivePlayerScene, NULL);
+
+        state->animation = runtime->inactivePlayerAnimation;
+        if ((uint32_t)GameStruct.ModelSelect[1] >=
+                JPB_MODEL_NAME_COUNT ||
+            !game_runtime_bind_relocated_bmd_view(
+                &state->bmdView,
+                maModelData[GameStruct.ModelSelect[1]],
+                second_model)) {
+            game_runtime_set_failure_stage(
+                "canonical-constructor:second-player-model-view");
+            return JPB_GAME_RUNTIME_LOAD_FAILED;
+        }
+    }
+
+    runtime->powerupCount = jpb_PwrupLoadedCount();
+    runtime->checkpointCount =
+        (size_t)(maxCheckPoints > 0 ? maxCheckPoints - 1 : 0);
+    runtime->targetX = runtime->physics->pos.vx;
+    runtime->targetY = runtime->physics->pos.vy;
+    runtime->targetZ = runtime->physics->pos.vz;
+    runtime->camera = gCamera;
+    runtime->authoredCameraDolly = runtime->world->currentDolly;
+    runtime->initialAuthoredCameraDolly = runtime->world->currentDolly;
+    runtime->authoredCameraDollyObserved = 0;
     game_runtime_set_failure_stage("none");
     return JPB_GAME_RUNTIME_OK;
 }
@@ -4126,6 +4257,29 @@ int jpb_GameRuntimeEnemyClassWasActive(
 
         if (asset_class->actorNum == actor_num) {
             return asset_class->wasActive;
+        }
+    }
+    return 0;
+}
+
+int jpb_GameRuntimeEnemyClassWasRendered(
+    const JPBGameRuntime *runtime,
+    int actor_num)
+{
+    size_t index;
+
+    if (runtime == NULL ||
+        runtime->enemyState == NULL) {
+        return 0;
+    }
+    for (index = 0;
+         index < runtime->enemyState->classCount;
+         ++index) {
+        const JPBGameRuntimeEnemyClass *asset_class =
+            &runtime->enemyState->classes[index];
+
+        if (asset_class->actorNum == actor_num) {
+            return asset_class->wasRendered;
         }
     }
     return 0;
@@ -4498,7 +4652,9 @@ static void game_runtime_publish_primary_enemy(
     }
     runtime->enemyActorRoot = actor->actorRoot;
     runtime->enemyScene = actor->scene;
-    runtime->enemyModel = actor->model;
+    if (actor->model != NULL) {
+        runtime->enemyModel = *actor->model;
+    }
     runtime->enemyPhysics = actor->physics;
     runtime->enemyAnimation = actor->animation;
     runtime->enemyPlayer = actor->player;
@@ -4567,6 +4723,7 @@ static aiData *game_runtime_get_enemy_ai(
     int level)
 {
     char ai_path[JPB_GAME_RUNTIME_PATH_CAPACITY];
+    const char *load_path;
     aiData *data = NULL;
 
     if (asset_class == NULL ||
@@ -4583,13 +4740,22 @@ static aiData *game_runtime_get_enemy_ai(
             sizeof(ai_path))) {
         return NULL;
     }
+    load_path = ai_path;
+    if (file_getFileSize(ai_path) == 0) {
+        load_path = resource_getPath(
+            "dummy.wai", JPB_RESOURCE_AI);
+        if (load_path == NULL ||
+            file_getFileSize((char *)(void *)load_path) == 0) {
+            return NULL;
+        }
+    }
     asset_class->aiStorage[level] =
         (uint8_t *)malloc(JPB_AI_REFERENCE_CAPACITY);
     if (asset_class->aiStorage[level] == NULL) {
         return NULL;
     }
     if (jpb_AiLoadDataFile(
-            ai_path,
+            load_path,
             asset_class->aiStorage[level],
             JPB_AI_REFERENCE_CAPACITY,
             &data,
@@ -4847,7 +5013,16 @@ static int game_runtime_load_enemy_class(
     }
     asset_class->bmdView.geometry_streams_relocated = 1;
     asset_class->bmdView.material_handles_relocated = 1;
+    if (maModelData[spec->modelId] == NULL) {
+        maModelData[spec->modelId] =
+            (char *)(void *)asset_class->bmdView.payload;
+    }
+    if (maAnimData[model_anim_table[spec->modelId].poolID] == NULL) {
+        maAnimData[model_anim_table[spec->modelId].poolID] =
+            (char *)(void *)asset_class->cadView.payload;
+    }
     maModelID[actor_num][0] = spec->modelId;
+    maModelID[actor_num][1] = actor_num;
     ++state->classCount;
     return JPB_GAME_RUNTIME_OK;
 }
@@ -4912,48 +5087,49 @@ static int game_runtime_preload_bmd_textures(
 static void game_runtime_release_enemy_actor(
     JPBGameRuntimeEnemyActor *actor)
 {
-    int object_id = -1;
-
     if (actor == NULL) {
         return;
     }
-    if (actor->scene != NULL) {
-        object_id = actor->scene->sceneRoot.objectID;
-    }
-    if (actor->animation != NULL) {
-        actor->animation->animRoot.objectID = -1;
-        actor->animation->animRoot.pParent = NULL;
-    }
-    if (actor->player != NULL) {
-        actor->player->playerRoot.objectID = -1;
-        actor->player->playerRoot.pParent = NULL;
-    }
-    if (actor->physics != NULL) {
-        actor->physics->physicsRoot.objectID = -1;
-        actor->physics->physicsRoot.pParent = NULL;
-    }
-    actor->model.modelRoot.objectID = -1;
-    actor->model.modelRoot.pParent = NULL;
-    actor->actorRoot.objectID = -1;
-    actor->actorRoot.pParent = NULL;
-    if (actor->scene != NULL) {
-        memset(actor->scene, 0, sizeof(*actor->scene));
-        actor->scene->sceneRoot.objectID = -1;
-    }
-    if ((uint32_t)object_id < JPB_ANIMATION_CAPACITY) {
-        jpb_AnimResetObjectSlot(object_id);
-    }
     memset(actor, 0, sizeof(*actor));
     actor->actorRoot.objectID = -1;
-    actor->model.modelRoot.objectID = -1;
 }
 
 static JPBGameRuntimeEnemyActor *
 game_runtime_find_enemy_actor_slot(
-    JPBGameRuntime *runtime)
+    JPBGameRuntime *runtime,
+    wsl_ENEMY *enemy,
+    playerObject *player,
+    int object_id,
+    int *reused_active_slot)
 {
     size_t index;
 
+    if (reused_active_slot != NULL) {
+        *reused_active_slot = 0;
+    }
+    /*
+     * The canonical pools can free an enemy and reuse its player/object slot
+     * before this frame reaches the portable post-stage sweep.  Reclaim that
+     * observer record by identity now; otherwise two records point at the
+     * newly created player while one retains the previous enemy/class.
+     */
+    for (index = 0;
+         index < JPB_GAME_RUNTIME_ENEMY_CAPACITY;
+         ++index) {
+        JPBGameRuntimeEnemyActor *actor =
+            &runtime->enemyState->actors[index];
+
+        if (actor->authoredMotionReady &&
+            (actor->enemy == enemy ||
+             actor->player == player ||
+             actor->actorRoot.objectID == object_id)) {
+            game_runtime_release_enemy_actor(actor);
+            if (reused_active_slot != NULL) {
+                *reused_active_slot = 1;
+            }
+            return actor;
+        }
+    }
     for (index = 0;
          index < JPB_GAME_RUNTIME_ENEMY_CAPACITY;
          ++index) {
@@ -4970,237 +5146,74 @@ game_runtime_find_enemy_actor_slot(
     return NULL;
 }
 
-static int game_runtime_prepare_enemy_actor_pools(
-    JPBGameRuntimeEnemyActor *actor)
-{
-    int object_id;
-
-    actor->scene = scene_gGetNewSceneObject(-1);
-    actor->physics = physics_gGetNewObject(-1);
-    actor->player = NULL;
-    if (actor->scene == NULL ||
-        actor->physics == NULL) {
-        return 0;
-    }
-    object_id = actor->scene->sceneRoot.objectID;
-    if (actor->physics->physicsRoot.objectID != object_id) {
-        return 0;
-    }
-
-    memset(actor->scene, 0, sizeof(*actor->scene));
-    actor->scene->sceneRoot.objectID = object_id;
-    memset(actor->physics, 0, sizeof(*actor->physics));
-    actor->physics->physicsRoot.objectID = object_id;
-    actor->physics->turnspeed = 0x500;
-    actor->physics->radius = 0x36;
-    actor->physics->mass = 0x800;
-    actor->physics->height = 0xdc;
-    memcpy(
-        actor->physics->physicsRoot.objectName,
-        "PHYSICS",
-        sizeof("PHYSICS"));
-    jpb_AnimResetObjectSlot(object_id);
-    return 1;
-}
-
-static void game_runtime_record_enemy_create_phase(
-    double duration,
-    double *last,
-    double *maximum)
-{
-    if (last == NULL || maximum == NULL) {
-        return;
-    }
-    *last += duration;
-    if (*last > *maximum) {
-        *maximum = *last;
-    }
-}
-
-static int game_runtime_create_enemy(
-    wsl_ENEMY *enemy, void *user_data)
+static void game_runtime_observe_enemy_created(
+    wsl_ENEMY *enemy, int object_id, void *user_data)
 {
     JPBGameRuntime *runtime =
         (JPBGameRuntime *)user_data;
     JPBGameRuntimeEnemyState *state;
     JPBGameRuntimeEnemyActor *actor;
     JPBGameRuntimeEnemyClass *asset_class;
-    wsl_BAP_PLACEMENT *placement;
-    aiData *enemy_ai;
-    int object_id;
-    double create_started;
-    double phase_started;
+    sceneObject *scene;
+    int reused_active_slot;
 
     if (runtime == NULL || runtime->enemyState == NULL ||
         enemy == NULL || enemy->pPlace == NULL) {
-        return 0;
+        return;
     }
-    create_started = game_runtime_wall_seconds();
     state = runtime->enemyState;
-    placement = enemy->pPlace;
     asset_class = game_runtime_find_enemy_class(
-        state, placement->actorNum);
+        state, enemy->pPlace->actorNum);
     if (asset_class == NULL) {
-        return 0;
+        return;
     }
-    phase_started = game_runtime_wall_seconds();
-    enemy_ai =
-        game_runtime_get_enemy_ai(
-            asset_class, enemy->aiLevel);
-    game_runtime_record_enemy_create_phase(
-        game_runtime_wall_seconds() - phase_started,
-        &runtime->profileLastEnemyCreateAiSeconds,
-        &runtime->profileMaxEnemyCreateAiSeconds);
-    if (enemy_ai == NULL) {
-        return 0;
+    actor = game_runtime_find_enemy_actor_slot(
+        runtime,
+        enemy,
+        enemy->pPlayer,
+        object_id,
+        &reused_active_slot);
+    if (actor == NULL || enemy->pPlayer == NULL ||
+        enemy->pPlayer->playerRoot.objectID != object_id ||
+        enemy->pPlayer->playerRoot.pParent == NULL) {
+        return;
     }
-    phase_started = game_runtime_wall_seconds();
-    actor = game_runtime_find_enemy_actor_slot(runtime);
-    if (actor == NULL ||
-        !game_runtime_prepare_enemy_actor_pools(actor)) {
-        game_runtime_release_enemy_actor(actor);
-        return 0;
-    }
-    game_runtime_record_enemy_create_phase(
-        game_runtime_wall_seconds() - phase_started,
-        &runtime->profileLastEnemyCreatePoolSeconds,
-        &runtime->profileMaxEnemyCreatePoolSeconds);
-    phase_started = game_runtime_wall_seconds();
-    object_id = actor->scene->sceneRoot.objectID;
-    actor->assetClass = asset_class;
-    actor->actorRoot.objectID = object_id;
-    memcpy(
-        actor->actorRoot.objectName,
-        "ACTOR",
-        sizeof("ACTOR"));
-    actor->model.modelRoot.objectID = object_id;
-    memcpy(
-        actor->model.modelRoot.objectName,
-        "MODEL",
-        sizeof("MODEL"));
-    obj_gSetChildObject(
-        actor->scene, &actor->actorRoot, 0);
-    obj_gSetChildObject(
-        actor->scene, &actor->model.modelRoot, 1);
-    obj_gSetChildObject(
-        actor->scene,
-        &actor->physics->physicsRoot,
-        2);
-    if (!game_runtime_build_model(
+    scene = (sceneObject *)enemy->pPlayer->playerRoot.pParent;
+    actor->scene = scene;
+    actor->model = (modelObject *)scene->pModel;
+    if ((uint32_t)asset_class->modelId >= JPB_MODEL_NAME_COUNT ||
+        !game_runtime_bind_relocated_bmd_view(
             &asset_class->bmdView,
-            asset_class->modelName,
-            object_id,
-            &actor->model,
-            asset_class->textureCache)) {
+            maModelData[asset_class->modelId],
+            actor->model)) {
+        game_runtime_set_failure_detail(
+            "enemy-observer:model-view",
+            "actor_num=%d model=%d object=%d",
+            asset_class->actorNum,
+            asset_class->modelId,
+            object_id);
         game_runtime_release_enemy_actor(actor);
-        return 0;
+        return;
     }
-    game_runtime_record_enemy_create_phase(
-        game_runtime_wall_seconds() - phase_started,
-        &runtime->profileLastEnemyCreateModelSeconds,
-        &runtime->profileMaxEnemyCreateModelSeconds);
-    phase_started = game_runtime_wall_seconds();
-    actor->animation = anim_CreateObject(
-        actor->scene,
-        asset_class->cadView.payload,
-        NULL,
-        0);
-    game_runtime_record_enemy_create_phase(
-        game_runtime_wall_seconds() - phase_started,
-        &runtime->profileLastEnemyCreateAnimSeconds,
-        &runtime->profileMaxEnemyCreateAnimSeconds);
-    if (actor->animation == NULL) {
-        game_runtime_release_enemy_actor(actor);
-        return 0;
-    }
-    phase_started = game_runtime_wall_seconds();
-    actor->player = player_gCreateObject(
-        actor->scene,
-        asset_class->modelId,
-        ai_InitPlayer);
-    game_runtime_record_enemy_create_phase(
-        game_runtime_wall_seconds() - phase_started,
-        &runtime->profileLastEnemyCreatePlayerSeconds,
-        &runtime->profileMaxEnemyCreatePlayerSeconds);
-    if (actor->player == NULL) {
-        game_runtime_release_enemy_actor(actor);
-        return 0;
-    }
-    player_gConnectMotionData(
-        actor->player,
-        asset_class->cadView.payload);
-    if (actor->player->paMotions !=
-            asset_class->cadView.motions ||
-        actor->player->maxMotions !=
-            (int16_t)asset_class->cadView.sequence_count) {
-        game_runtime_release_enemy_actor(actor);
-        return 0;
-    }
-    actor->player->oldmaxCMotions =
-        (int16_t)asset_class->cadView.sequence_count;
-    actor->player->paiMemory = enemy_ai;
-    actor->player->paCombos = NULL;
-    actor->player->maxCombos = 0;
-    actor->player->target = runtime->player;
-    enemy->actorNum = placement->actorNum;
-    enemy->enemyNum = enemy->enemyID;
-    enemy->pPlayer = actor->player;
-    actor->player->pEnemy = enemy;
+    actor->physics = (physicsObject *)scene->pPhysics;
+    actor->animation = (animObject *)scene->pAnim;
+    actor->player = enemy->pPlayer;
     actor->enemy = enemy;
+    actor->assetClass = asset_class;
     actor->aiLevel = (int16_t)enemy->aiLevel;
     actor->authoredMotionReady = 1;
-
-    /*
-     * loader_CreateEnemy delegates the complete authored spawn reset to
-     * player_RefreshPlayer. Besides position, facing, and energy, that owner
-     * seeds the animation queue and clears transient player state. Starting
-     * motion zero directly leaves non-combat scene directors in their model's
-     * motion 3, which prevents their BAP camera script from advancing.
-     */
-    phase_started = game_runtime_wall_seconds();
-    player_RefreshPlayer(actor->player);
-    game_runtime_record_enemy_create_phase(
-        game_runtime_wall_seconds() - phase_started,
-        &runtime->profileLastEnemyCreateRefreshSeconds,
-        &runtime->profileMaxEnemyCreateRefreshSeconds);
-
-    /*
-     * The dependency-light host assembles loader_CreateCharacter's component
-     * pools directly. Publish the floor resolved by player_RefreshPlayer as
-     * the actor's current ground before the same-frame physics scheduler can
-     * classify the fresh object as airborne.
-     */
-    actor->physics->airGround =
-        actor->physics->validairground;
-
-    /*
-     * Exact loader_CreateEnemy RVAs 0xBC2E2..0xBC387 read the recovered
-     * wsl_ENEMY.movementMode field at offset 0xB0.  ownerType describes the
-     * actor's gameplay role and is independent (scripted level machinery is
-     * commonly owner 3 with ordinary movement mode 0).
-     */
-    switch (enemy->movementMode) {
-    case 2:
-        actor->physics->movemode = MOVE_HOVER;
-        actor->physics->flags |= UINT32_C(0x2000);
-        break;
-    case 3:
-        actor->physics->movemode = MOVE_HOVER3D;
-        actor->physics->flags |= UINT32_C(0x2000);
-        break;
-    case 4:
-        actor->physics->movemode = MOVE_FLY;
-        actor->physics->flags |= UINT32_C(0x2000);
-        break;
-    default:
-        actor->physics->movemode = MOVE_NORMAL;
-        actor->physics->flags &= ~UINT32_C(0x2000);
-        break;
+    actor->actorRoot.objectID = object_id;
+    if (actor->physics != NULL) {
+        actor->physics->airGround =
+            actor->physics->validairground;
     }
+
     actor->initialEnergy =
         GameStruct.aCharacterData[object_id].Energy;
     actor->minimumEnergy = actor->initialEnergy;
-    ++runtime->enemyActorCount;
+    if (!reused_active_slot) {
+        ++runtime->enemyActorCount;
+    }
     ++runtime->enemySpawnCount;
     if (runtime->enemyActorCount >
         runtime->enemyActorPeakCount) {
@@ -5208,11 +5221,6 @@ static int game_runtime_create_enemy(
             runtime->enemyActorCount;
     }
     game_runtime_publish_primary_enemy(runtime);
-    game_runtime_record_enemy_create_phase(
-        game_runtime_wall_seconds() - create_started,
-        &runtime->profileLastEnemyCreateTotalSeconds,
-        &runtime->profileMaxEnemyCreateTotalSeconds);
-    return 1;
 }
 
 int jpb_GameRuntimeAddEnemyAssets(
@@ -5239,6 +5247,7 @@ int jpb_GameRuntimeAddEnemyAssets(
         return JPB_GAME_RUNTIME_INVALID_ARGUMENT;
     }
     memset(maModelID, 0, sizeof(maModelID));
+    initDataArrays();
 
     state =
         (JPBGameRuntimeEnemyState *)calloc(
@@ -5349,8 +5358,8 @@ int jpb_GameRuntimeAddEnemyAssets(
     }
     enemy_InitEnemies();
     shaolin_InitKungfu();
-    jpb_LoaderSetEnemyCreateProvider(
-        game_runtime_create_enemy, runtime);
+    jpb_LoaderSetEnemyCreatedObserver(
+        game_runtime_observe_enemy_created, runtime);
     /*
      * game_gPlayTheGame calls this PDB-named owner when the loaded stage
      * transitions into gameplay. At that point loader_LevelLoad has already
@@ -5477,6 +5486,7 @@ int jpb_GameRuntimeActivateSecondPlayer(
         state->cadView.sequence_count > INT16_MAX) {
         return JPB_GAME_RUNTIME_LOAD_FAILED;
     }
+    jpb_AnimResetObjectSlot(1);
     state->animation = anim_CreateObject(
         runtime->inactivePlayerScene,
         state->cadView.payload,
@@ -5485,6 +5495,7 @@ int jpb_GameRuntimeActivateSecondPlayer(
     if (state->animation == NULL) {
         return JPB_GAME_RUNTIME_LOAD_FAILED;
     }
+    runtime->inactivePlayerAnimation = state->animation;
 
     player = runtime->inactivePlayer;
     player->pMotion = &state->animation->pMotion;
@@ -5511,8 +5522,16 @@ int jpb_GameRuntimeActivateSecondPlayer(
     player->oldmaxCMotions =
         (int16_t)state->cadView.sequence_count;
     state->authoredMotionReady = 1;
-    runtime->inactivePlayerActorRoot.flags &= ~UINT32_C(0x20);
-    player->playerRoot.flags &= ~UINT32_C(0x20);
+    obj_gClrObjectFlag(
+        &player->playerRoot, 4, UINT32_C(0x20));
+    obj_gClrObjectFlag(
+        &player->playerRoot, 3, UINT32_C(0x20));
+    obj_gClrObjectFlag(
+        &player->playerRoot, 0, UINT32_C(0x20));
+    obj_gClrObjectFlag(
+        &player->playerRoot, 2, UINT32_C(0x20));
+    obj_gClrObjectFlag(
+        &player->playerRoot, 1, UINT32_C(0x20));
     player->target = runtime->player;
     runtime->player->target = player;
     player->playerPad.padnum = 1;
@@ -5521,7 +5540,7 @@ int jpb_GameRuntimeActivateSecondPlayer(
     player_RefreshPlayer(player);
     result = jpb_PhysicsUpdateSceneObject(
         runtime->inactivePlayerPhysics);
-    if (result != JPB_PHYSICS_PARTIAL_OK) {
+    if (result != JPB_PHYSICS_RESULT_OK) {
         return JPB_GAME_RUNTIME_LOAD_FAILED;
     }
     return JPB_GAME_RUNTIME_OK;
@@ -5571,9 +5590,9 @@ int jpb_GameRuntimeAddSecondPlayerComboData(
     player_RefreshPlayer(runtime->player);
     player_RefreshPlayer(runtime->inactivePlayer);
     if (jpb_PhysicsUpdateSceneObject(runtime->physics) !=
-            JPB_PHYSICS_PARTIAL_OK ||
+            JPB_PHYSICS_RESULT_OK ||
         jpb_PhysicsUpdateSceneObject(runtime->inactivePlayerPhysics) !=
-            JPB_PHYSICS_PARTIAL_OK) {
+            JPB_PHYSICS_RESULT_OK) {
         return JPB_GAME_RUNTIME_LOAD_FAILED;
     }
     return JPB_GAME_RUNTIME_OK;
@@ -5583,6 +5602,7 @@ int jpb_GameRuntimeSecondPlayerReady(
     const JPBGameRuntime *runtime)
 {
     const JPBGameRuntimeSecondPlayerState *state;
+    modelObject *model;
 
     if (runtime == NULL || runtime->secondPlayerState == NULL ||
         runtime->inactivePlayer == NULL ||
@@ -5590,6 +5610,8 @@ int jpb_GameRuntimeSecondPlayerReady(
         return 0;
     }
     state = runtime->secondPlayerState;
+    model = game_runtime_scene_model(
+        runtime->inactivePlayerScene, NULL);
     /* scene_middleRender poses and renders before player_gProcessPlayers.
      * A control transition can therefore select the next animation frame
      * after this frame's authored pose was successfully consumed. Requiring
@@ -5599,7 +5621,7 @@ int jpb_GameRuntimeSecondPlayerReady(
         state->authoredFrameReady &&
         state->authoredPoseReady &&
         state->animation != NULL &&
-        state->model.pRootNode != NULL &&
+        model != NULL && model->pRootNode != NULL &&
         runtime->inactivePlayer->playernum == 1 &&
         (runtime->inactivePlayer->playerRoot.flags &
             UINT32_C(0x20)) == 0;
@@ -6122,6 +6144,7 @@ static void game_runtime_observe_player_lifecycle(
 static void game_runtime_capture_screen_poly(
     void *user_data,
     _Material *material,
+    uint32_t material_flags,
     int vertex_count,
     const JPBScreenPolyVertex *vertices,
     int no_scale)
@@ -6133,6 +6156,8 @@ static void game_runtime_capture_screen_poly(
     size_t pixels_added;
     int is_water;
     int result;
+    _Material material_snapshot;
+    const _Material *render_material = material;
     JPBGameRuntimeScreenPolyDraw *draw = NULL;
     int copy_count = vertex_count;
 
@@ -6149,6 +6174,7 @@ static void game_runtime_capture_screen_poly(
             copy_count = JPB_SCREEN_POLY_VERTEX_CAPACITY;
         }
         draw->texture = material;
+        draw->materialFlags = material_flags;
         draw->vertexCount = vertex_count;
         draw->noScale = no_scale;
         draw->deferred = !context->sharedDepthReady ||
@@ -6182,8 +6208,13 @@ static void game_runtime_capture_screen_poly(
     is_water = material != NULL &&
         game_runtime_path_stem_equals(
             material->filename, "a_water");
+    if (material != NULL) {
+        material_snapshot = *material;
+        material_snapshot.flags = material_flags;
+        render_material = &material_snapshot;
+    }
     result = jpb_SoftwareDrawScreenPoly(
-        material,
+        render_material,
         vertex_count,
         vertices,
         no_scale,
@@ -6236,6 +6267,8 @@ static void game_runtime_flush_deferred_screen_polys(
         size_t pixels_added;
         int is_water;
         int result;
+        _Material material_snapshot;
+        const _Material *render_material = draw->texture;
 
         if (!draw->deferred) {
             continue;
@@ -6246,9 +6279,14 @@ static void game_runtime_flush_deferred_screen_polys(
         is_water = draw->texture != NULL &&
             game_runtime_path_stem_equals(
                 draw->texture->filename, "a_water");
+        if (draw->texture != NULL) {
+            material_snapshot = *draw->texture;
+            material_snapshot.flags = draw->materialFlags;
+            render_material = &material_snapshot;
+        }
         result = runtime->screenPolyTriangleSink != NULL
             ? jpb_SoftwareDrawScreenPolyToSink(
-                  draw->texture,
+                  render_material,
                   draw->vertexCount,
                   draw->vertices,
                   draw->noScale,
@@ -6258,7 +6296,7 @@ static void game_runtime_flush_deferred_screen_polys(
                   runtime->screenPolyRenderUserData,
                   context->stats)
             : jpb_SoftwareDrawScreenPoly(
-                  draw->texture,
+                  render_material,
                   draw->vertexCount,
                   draw->vertices,
                   draw->noScale,
@@ -6371,8 +6409,9 @@ static void game_runtime_scene_after_animations(
                     actor->animation != NULL
                         ? (void *)actor->animation->pCurrentAnimFrame
                         : NULL,
-                    actor->model.pRootNode != NULL
-                        ? (int)actor->model.pRootNode->id : -1);
+                    actor->model != NULL &&
+                            actor->model->pRootNode != NULL
+                        ? (int)actor->model->pRootNode->id : -1);
                 context->result =
                     JPB_GAME_RUNTIME_RENDER_FAILED;
                 return;
@@ -6503,315 +6542,36 @@ static int game_runtime_scene_render_model(
     const JPBBmdView *view,
     modelObject *model,
     const _animFrame *key_frame,
+    sceneObject *scene,
+    physicsObject *physics,
     const FVECTOR *position,
     int32_t yaw,
     JPBGameRuntimeTextureCache *texture_cache)
 {
     JPBGameRuntime *runtime = context->runtime;
-    int result = context->sharedDepthReady &&
-            runtime->modelTriangleSink != NULL
-        ? jpb_SoftwareRenderBmdMaterializedWithDepthToSink(
-            view, model, key_frame, position, yaw,
-            scene_GetSceneMatrix(), &runtime->scene,
-            context->framebuffer, game_runtime_resolve_texture,
-            texture_cache, &context->depthBuffer,
-            runtime->modelTriangleSink,
-            runtime->modelRenderUserData, context->stats)
-        : context->sharedDepthReady
-        ? jpb_SoftwareRenderBmdMaterializedWithDepth(
-            view,
-            model,
-            key_frame,
-            position,
-            yaw,
-            scene_GetSceneMatrix(),
-            &runtime->scene,
-            context->framebuffer,
-            game_runtime_resolve_texture,
-            texture_cache,
-            &context->depthBuffer,
-            context->stats)
-        : jpb_SoftwareRenderBmdMaterialized(
-            view,
-            model,
-            key_frame,
-            position,
-            yaw,
-            scene_GetSceneMatrix(),
-            &runtime->scene,
-            context->framebuffer,
-            game_runtime_resolve_texture,
-            texture_cache,
-            context->stats);
+    int result = jpb_SoftwareRenderBmdForScene(
+        view,
+        model,
+        key_frame,
+        scene,
+        physics,
+        position,
+        yaw,
+        scene_GetSceneMatrix(),
+        &runtime->scene,
+        context->framebuffer,
+        game_runtime_resolve_texture,
+        texture_cache,
+        context->sharedDepthReady ? &context->depthBuffer : NULL,
+        context->sharedDepthReady
+            ? runtime->modelTriangleSink
+            : NULL,
+        context->sharedDepthReady
+            ? runtime->modelRenderUserData
+            : NULL,
+        context->stats);
 
     return result;
-}
-
-static int game_runtime_scene_render_powerup_geometry(
-    JPBGameRuntimeFrameContext *context,
-    JPBGameRuntimePowerupAsset *asset,
-    const JPBGameRuntimePowerupDraw *draw)
-{
-    JPBGameRuntime *runtime = context->runtime;
-    JPBBmdGeometryView geometry;
-    FVECTOR transformed[JPB_SOFTWARE_MODEL_VERTEX_CAPACITY];
-    MATRIX local;
-    MATRIX *view;
-    FVECTOR position;
-    JPBSoftwareTexture texture;
-    _Material material;
-    size_t vertex;
-    size_t face;
-    size_t pixels_before;
-    size_t pixels_added;
-
-    if (asset == NULL || draw == NULL || !asset->loaded ||
-        asset->bmdView.root == NULL) {
-        game_runtime_set_failure_detail(
-            "frame:powerup",
-            "powerup asset not loaded type=%u", draw != NULL
-                ? draw->type : UINT_MAX);
-        return 0;
-    }
-    if (jpb_BmdGetGeometry(
-            &asset->bmdView,
-            asset->bmdView.root,
-            &geometry) != JPB_BMD_OK ||
-        geometry.shared_vertex_count != 0 ||
-        geometry.total_vertex_count >
-            JPB_SOFTWARE_MODEL_VERTEX_CAPACITY) {
-        game_runtime_set_failure_detail(
-            "frame:powerup",
-            "powerup geometry invalid type=%u shared=%zu vertices=%zu",
-            draw->type, geometry.shared_vertex_count,
-            geometry.total_vertex_count);
-        return 0;
-    }
-    memset(&texture, 0, sizeof(texture));
-    if (!game_runtime_resolve_texture(
-            asset->textureCache,
-            geometry.geometry->t.Texture,
-            &texture)) {
-        game_runtime_set_failure_detail(
-            "frame:powerup",
-            "powerup texture unresolved type=%u texture=%s",
-            draw->type, geometry.geometry->t.Texture);
-        return 0;
-    }
-    memset(&material, 0, sizeof(material));
-    material.texture = &texture;
-    material.flags = texture.materialFlags;
-    material.samplerType = texture.samplerType;
-    material.colorOverride = texture.colorOverride;
-    (void)snprintf(
-        material.filename,
-        sizeof(material.filename),
-        "%s",
-        geometry.geometry->t.Texture);
-
-    fRotMatrix((_svector *)(void *)&draw->rotation, &local);
-    fScaleMatrix(&local, (VECTOR *)(void *)&draw->scale);
-    position.vx = (float)((int32_t)draw->position.vx +
-                          (int32_t)draw->offset.vx);
-    position.vy = (float)((int32_t)draw->position.vy +
-                          (int32_t)draw->offset.vy);
-    position.vz = (float)((int32_t)draw->position.vz +
-                          (int32_t)draw->offset.vz);
-    view = scene_GetSceneMatrix();
-    for (vertex = 0;
-         vertex < geometry.local_vertex_count;
-         ++vertex) {
-        FVECTOR decoded;
-        FVECTOR world;
-        FVECTOR camera;
-
-        jpb_BmdDecodePackedVertex(
-            geometry.packed_vertices[vertex], &decoded);
-        fApplyMatrixFV(&local, &decoded, &world);
-        world.vx += position.vx;
-        world.vy += position.vy;
-        world.vz += position.vz;
-        fApplyMatrixFV(view, &world, &camera);
-        camera.vx += (float)view->t[0];
-        camera.vy += (float)view->t[1];
-        camera.vz += (float)view->t[2];
-        transformed[geometry.shared_vertex_count + vertex] =
-            camera;
-    }
-
-    pixels_before = context->stats != NULL
-        ? context->stats->pixels
-        : 0;
-    for (face = 0; face < geometry.face_count; ++face) {
-        size_t corners =
-            jpb_BmdFaceCornerCount(&geometry, face);
-        JPBScreenPolyVertex vertices[4];
-        size_t corner;
-        int render_result;
-
-        if (corners < 3 || corners > 4) {
-            game_runtime_set_failure_detail(
-                "frame:powerup",
-                "powerup face invalid type=%u face=%zu corners=%zu",
-                draw->type, face, corners);
-            return 0;
-        }
-        for (corner = 0; corner < corners; ++corner) {
-            size_t index;
-            const pairUV *uv;
-            const CVECTOR *color;
-            uint8_t r;
-            uint8_t g;
-            uint8_t b;
-
-            if (!jpb_BmdFaceVertexIndex(
-                    &geometry, face, corner, &index) ||
-                index >= JPB_SOFTWARE_MODEL_VERTEX_CAPACITY) {
-                game_runtime_set_failure_detail(
-                    "frame:powerup",
-                    "powerup vertex invalid type=%u face=%zu corner=%zu",
-                    draw->type, face, corner);
-                return 0;
-            }
-            uv = jpb_BmdFaceUv(&geometry, face, corner);
-            color = jpb_BmdFaceColor(&geometry, face, corner);
-            if (uv == NULL || color == NULL) {
-                game_runtime_set_failure_detail(
-                    "frame:powerup",
-                    "powerup attributes invalid type=%u face=%zu corner=%zu",
-                    draw->type, face, corner);
-                return 0;
-            }
-            r = color->r;
-            g = color->g;
-            b = color->b;
-            if (material.colorOverride >= 0) {
-                r = (uint8_t)material.colorOverride;
-                g = (uint8_t)material.colorOverride;
-                b = (uint8_t)material.colorOverride;
-            } else if (material.colorOverride == -1000 &&
-                       r < 3) {
-                r = UINT8_C(0x12);
-                g = UINT8_C(0x12);
-                b = UINT8_C(0x12);
-            }
-            vertices[corner].x = transformed[index].vx;
-            vertices[corner].y = transformed[index].vy;
-            vertices[corner].z = transformed[index].vz;
-            vertices[corner].argb =
-                UINT32_C(0xff000000) |
-                ((uint32_t)r << 16) |
-                ((uint32_t)g << 8) |
-                (uint32_t)b;
-            vertices[corner].tu = uv->u;
-            vertices[corner].tv = uv->v;
-        }
-        render_result =
-            runtime->screenPolyTriangleSink != NULL &&
-                    runtime->screenPolyRenderBeginHook != NULL &&
-                    runtime->screenPolyRenderEndHook != NULL
-            ? jpb_SoftwareDrawScreenPolyToSink(
-                  &material, (int)corners, vertices, 1,
-                  context->framebuffer, &context->depthBuffer,
-                  runtime->screenPolyTriangleSink,
-                  runtime->screenPolyRenderUserData,
-                  context->stats)
-            : jpb_SoftwareDrawScreenPoly(
-                  &material, (int)corners, vertices, 1,
-                  context->framebuffer, &context->depthBuffer,
-                  context->stats);
-        if (render_result != JPB_SOFTWARE_RENDER_OK) {
-            game_runtime_set_failure_detail(
-                "frame:powerup",
-                "powerup draw failed type=%u face=%zu status=%d",
-                draw->type, face, render_result);
-            return 0;
-        }
-    }
-    pixels_added = context->stats != NULL
-        ? context->stats->pixels - pixels_before
-        : 0;
-    if (pixels_added != 0) {
-        ++runtime->powerupModelDrawCount;
-        runtime->powerupModelPixelCount += pixels_added;
-    }
-    return 1;
-}
-
-static void game_runtime_scene_render_powerups(
-    JPBGameRuntimeFrameContext *context)
-{
-    JPBGameRuntime *runtime;
-    JPBGameRuntimePowerupState *state;
-    size_t draw_index;
-    double started;
-    int hardware_sink;
-
-    if (context == NULL || context->runtime == NULL ||
-        context->result != JPB_GAME_RUNTIME_OK) {
-        return;
-    }
-    runtime = context->runtime;
-    state =
-        (JPBGameRuntimePowerupState *)runtime->powerupModelState;
-    if (state == NULL || state->pendingCount == 0) {
-        return;
-    }
-    started = game_runtime_wall_seconds();
-    hardware_sink =
-        context->sharedDepthReady &&
-        runtime->screenPolyTriangleSink != NULL &&
-        runtime->screenPolyRenderBeginHook != NULL &&
-        runtime->screenPolyRenderEndHook != NULL;
-    if (hardware_sink &&
-        !runtime->screenPolyRenderBeginHook(
-            runtime->screenPolyRenderUserData,
-            context->framebuffer, &context->depthBuffer)) {
-        game_runtime_set_failure_detail(
-            "frame:powerup-begin",
-            "hardware powerup begin hook failed");
-        context->result = JPB_GAME_RUNTIME_RENDER_FAILED;
-        state->pendingCount = 0;
-        return;
-    }
-    for (draw_index = 0;
-         draw_index < state->pendingCount;
-         ++draw_index) {
-        JPBGameRuntimePowerupDraw *draw =
-            &state->pending[draw_index];
-        JPBGameRuntimePowerupAsset *asset;
-
-        if (draw->type >= JPB_GAME_RUNTIME_POWERUP_MODEL_COUNT) {
-            continue;
-        }
-        asset = &state->assets[draw->type];
-        if (!game_runtime_scene_render_powerup_geometry(
-                context, asset, draw)) {
-            context->result = JPB_GAME_RUNTIME_RENDER_FAILED;
-            break;
-        }
-    }
-    if (hardware_sink &&
-        context->result == JPB_GAME_RUNTIME_OK &&
-        !runtime->screenPolyRenderEndHook(
-            runtime->screenPolyRenderUserData,
-            context->framebuffer, &context->depthBuffer)) {
-        game_runtime_set_failure_detail(
-            "frame:powerup-end",
-            "hardware powerup end hook failed");
-        context->result = JPB_GAME_RUNTIME_RENDER_FAILED;
-    }
-    state->pendingCount = 0;
-    {
-        double duration = game_runtime_wall_seconds() - started;
-
-        runtime->profileLastScenePowerupsSeconds += duration;
-        if (runtime->profileLastScenePowerupsSeconds >
-            runtime->profileMaxScenePowerupsSeconds) {
-            runtime->profileMaxScenePowerupsSeconds =
-                runtime->profileLastScenePowerupsSeconds;
-        }
-    }
 }
 
 static void game_runtime_scene_after_models(
@@ -6820,6 +6580,7 @@ static void game_runtime_scene_after_models(
     JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
     JPBGameRuntimeFrameContext *context =
         game_runtime_active_frame;
+    modelObject *player_model;
     double started;
 
     (void)view;
@@ -6837,7 +6598,9 @@ static void game_runtime_scene_after_models(
         context->result = JPB_GAME_RUNTIME_RENDER_FAILED;
         return;
     }
-    if (runtime->actorModel.pRootNode != NULL) {
+    player_model = game_runtime_scene_model(
+        runtime->actorScene, &runtime->actorModel);
+    if (player_model->pRootNode != NULL) {
         FVECTOR position = {
             runtime->physics->pos.vx,
             runtime->physics->pos.vy,
@@ -6854,10 +6617,12 @@ static void game_runtime_scene_after_models(
             int render_result = game_runtime_scene_render_model(
                 context,
                 &runtime->bmdView,
-                &runtime->actorModel,
+                player_model,
                 runtime->actorScene != NULL
                     ? runtime->actorScene->pKeyFrameModel
                     : NULL,
+                runtime->actorScene,
+                runtime->physics,
                 &position,
                 runtime->physics->angle.vy,
                 runtime->textureCache);
@@ -6867,7 +6632,7 @@ static void game_runtime_scene_after_models(
                     "frame:model-player-one",
                     "software renderer status=%d root=%d position=%.1f/%.1f/%.1f",
                     render_result,
-                    (int)runtime->actorModel.pRootNode->id,
+                    (int)player_model->pRootNode->id,
                     position.vx, position.vy, position.vz);
             context->result =
                 JPB_GAME_RUNTIME_RENDER_FAILED;
@@ -6888,9 +6653,13 @@ static void game_runtime_scene_after_models(
         }
     }
     if (runtime->secondPlayerState != NULL &&
-        runtime->secondPlayerState->model.pRootNode != NULL) {
+        game_runtime_scene_model(
+            runtime->inactivePlayerScene,
+            &runtime->secondPlayerState->model)->pRootNode != NULL) {
         JPBGameRuntimeSecondPlayerState *state =
             runtime->secondPlayerState;
+        modelObject *second_model = game_runtime_scene_model(
+            runtime->inactivePlayerScene, &state->model);
         FVECTOR position = {
             runtime->inactivePlayerPhysics->pos.vx,
             runtime->inactivePlayerPhysics->pos.vy,
@@ -6907,10 +6676,12 @@ static void game_runtime_scene_after_models(
             int render_result = game_runtime_scene_render_model(
                 context,
                 &state->bmdView,
-                &state->model,
+                second_model,
                 runtime->inactivePlayerScene != NULL
                     ? runtime->inactivePlayerScene->pKeyFrameModel
                     : NULL,
+                runtime->inactivePlayerScene,
+                runtime->inactivePlayerPhysics,
                 &position,
                 runtime->inactivePlayerPhysics->angle.vy,
                 state->textureCache);
@@ -6920,7 +6691,7 @@ static void game_runtime_scene_after_models(
                     "frame:model-player-two",
                     "software renderer status=%d root=%d position=%.1f/%.1f/%.1f",
                     render_result,
-                    (int)state->model.pRootNode->id,
+                    (int)second_model->pRootNode->id,
                     position.vx, position.vy, position.vz);
             context->result =
                 JPB_GAME_RUNTIME_RENDER_FAILED;
@@ -6949,7 +6720,8 @@ static void game_runtime_scene_after_models(
             size_t pixels_before;
 
             if (!actor->authoredMotionReady ||
-                actor->model.pRootNode == NULL ||
+                actor->model == NULL ||
+                actor->model->pRootNode == NULL ||
                 actor->assetClass == NULL ||
                 actor->animation == NULL ||
                 actor->animation->pCurrentAnimSeq == NULL) {
@@ -6968,10 +6740,12 @@ static void game_runtime_scene_after_models(
                 int render_result = game_runtime_scene_render_model(
                     context,
                     &actor->assetClass->bmdView,
-                    &actor->model,
+                    actor->model,
                     actor->scene != NULL
                         ? actor->scene->pKeyFrameModel
                         : NULL,
+                    actor->scene,
+                    actor->physics,
                     &position,
                     actor->physics->angle.vy,
                     actor->assetClass->textureCache);
@@ -6985,7 +6759,7 @@ static void game_runtime_scene_after_models(
                             ? actor->enemy->enemyID : -1,
                         actor->enemy != NULL
                             ? actor->enemy->ownerType : -1,
-                        (int)actor->model.pRootNode->id,
+                        (int)actor->model->pRootNode->id,
                         actor->animation != NULL
                             ? (void *)actor->animation->pCurrentAnimSeq
                             : NULL,
@@ -7064,22 +6838,6 @@ static void game_runtime_scene_before_player_process(
     }
 }
 
-static void game_runtime_scene_level_owner(
-    void *user_data,
-    int level,
-    int argument0,
-    int argument1,
-    int argument2)
-{
-    (void)user_data;
-    (void)argument0;
-    (void)argument1;
-    (void)argument2;
-    if (level == 15) {
-        level_Mini4();
-    }
-}
-
 void jpb_GameRuntimeShutdown(JPBGameRuntime *runtime)
 {
     if (runtime == NULL) {
@@ -7087,15 +6845,22 @@ void jpb_GameRuntimeShutdown(JPBGameRuntime *runtime)
     }
     if (runtime->drawTextureHookReady) {
         jpb_WHookSetDrawTextureHook(NULL, NULL);
+        jpb_WHookSetDrawTextureClippedHook(NULL, NULL);
+        jpb_WHookSetDrawUITextUTF16Hook(NULL, NULL);
+        jpb_WHookSetDrawUITextUTF163DHook(NULL, NULL);
         runtime->drawTextureHookReady = 0;
+    }
+    if (runtime->clearWindowHookReady) {
+        jpb_WHookSetClearWindowHook(NULL, NULL);
+        runtime->clearWindowHookReady = 0;
+    }
+    if (runtime->renderLoadHookReady) {
+        jpb_WHookSetRenderLoadHook(NULL, NULL);
+        runtime->renderLoadHookReady = 0;
     }
     if (runtime->screenPolyHookReady) {
         jpb_WHookSetScreenPolyHook(NULL, NULL);
         runtime->screenPolyHookReady = 0;
-    }
-    if (runtime->barHookReady) {
-        jpb_GameSetBarHook(NULL, NULL);
-        runtime->barHookReady = 0;
     }
     if (runtime->playerTileHookReady) {
         jpb_PlayerSetTileHook(NULL, NULL);
@@ -7103,7 +6868,7 @@ void jpb_GameRuntimeShutdown(JPBGameRuntime *runtime)
     }
     if (runtime->textHookReady) {
         jpb_TextSetDrawHook(NULL, NULL);
-        jpb_TextSetPsxTextureHook(NULL, NULL);
+        jpb_TextSetDraw3DHook(NULL, NULL);
         runtime->textHookReady = 0;
     }
     if (runtime->draw3dTextHookReady) {
@@ -7139,12 +6904,15 @@ void jpb_GameRuntimeShutdown(JPBGameRuntime *runtime)
         jpb_SceneSetMiddleRenderHooks(NULL, NULL);
         runtime->sceneMiddleRenderHooksReady = 0;
     }
-    jpb_LoaderSetEnemyCreateProvider(NULL, NULL);
+    jpb_LoaderSetEnemyCreatedObserver(NULL, NULL);
     file_SetTextureLoadHook(NULL);
     file_SetChunkLoadHooks(NULL, NULL);
-    jpb_PhysicsSetGeometryStreamResolver(NULL, NULL);
     jpb_PwrupReleaseData();
     texture_Flush((unsigned)TT_ANY);
+    /* The host cache is about to be destroyed; invalidate game-owned
+     * material pointers that otherwise outlive that cache across a title to
+     * gameplay handoff. The next exact fx_Init call reloads the real assets. */
+    jpb_FxInvalidateTextureCache();
     jpb_TextureSetPlatformHooks(NULL, NULL, NULL);
     if (runtime->enemyState != NULL) {
         game_runtime_release_enemy_classes(
@@ -7268,7 +7036,7 @@ int jpb_GameRuntimeFrame(
     runtime->textDrawDroppedCount = 0;
     runtime->textDrawCompositePixelCount = 0;
     runtime->textTrueTypeDrawCount = 0;
-    runtime->textFallbackDrawCount = 0;
+    runtime->textFailedDrawCount = 0;
     runtime->maximumTextPointSize = 0;
     runtime->maximumTextMeasuredWidth = 0;
     runtime->maximumTextMeasuredHeight = 0;
@@ -7395,7 +7163,6 @@ int jpb_GameRuntimeFrame(
     stage_started = game_runtime_wall_seconds();
     context.sceneStageStarted = stage_started;
     scene_middleRender(NULL);
-    game_runtime_scene_render_powerups(&context);
     game_runtime_record_duration(
         NULL,
         &runtime->profileLastSceneSeconds,
@@ -7718,7 +7485,7 @@ int jpb_GameRuntimeTitleFrame(
     runtime->textDrawDroppedCount = 0;
     runtime->textDrawCompositePixelCount = 0;
     runtime->textTrueTypeDrawCount = 0;
-    runtime->textFallbackDrawCount = 0;
+    runtime->textFailedDrawCount = 0;
     runtime->maximumTextPointSize = 0;
     runtime->maximumTextMeasuredWidth = 0;
     runtime->maximumTextMeasuredHeight = 0;
@@ -7739,7 +7506,13 @@ int jpb_GameRuntimeTitleFrame(
     OptionStruct.ScreenHeight = (uint32_t)framebuffer->height;
     scaleAdjustment = getScaleAdjustment();
     scaleAdjustmentMM = getScaleAdjustmentMM();
+    runtime->clearWindowRequested = 0;
     menu_mainLoop();
+
+    if (runtime->clearWindowRequested) {
+        game_runtime_clear_framebuffer(
+            framebuffer, UINT32_C(0xff000000));
+    }
 
     if (runtime->titleScreenDrawRenderHook != NULL) {
         if (!runtime->titleScreenDrawRenderHook(
@@ -7749,19 +7522,13 @@ int jpb_GameRuntimeTitleFrame(
                 framebuffer)) {
             return JPB_GAME_RUNTIME_RENDER_FAILED;
         }
+        game_runtime_flush_text_draws(runtime, framebuffer);
     } else {
-        game_runtime_flush_screen_draws(runtime, framebuffer);
+        game_runtime_flush_ordered_title_draws(runtime, framebuffer);
     }
-    game_runtime_flush_text_draws(runtime, framebuffer);
     menu_mode = menuVars.menuMode[menuVars.menuModeSP & 7u];
 
-    /*
-     * State 0x66 is the recovered level-load handoff.  It deliberately has
-     * no menu definition or draw owner: the platform host consumes it and
-     * starts the selected level.  Treating that empty transition frame as a
-     * rendering failure made an interactive selection exit cleanly with
-     * status 5 before the host could complete the handoff.
-     */
+    /* State 0x66 owns the recovered load-screen draw path. */
     return runtime->screenDrawDroppedCount == 0 &&
            runtime->textDrawDroppedCount == 0 &&
            (runtime->textDrawCount != 0 ||

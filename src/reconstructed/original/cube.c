@@ -1,5 +1,5 @@
 /*
- * PARTIALLY REVIEWED RECONSTRUCTION.
+ * REVIEWED RECONSTRUCTION.
  * PDB module: 0019
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\cube.obj
  * Primary source: W:\SWJediPowerBattles\Work\cube.c
@@ -16,8 +16,10 @@
 #include "jpb/jonny.h"
 #include "jpb/jonnywin.h"
 #include "jpb/level_world.h"
+#include "jpb/linkstubs.h"
 #include "jpb/physics.h"
 #include "jpb/player.h"
+#include "jpb/prim.h"
 #include "jpb/whook.h"
 #include "jpb/world.h"
 
@@ -28,10 +30,25 @@ static int minx;
 static int maxx;
 static int minz;
 static int maxz;
+/* Exact cube.c local at RVA 0x50DB00 (0x8000 bytes). */
+typedef struct CubeUV4 {
+    float uv[JPB_CUBE_UV_FLOATS_PER_SET];
+} CubeUV4;
+
+static FVECTOR pcache[256];
+static CubeUV4 fUV[JPB_CUBE_UV_SET_COUNT];
+static FVECTOR4 cubepos[2];
+static uint32_t libpartcols[32];
+static _Material *oldspice;
+
+static const int32_t uvredir[16][4] = {
+    {0, 2, 4, 6}, {0, 2, 4, 6}, {0, 2, 4, 6}, {0, 2, 4, 6},
+    {4, 6, 0, 2}, {4, 6, 0, 2}, {4, 6, 0, 2}, {4, 6, 0, 2},
+    {0, 6, 4, 4}, {0, 2, 4, 4}, {2, 6, 0, 0}, {2, 6, 4, 4},
+    {4, 2, 0, 0}, {4, 6, 0, 0}, {6, 2, 4, 4}, {6, 2, 0, 0}
+};
 
 static JPBCubeRenderBounds jpb_last_render_bounds;
-static JPBCubeLegacyRenderHook jpb_legacy_render_hook;
-static void *jpb_legacy_render_user_data;
 
 static int cube_player_is_active(int index)
 {
@@ -66,9 +83,6 @@ static int cube_sight_from_map_cube(int32_t *cube)
         uint32_t library = ((uint32_t)cube[0] >> 14) & 0xffU;
         int32_t library_base;
 
-        if (leveldata == NULL) {
-            return 6;
-        }
         library_base = leveldata[-4] >> 11;
         cube = leveldata + library_base + (int)(library * 9U);
     }
@@ -91,6 +105,78 @@ static float cube_toggle_sign(float value)
  * PDB type: int (void*, int*)
  * Source: W:\SWJediPowerBattles\Work\cube.c
  */
+int GPUcluts(void *mapbase, int32_t *buffer4k)
+{
+    SRECT rectangle = {0, 508, 512, 4};
+    SRECT clut_rectangle = {0, 508, 4, 3};
+    POLY_GT4 polygon = {
+        .tag = UINT32_C(0x0c000000),
+        .code = 0x3c,
+        .x0 = 0,
+        .y0 = 0,
+        .u0 = 32,
+        .v0 = 252,
+        .x1 = 4,
+        .y1 = 0,
+        .u1 = 32,
+        .v1 = 252,
+        .tpage = UINT16_C(0x0110),
+        .r2 = 8,
+        .x2 = 0,
+        .y2 = 3,
+        .u2 = 32,
+        .v2 = 252,
+        .r3 = 8,
+        .x3 = 4,
+        .y3 = 3,
+        .u3 = 32,
+        .v3 = 252
+    };
+    uint32_t result;
+
+    DrawSync(0);
+    StoreImage(&rectangle, (unsigned *)(void *)buffer4k);
+    DrawSync(0);
+    if ((uint32_t)buffer4k[1023] == UINT32_C(0x4d6e6f4a)) {
+        result = (uint32_t)buffer4k[1022];
+    } else {
+        DRAWENV environment;
+        volatile uint16_t place[12];
+        uint32_t occupied = 0;
+        int index;
+
+        SetDefDrawEnv(&environment, 0, 508, 512, 4);
+        environment.isbg = 1;
+        environment.r0 = 248;
+        environment.g0 = 248;
+        environment.b0 = 248;
+        DrawSync(0);
+        PutDrawEnv(&environment);
+        DrawSync(0);
+        DrawPrim(&polygon);
+        DrawSync(0);
+        StoreImage(
+            &clut_rectangle,
+            (unsigned *)(void *)place);
+        DrawSync(0);
+
+        for (index = 0; index < 12; ++index) {
+            occupied |= (uint32_t)place[index] & UINT32_C(0x7fff);
+        }
+        if (occupied == 0) {
+            contraband_cluts(buffer4k);
+            contraband_lights(mapbase);
+        } else {
+            band_lights();
+        }
+        buffer4k[1023] = (int32_t)UINT32_C(0x4d6e6f4a);
+        result = occupied == 0;
+        buffer4k[1022] = (int32_t)result;
+        LoadImage(&rectangle, (unsigned *)(void *)buffer4k);
+        DrawSync(0);
+    }
+    return (int)result;
+}
 
 /* 0x2ADE0, 3 bytes, global, 2 named locals
  * cube_GetCubeAmbientLight
@@ -185,12 +271,7 @@ void cube_NewWorldRender(MATRIX *matrix)
     float dy;
     float dz;
 
-    if (matrix == NULL || gpWorld == NULL) {
-        return;
-    }
-
-    if (gpWorld->currentDolly >= 0 && gpWorld->currentDolly < 256 &&
-        (gpWorld->aDolly[gpWorld->currentDolly].flags &
+    if ((gpWorld->aDolly[gpWorld->currentDolly].flags &
          UINT32_C(0x00000400)) != 0) {
         BAP_CAMERADOLLY *dolly =
             &gpWorld->aDolly[gpWorld->currentDolly];
@@ -201,13 +282,11 @@ void cube_NewWorldRender(MATRIX *matrix)
             0
         };
 
-        if (leveldata != NULL) {
-            (void)intersec_FindWalkHeight(
-                &dolly_position,
-                NULL,
-                (objectRoot *)(void *)&thatthing,
-                1);
-        }
+        (void)intersec_FindWalkHeight(
+            &dolly_position,
+            NULL,
+            (objectRoot *)(void *)&thatthing,
+            1);
         sight = thatthing.cube != NULL
                     ? cube_sight_from_map_cube(thatthing.cube)
                     : 0x10;
@@ -278,13 +357,11 @@ void cube_NewWorldRender(MATRIX *matrix)
         if (!player0_active) {
             cube0 = NULL;
         }
-        if (leveldata != NULL) {
-            (void)intersec_FindWalkHeight(
-                &world_location,
-                NULL,
-                (objectRoot *)(void *)&thatthing,
-                1);
-        }
+        (void)intersec_FindWalkHeight(
+            &world_location,
+            NULL,
+            (objectRoot *)(void *)&thatthing,
+            1);
         if (cube0 == NULL) {
             cube0 = thatthing.cube;
         }
@@ -372,17 +449,11 @@ void cube_NewWorldRender(MATRIX *matrix)
     temp.m[2][2] = matrix->m[2][1];
     camera_GetLocation(&v_campos);
     level = (int)(int8_t)LevelSelect;
-    if (level >= 0 && level < JPB_LEVEL_COUNT) {
-        dy = level_offset[level][1] * 512.0f + (float)v_campos.vz;
-        dz = level_offset[level][2] * 256.0f + (float)v_campos.vy;
-        dx = cube_toggle_sign(
-            level_offset[level][0] * 256.0f -
-            (float)v_campos.vx);
-    } else {
-        dx = (float)v_campos.vx;
-        dy = (float)v_campos.vy;
-        dz = (float)v_campos.vz;
-    }
+    dy = level_offset[level][1] * 512.0f + (float)v_campos.vz;
+    dz = level_offset[level][2] * 256.0f + (float)v_campos.vy;
+    dx = cube_toggle_sign(
+        level_offset[level][0] * 256.0f -
+        (float)v_campos.vx);
     temp.t[0] = (int)(
         (temp.m[0][0] * dx - temp.m[0][1] * dy) -
         temp.m[0][2] * dz);
@@ -397,8 +468,7 @@ void cube_NewWorldRender(MATRIX *matrix)
     worldTURTLEMatrix = matrix;
     if (LevelSelect == 12) {
         (void)plotsomecubes(xmin, zmin, xmax, zmax);
-    } else if (LevelSelect != 0 &&
-               level >= 0 && level < JPB_LEVEL_COUNT) {
+    } else if (LevelSelect != 0) {
         _ApplyLevelTransformation(
             &temp,
             level_scale[level][0],
@@ -422,6 +492,53 @@ void cube_ShowMesh(int mesh)
  * PDB type: int ()
  * Source: W:\SWJediPowerBattles\Work\cube.c
  */
+int initUVs(void)
+{
+    uint32_t block;
+    uint32_t second = 0;
+
+    for (block = 0; block < JPB_CUBE_UV_SET_COUNT / 8U; ++block) {
+        const uint32_t *source =
+            (const uint32_t *)(const void *)texturebase +
+            block * 48U;
+        float *destination = fUV[block * 8U].uv;
+        uint32_t face;
+
+        for (face = 0; face < 8U; ++face) {
+            uint32_t first = source[face * 6U + 1U];
+            uint32_t output = face * 8U;
+
+            second = source[face * 6U + 2U];
+            destination[output + 0U] =
+                (float)(first & UINT32_C(0xff)) * (1.0f / 256.0f);
+            destination[output + 1U] =
+                1.0f - (float)((first >> 8) & UINT32_C(0xff)) *
+                           (1.0f / 256.0f);
+            destination[output + 2U] =
+                (float)((first >> 16) & UINT32_C(0xff)) *
+                (1.0f / 256.0f);
+            destination[output + 3U] =
+                1.0f - (float)(first >> 24) * (1.0f / 256.0f);
+            destination[output + 4U] =
+                (float)(second & UINT32_C(0xff)) * (1.0f / 256.0f);
+            destination[output + 5U] =
+                1.0f - (float)((second >> 8) & UINT32_C(0xff)) *
+                           (1.0f / 256.0f);
+            destination[output + 6U] =
+                (float)((second >> 16) & UINT32_C(0xff)) *
+                (1.0f / 256.0f);
+            destination[output + 7U] =
+                1.0f - (float)(second >> 24) * (1.0f / 256.0f);
+        }
+    }
+
+    return (int)(second >> 24);
+}
+
+const float *jpb_CubeUVTable(void)
+{
+    return &fUV[0].uv[0];
+}
 
 /* 0x2BF70, 2994 bytes, global, 40 named locals
  * plotsomecubes
@@ -431,13 +548,198 @@ void cube_ShowMesh(int mesh)
 
 int plotsomecubes(int min_x, int min_z, int max_x, int max_z)
 {
-    if (jpb_legacy_render_hook != NULL) {
-        return jpb_legacy_render_hook(
-            jpb_legacy_render_user_data,
-            min_x,
-            min_z,
-            max_x,
-            max_z);
+    VECTOR camera_location;
+    FVECTOR camera_position;
+    int16_t z_origin = (int16_t)(((int16_t)min_z - 127) * 256);
+    int z;
+
+    camera_GetLocation(&camera_location);
+    camera_position.vx = (float)camera_location.vx;
+    camera_position.vy = (float)camera_location.vy;
+    camera_position.vz = (float)camera_location.vz;
+    makecull(
+        cull.planes,
+        &CameraMatrix,
+        &camera_position,
+        222.0f,
+        1920.0f,
+        1080.0f,
+        460.0f,
+        24.0f);
+    oldspice = NULL;
+
+    for (z = min_z; z <= max_z; ++z) {
+        int16_t x_origin =
+            (int16_t)(-32768 - (int16_t)min_x * 256);
+        int x;
+
+        for (x = min_x; x < max_x; ++x) {
+            if (x >= 0 && x < 256 && z >= 0 && z < mapyend) {
+                uint32_t map_entry = (uint32_t)leveldata[x + z * 256];
+
+                if ((int32_t)map_entry < 0) {
+                    int32_t *cube =
+                        leveldata + (map_entry & UINT32_C(0x1ffff));
+                    uint32_t cube_header;
+
+                    do {
+                        int32_t *next_cube;
+                        int cube_height;
+
+                        cube_header = (uint32_t)cube[0];
+                        cube_height = (int)(cube_header & UINT32_C(0x7f)) *
+                                      256;
+                        next_cube = cube +
+                            ((cube_header >> 26) & UINT32_C(0x0f)) + 1;
+                        cubepos[0].vx = (float)((int)x_origin + 128);
+                        cubepos[0].vy = (float)(cube_height + 128);
+                        cubepos[0].vz = (float)((int)z_origin + 128);
+                        cubepos[0].vw = 1.0f;
+
+                        if (next_cube != cube + 1) {
+                            int cull_result = seecull(cubepos, cull.planes);
+
+                            if (cull_result == 2) {
+                                break;
+                            }
+                            if (cull_result == 0) {
+                                int32_t *entry = cube + 2;
+
+                                while (entry < next_cube) {
+                                    uint32_t entry_word =
+                                        (uint32_t)entry[0];
+                                    FVECTOR cube_origin = {
+                                        (float)(int)x_origin,
+                                        (float)cube_height,
+                                        (float)(int)z_origin
+                                    };
+                                    int vertex_count;
+                                    int32_t *library = jon_getlibpartfloat(
+                                        pcache,
+                                        entry,
+                                        &cube_origin,
+                                        leveldata,
+                                        &vertex_count);
+                                    const uint8_t *colors =
+                                        (const uint8_t *)(const void *)
+                                            colorbase +
+                                        ((entry_word >> 16) &
+                                         UINT32_C(0x3fff)) * 4U;
+                                    uint32_t library_header =
+                                        (uint32_t)library[0];
+                                    uint8_t color_flags =
+                                        (uint8_t)(library_header >> 21);
+                                    uint32_t color_cursor = 0;
+                                    int transformed;
+                                    int index;
+                                    int32_t *polygon;
+
+                                    for (index = 0; index < 8; ++index) {
+                                        if ((color_flags &
+                                             (uint8_t)(0x80U >> index)) != 0) {
+                                            libpartcols[index] =
+                                                (uint32_t)colorbase[
+                                                    -(int)colors[color_cursor]];
+                                            ++color_cursor;
+                                        } else {
+                                            libpartcols[index] =
+                                                UINT32_C(0x00ff00ff);
+                                        }
+                                    }
+                                    for (index = 0;
+                                         index <
+                                             (int)((library_header >> 16) &
+                                                   UINT32_C(0x1f));
+                                         ++index) {
+                                        libpartcols[index + 8] =
+                                            (uint32_t)colorbase[
+                                                -(int)colors[color_cursor++]];
+                                    }
+
+                                    transformed = RotTransPersManyFV(
+                                        pcache,
+                                        vertex_count,
+                                        pcache);
+                                    polygon = library + 2;
+                                    {
+                                        uint32_t polygon_header;
+
+                                    do {
+                                        polygon_header = (uint32_t)polygon[0];
+
+                                        if ((((polygon_header |
+                                               (uint32_t)leveldata[
+                                                   polygon_header &
+                                                   UINT32_C(0x1ffff)]) >>
+                                              17) &
+                                             UINT32_C(1)) == 0 &&
+                                            transformed == 0) {
+                                            uint32_t polygon_indices =
+                                                (uint32_t)polygon[1];
+                                            int is_triangle =
+                                                (int)((polygon_indices >> 20) &
+                                                      UINT32_C(1));
+                                            int texture_id =
+                                                (int)((polygon_header >> 18) &
+                                                      UINT32_C(0x3ff));
+                                            int uv_mode =
+                                                (int)(((polygon_indices >> 20) &
+                                                       UINT32_C(1)) << 3) |
+                                                (int)((polygon_indices >> 15) &
+                                                      UINT32_C(3)) |
+                                                (int)(((polygon_header >> 28) &
+                                                       UINT32_C(1)) << 2);
+                                            int polygon_vertex_count =
+                                                4 - is_triangle;
+                                            int polygon_vertex;
+
+                                            _StartPoly(
+                                                polygon_vertex_count,
+                                                leveltexture[
+                                                    ((uint32_t)texturebase[
+                                                         texture_id * 6] >>
+                                                     17) &
+                                                    UINT32_C(3)]);
+                                            for (polygon_vertex = 0;
+                                                 polygon_vertex <
+                                                     polygon_vertex_count;
+                                                 ++polygon_vertex) {
+                                                int vertex_index =
+                                                    (int)((polygon_indices >>
+                                                           (polygon_vertex * 5)) &
+                                                          UINT32_C(0x1f));
+                                                int uv_index =
+                                                    uvredir[uv_mode]
+                                                           [polygon_vertex];
+
+                                                _SetVert(
+                                                    polygon_vertex,
+                                                    pcache[vertex_index].vx,
+                                                    pcache[vertex_index].vy,
+                                                    pcache[vertex_index].vz,
+                                                    libpartcols[vertex_index],
+                                                    fUV[texture_id].uv[uv_index],
+                                                    fUV[texture_id]
+                                                        .uv[uv_index + 1]);
+                                            }
+                                            _NoScaleEndPoly();
+                                        }
+                                        polygon += 2;
+                                    } while ((polygon_header &
+                                              UINT32_C(0xc0000000)) == 0);
+                                    }
+
+                                    entry += (entry_word >> 30) + 1;
+                                }
+                            }
+                        }
+                        cube = next_cube;
+                    } while ((cube_header & UINT32_C(0x40000000)) == 0);
+                }
+            }
+            x_origin = (int16_t)(x_origin - 256);
+        }
+        z_origin = (int16_t)(z_origin + 256);
     }
     return 0;
 }
@@ -447,13 +749,6 @@ void jpb_CubeGetLastRenderBounds(JPBCubeRenderBounds *bounds)
     if (bounds != NULL) {
         *bounds = jpb_last_render_bounds;
     }
-}
-
-void jpb_CubeSetLegacyRenderHook(
-    JPBCubeLegacyRenderHook hook, void *user_data)
-{
-    jpb_legacy_render_hook = hook;
-    jpb_legacy_render_user_data = user_data;
 }
 
 /* 0x2CB30, 515 bytes, global, 5 named locals

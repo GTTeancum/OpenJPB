@@ -172,6 +172,15 @@ Its camera-space companion accepts points on the near plane, allowing the
 portable face clipper to reproduce the GPU's pre-divide primitive boundary
 without changing exact legacy `PerspectiveTransformFV` semantics.
 
+All 29 `vectors.c` procedures are reviewed against the PDB and executable
+RVAs `0x103970..0x1047A4`. The three rotation wrappers now retain their exact
+`PushMatrix`/`PopMatrix` ownership, including the saturated depth-15 mutation
+and the low 32 bits of `gte_matrix_stack` left in `EAX` by retail
+`PopMatrix`. `vec_gDefinePlane` also calls the shipped inert `debug_printf`
+with its exact normal/constant format and argument order. Focused tests cover
+every procedure, fixed-width wrap/truncation, NaN range behavior, aliases,
+matrix-stack restoration, planes, and projection.
+
 Camera initialization is part of that projection contract. Exact
 `scene_gInitRoot` calls `camera_SetViewType(0x901)`; bit `0x100` causes
 `camera_Camera2ViewVector` to run `camera_CameraSlide` before publishing the
@@ -282,9 +291,10 @@ The remaining STREETS terminal trigger was located at
 `CheckCubeBlocking` RVAs `0xDCFEC..0xDD1FC` rather than in `CalcMovement`.
 It now preserves the reference's level and frame gates, collision-type and
 dynamic-solid exclusions, exact `0.9f` positive-X normal shortcut, and the
-anonymous short/long collision-time selection. The descriptive
-`jpb_StreetsEndingShortCollisionTimeout` name records that otherwise unnamed
-byte at RVA `0x10DB3A4`. Active player and scene-flag checks retain exact PDB
+short/long collision-time selection from `GameStruct.difficulty`. The direct
+`game_initPerLevel` audit proved RVA `0x10DB3A4` is the PDB-backed
+`gamestruct.difficulty` field rather than a separate anonymous byte. Active
+player and scene-flag checks retain exact PDB
 `stapbikeindex[2]`; on success the effect, cube runtime bit, timer reset,
 scene disable, both Jedi resets, `explomed` audio, bike-index clear, and
 `stapsound` shutdown occur in executable order before the scheduler consumes
@@ -354,10 +364,13 @@ disk record is decoded explicitly, keeping the code readable and pointer-width
 portable. The PC runtime loads the selected level's `.pwr` through
 `resource_getPath`, executes the dispatcher after player processing, and
 proves 55 FED records enter the live frame. All 52 installed files are
-validated independently. The legacy `DrawPowerUp` immediate-mode mesh backend
-remains explicit: its exact PDB call surface crosses a dependency-free render
-hook, with a temporary world-space PC glint until the original power-up model
-submission is recovered. The
+validated independently. Exact `loadPowerupModels` now loads each nonempty
+PDB table entry, relocates all five geometry streams, resolves its authored
+material, and invokes exact `FixDrawPowerUp`. Exact `DrawPowerUp` builds the
+scene/model matrix, decodes signed packed 10-bit vertices through
+`RotTransPersMany10bit`, walks authored triangle/quad faces, and submits them
+through the immediate-poly owner. The former glint and duplicate post-scene
+model renderer are removed. The
 instruction-reviewed
 `WorldBlocking` state core now preserves
 its exact early-outs, blocked/landing/map/air-ground transitions, and snap
@@ -382,9 +395,12 @@ bytes. Exact plane/polygon/mesh tests drive `RaycastCheck` and
 `BlowUp` retain fixed-direction motion, output pointer roles, packed normals,
 and destructible-map effects. Local typed ray scratch is the only portable
 storage substitution for the executable's shared temporary arena.
-The exact PDB `model_id` enum, `ExtraCharacter` record, 14-entry table,
-and all five `extracharacters.c` procedures are also integrated, allowing
-`CheckCubeBlocking` to call `extracharacter_CanLedgeClimb` without a portable
+The exact PDB `model_id` enum, 24-byte `ExtraCharacter` record, 14-entry
+table, and all five `extracharacters.c` procedures are reviewed. Direct
+checks of executable RVAs `0x4B8B00`, `0x335810`, and
+`0x4BB60..0x4BC95` prove every table field, scan bound, record stride,
+capability offset, and unknown-character default. `CheckCubeBlocking` calls
+the resulting exact `extracharacter_CanLedgeClimb` without a portable
 dependency seam.
 
 Exact `brainutl_Land` retains the long-fall energy penalty, player-zero
@@ -395,19 +411,23 @@ implementation is explicitly substituted by a portable service seam. Exact
 `sound_PlayFV` performs the original `CVTTSS2SI`-compatible coordinate
 conversion before exact `sound_Play` bank fallback. All 31 PDB-named
 procedures in original `win32/sound.c` are now reconstructed, including the
-retail stubs, five loaded-bank slots, pause/halt/fade/stop boundaries, and the
-100-entry positional-loop table. The matched executable's 43 bank descriptors
-retain 696 unique pointer-array slots and intentional prefix aliases; those
+retail bare returns, four declared loaded-bank slots, the latent accepted
+slot `4`, pause/halt/fade/stop boundaries, and the 100-entry positional-loop
+table. The matched executable's 43 exact 80-byte `tAudioSFX_Bank` descriptors
+use the exact 504-byte `tBankHandle` and 16-byte `tSFXHandle` layouts, retain
+696 unique pointer-array slots and intentional prefix aliases; those
 descriptors expose 1,242 path references in total. Exact
 `defaultOptionStruct`, `game_setAudioOptions`, `game_setControlsOptions`, and
 `game_setDefaultOptions` restore the shipped audio/control defaults instead
 of initializing the live PC runtime to zeroes.
 
-The PC host binds the narrow game-owned seams to a substituted 64-voice WinMM
+The PC host binds only the external mixer operations to a 64-voice WinMM
 backend. It loads the shipped PCM and IEEE-float RIFF/WAVE corpus directly,
-retains the six exact loop names and live loop-position updates, and applies
-the recovered quiet, non-spatial, voice, distance, stereo, ordinary-channel
-`0.92` SFX-volume, and full-volume loop classifications.
+while the reconstructed owner performs the exact basename lookup, six-name
+loop selection, cosine stereo pan, distance, quiet/voice scaling, and live
+loop-position updates. Retail applies the `0.92` SFX-volume factor to 2D
+channels and `1.0` to spatial channels; the adapter consumes those recovered
+channel values without recomputing their classification.
 Resolution searches only the exact paths in the currently loaded banks, so
 `jar_jar_playable`/`gungan_2`, Coruscant, alias/prefix subsets, and the
 seven-entry cross-directory training mapping behave without filename guesses.
@@ -522,10 +542,13 @@ existing exact loader. The real-asset jump gate proves that the actor becomes
 airborne under this path, with no AI-initializer layering in player startup.
 The battle droid's authored WAI payload is loaded into caller-owned storage
 and exposed through exact `ai_GetAIHandle`, `ai_GetAiDataValue`,
-`ai_GetAiDataValueN`, and `ai_GetAiSeqValue`. Exact no-op `ai_Main` retains
-its source signature; a named `jpb_` adapter documents the mixed callback
-table ABI and supplies the deterministic continuation result used by the
-portable controller.
+`ai_GetAiDataValueN`, and `ai_GetAiSeqValue`. Exact `ai_LoadAI` owns all four
+difficulty files for each level actor slot, including the shipped
+missing/zero-length-file fallback to `dummy.wai`, rounded allocation, and
+fatal missing-dummy behavior. Exact no-op `ai_Main` retains its source
+signature; a named `jpb_` adapter documents the mixed callback table ABI and
+supplies the deterministic continuation result used by the portable
+controller.
 The surrounding script records now retain their exact PDB names and fields:
 `UDATA`, `BAP_AINODE`, `wsl_BAP_WAYPOINT`, and `kfNode`. The reviewed leaf
 layer covers BAP tree traversal, AI-mode stacking, arithmetic and comparison
@@ -538,13 +561,19 @@ transition, authored/override AI binding, failure rollback, `aRange`
 activation cube, and the executable's level-15 placement override. Exact
 `enemy_HandleMapTriggers` resolves direct and leveldata-relative trigger
 records, and exact `enemy_getPointerIndex` retains its level-dependent
-one-based adjustment. The original 1,114-byte `loader_CreateEnemy` beneath
-that transition is still blocked on unrecovered model/animation construction;
-one explicitly inferred, dependency-free provider is the only substitution at
-that boundary. The live PC runtime supplies that provider with its portable
-multi-class BMD/CAD/WAI owner, making exact `_addEnemy` responsible for each
-supported actor's pool, placement, and active-list transition rather than
-retaining a parallel manual insertion path. The asset boundary does not force
+one-based adjustment. The original 1,114-byte `loader_CreateEnemy` is fully
+restored: it resolves the placement's canonical model and animation globals,
+delegates allocation to exact `loader_CreateCharacter`, binds the world target,
+enemy, and authored actor-slot WAI handle, then applies shadow ownership,
+placement position/facing/energy, `player_RefreshPlayer`, signed animation-pool
+relocation, the first eight sequence repairs and motion lock, movement-mode
+mapping, model-specific motion callback/flag patches, and exact
+`ai_ValidateData`. The live PC runtime publishes its immutable BMD/CAD class
+archives through the exact loader globals and only observes completed actors
+for renderer diagnostics; that observer cannot create an actor or alter the
+loader result. Exact `_addEnemy` therefore owns each supported actor's pool,
+placement, and active-list transition without a parallel manual insertion
+path. The asset boundary does not force
 a convenient nearest placement: the normal first
 `enemy_HandleEnemies`/`_checkForNewEnemies` frame applies exact authored
 `activeFlags` and `aRange` activation. Asset loading likewise leaves the
@@ -553,22 +582,22 @@ substitute a convenient enemy. The runtime's diagnostic primary-enemy view
 follows a live target only after gameplay has selected one, and cumulative
 damage, energy-minimum, reaction-motion, and recoil observations span all active
 actors instead of being overwritten by whichever actor is published as primary.
-The provider now follows `loader_CreateEnemy` through exact
+The restored tail follows `loader_CreateEnemy` through exact
 `player_RefreshPlayer` rather than starting CAD motion zero directly. That
 owner restores placement position/facing/energy, clears transient player
-state, and seeds the animation queue before applying the placement's movement
-mode. This is observable gameplay behavior: the FED room's owner-3 AI 31
-director otherwise becomes stuck in model motion 3 and never executes its
-authored `0x604` camera/letterbox command.
-The complete seven-procedure `shaolin.c`
-module is now reviewed, including attacker budgets, formation points,
-low-chi scheduling, attack delays, WAI choice/sequence lookup, movement,
-target switching, and authored motion ownership. Its exact AI-side
+state, and seeds the animation queue before the loader applies its remaining
+animation and movement repairs. This is observable gameplay behavior: the FED
+room's owner-3 AI 31 director otherwise becomes stuck in model motion 3 and
+never executes its authored `0x604` camera/letterbox command.
+The complete seven-procedure `shaolin.c` module is now reviewed, including
+attacker budgets, formation points, low-chi scheduling, attack delays, WAI
+choice/sequence lookup, movement, target switching, committed exact facing,
+and authored motion ownership. Its exact AI-side
 `ai_HthAttack`, `ai_RangedAttack`, `ai_SeqAttack`, `ai_SetTarget`,
 `ai_WalkToPoint`, and `ai_WalktoPlayer` procedures are also restored. The
 live field keeps the original valid-but-inactive player-1 invariant.
-The provider is now a persistent multi-class runtime owner rather than a
-one-spawn setup hook. The matched executable's BAF table (`0x4BD2B0`),
+The persistent multi-class archive owner publishes the matched executable's
+BAF table (`0x4BD2B0`),
 `sModelNames` (`0x4BCF10`), and model-animation records (`0x4BD730`) map
 FED `baron`, `21b`, and `baronsec` to model/animation pairs
 17 `battle_d`/`battle_d`, 15 `pilot`/`pilot_d`, and
@@ -578,12 +607,23 @@ FED `baron`, `21b`, and `baronsec` to model/animation pairs
 model 47 `droid_f`/`droid_f`, `pwrdrink` to model 72 `beacon`/`beacon`,
 `pwrserv1` to model 86 `fed_door`/`fedship`, `reeyees` to model 87
 `piston`/`fedship`, and `twilek1`/`twilek2` to models 94/95
-`lift_1`/`lift_2` with `fedship`. Each active placement gets independent
-original-pool scene, model, physics, animation, player, and enemy state.
+`lift_1`/`lift_2` with `fedship` into `maModelID`, `maModelData`, and
+`maAnimData`. Each active placement gets independent original-pool scene,
+model, physics, animation, player, and enemy state from the canonical loader.
+Direct executable RE also confirms that `_initEnemy` leaves the embedded
+`wsl_ENEMY.actorNum` field zeroed; the placement's `actorNum` is the sole
+loader/AI class key, and the runtime validator now follows that exact owner.
 The complete 114-pointer `sModelNames` table is now readable source rather
 than runtime-only evidence. Exact `player_gConnectMotionData` consumes each
 CAD header and supplies the original relative Motion table, legacy hit-name
 normalization, and callback-index publication for those player objects.
+The complete seven-procedure `unpack.c` owner is reviewed against PDB layouts
+and executable RVAs `0x103260..0x10396B`. It preserves the two-word bit
+reservoir, direct and slow-tree Huffman lookup, cached value count, first-row
+signed translation rules, later-row doubled deltas, optional pad word, ignored
+`tree_size`, CAD-relative context pointers, and byte-offset seek truncation.
+A dedicated regression crosses refill boundaries through both compressed and
+raw paths and locks every `_dpcontext` field offset.
 Immutable archives, textures, and WAI storage are shared only within the
 class, and each actor releases its per-object animation slot when exact
 range/despawn ownership removes it. The WAI registry key is the authored
@@ -684,6 +724,14 @@ authored level-specific terminal-hit rules, and the type-6 map explosion and
 camera-shake tail. Its plasma path calls exact PDB-named `fx_PlasmaZap` over
 the exact 156-byte `_plasma_zapvars` state. Exact `bullet_Explosion` publishes
 radial hits. All eight `bullet.c` procedures are reviewed.
+All 27 `collisn.c` procedures are also checked through their complete
+`0x25630..0x26665` executable range. The owner preserves masked public node
+lookups but uses the shipped signed-byte indexing for hot-node and parent-node
+access, wraps the emitted 32-bit contact arithmetic before division, performs
+three independent reflection random draws, returns `-1` after reflection, and
+terminates invalid registration through the CRT `exit(1)` path. Focused
+normal/fatal tests and the direct combat, player, physics, AI, model, powerup,
+enemy, and scene consumers pass.
 The PDB-named `enemy_ParseOpcodes` call surface implements the matched
 node/branch traversal and all 35 executable top-level opcode
 values found across all 27 shipped J3D archives. The audit covers 42,581
@@ -788,6 +836,44 @@ decays through exact PDB-named owners. A narrow dependency-free adapter
 projects these solid rectangles from the published `CameraMatrix`; developer
 diagnostic labels remain explicitly tracked HUD work.
 
+### Immediate polygon finalizers
+
+The complete matched bodies for `el_chavo::EndPoly` (RVA `0x115E90`, 5,208
+bytes) and `el_chavo::NoScaleEndPoly` (RVA `0x119280`, 5,529 bytes) now own
+the portable immediate-polygon finalization path. `StartPoly` selects its
+ordinary/additive/alpha queue from the low byte of `_LoadTexture`'s option;
+the separate lowercase `p_`/`a_` filename classification remains only the
+retail `Texture::m_tpfDesired` field. This fixes sprite materials loaded from
+the default white texture, whose filenames cannot carry the queue class.
+
+`EndPoly` applies the executable's exact `0.0035`, `2/3`, and `1.16` NDC
+conversion and submits through a cull-none PSO. `NoScaleEndPoly` applies the
+recovered projection and `ApplyCulling` tests, always treats opaque material
+flags as zero, preserves the Corus2 bus and Palace coffin exceptions, and
+uses flags `0/1/2` only for transparent polygons. Flag 2 forces transparent
+depth to `0.0001`; it does not alter opaque depth. Transparent quads use the
+retail triangle-list indices `0,1,2` and `1,3,2`. Focused regressions separate
+all of these cases, including the former extra winding test that caused saber
+caps to flash.
+
+The dependency pass also restores the timing and interpolation rules around
+those finalizers. `StartPoly` copies `_Material.flags` into the selected
+texture before any vertex is written, and the portable publication boundary
+therefore snapshots that value rather than rereading a mutable material at
+deferred-render time. `SetVert` computes retail's four-bit screen outcode;
+only ordinary `EndPoly` ANDs all submitted outcodes and drops a polygon wholly
+outside one side. `NoScaleEndPoly` deliberately does not use that gate.
+
+Both finalizers build the recovered 52-byte renderer vertex with position W
+equal to `1.0f`. The D3D11 immediate path now has a separate vertex shader that
+preserves that W and the post-projection Z, so UV and color interpolation are
+affine in projected space. The earlier shared model shader reconstructed a
+camera-space W and silently made these polygons perspective-correct. The
+software path now follows the same affine rule while retaining its separate
+linear-depth value for world compositing. The adjacent `LoadTexture` body also
+performs the executable's case-sensitive final-extension rewrites from `sgi`
+to `tim` and `pvr` to `tga` before the platform resource handoff.
+
 ### Model projection and opening-camera evidence
 
 The opening FED composition was checked through the full matched model path
@@ -885,29 +971,29 @@ PDB traces for exact `getFontFile` (RVA `0x176E0`), `LoadFont` (RVA
 - the exact 17 initialized CVECTOR tints at RVA `0x4CD100`, with caller alpha
   replacing the table entry's high byte.
 
-`portable/portable_text.c` realizes this original SDL_ttf/FontAtlas platform
-boundary with a pinned, vendored stb_truetype rasterizer. It reads the
+`portable/portable_text.c` realizes this original SDL_ttf platform boundary by
+dynamically resolving the shipped `SDL2.dll` and `SDL2_ttf.dll`. It reads the
 original `res/font` assets through `resource_getPath`, caches faces by shipped
-filename, decodes Unicode code points, measures advances, and alpha-composites
-antialiased glyph coverage into the caller-owned software framebuffer. This
-adds source but no external runtime library and keeps desktop framework types
-out of game state. The 5x7 path remains only for explicit missing-asset
-diagnostics. Focused and installed-asset tests cover the selection/constants
-and real bold-font rendering.
+filename, measures and rasterizes glyphs through SDL_ttf, and alpha-composites
+their surfaces into the caller-owned software framebuffer. There is no compact
+or synthetic missing-font fallback: an unavailable SDL/font boundary remains
+an observable failure. Focused and installed-asset tests cover the recovered
+selection/constants and real bold-font rendering.
 
 The matched initialized `allTextEverything` global at RVA `0x4A1000` is also
-represented in source under its PDB name. The retail table contains seven
-language blocks and 498 published slots; display slots 2..497 are UTF-8 byte
-strings despite the PDB's `wchar_t*` aggregate type. `alltext_data.c` retains
-all 68,317 bytes (including per-entry terminators) and normalizes the blocks
-to a readable `[7][498]` table. Slots 0 and 1 point to unrelated pointer
-aggregates in the executable, so they are explicitly non-text rather than
-invented strings. Exact `generateAllText` (RVA `0x17640`),
+represented in source under its PDB name. Retail uses a compact 2,725-pointer
+aggregate: slots 0..126 are shared and slots 127..497 select one of seven
+371-entry language tails. Display targets are UTF-8 byte strings despite the
+PDB's `wchar_t*` aggregate type. `alltext_data.c` retains the exact compact
+aggregate, including the `sModelNames` and `sLevelNames` pointers in slots 0
+and 1, all 68,317 text bytes including per-entry terminators, and the terminal
+empty pointer. Exact `generateAllText` (RVA `0x17640`),
 `UpdateCurrentlyLoadedFont` (RVA `0xFEB00`), and `MarkFontAtlasForRefresh`
-(RVA `0x1236D0`) now publish the selected language during runtime startup.
-The only portable adaptation is a cached UTF-8-to-`wchar_t` conversion at
-that boundary. A whole-table FNV-1a regression hash (`61eb339ccd58c0ef`)
-guards the recovered corpus.
+(RVA `0x1236D0`) now publish the selected byte pointers during runtime startup.
+Each live `SDLTextWrite*` owner performs the recovered per-draw
+`ConvertToUTF16` call; there is no eager host-wide conversion cache. A
+whole-table FNV-1a regression hash (`61eb339ccd58c0ef`) guards the recovered
+corpus.
 
 ### Recovered title-menu ownership
 
@@ -1132,6 +1218,452 @@ dispatcher branch are also live.
    - Integrate the existing proxy behavior as normal engine code.
    - Convert the final installed PC asset/configuration state into a separate
      Xbox-ready output tree.
+
+## Dormant Saber Trail Module
+
+All ten PDB procedures from `sabre.c` are restored. Direct-call scanning over
+the complete executable `.text` section finds no callers outside the module;
+the matched remaster therefore retains this legacy trail pool as dormant code.
+It is intentionally not inserted into the live `jedi_HandleSabre` draw path.
+
+The exact PDB layouts are retained for `POLY_G4`, `subSabreEdge`, `SabreEdge`,
+and `Sabre`. Machine-code field accesses establish an important naming quirk:
+the procedure family uses `Sabre.tail` at offset `0x36d2` as the active edge
+count, while the PDB-named `length` field at `0x36d4` is only cleared by
+`sabre_gCreateSabre`. `prim_gRendSabre` follows the same offsets and restores
+the retail brightness/head decay traversal. The PDB array contains two Sabres,
+although the exact creation guard permits an index of two; that unreachable
+retail overrun is documented rather than hidden behind a new fallback.
+
+The real-asset differential test copies the five self-contained interpolation
+procedures directly from the installed `game.exe` into executable memory. It
+compares thousands of randomized scalar cases and hundreds of complete data
+structures byte-for-byte against the reconstruction. The live FED saber smoke
+continues to validate the separate remaster blade owner after this dormant
+module was restored.
+
+## Legacy Primitive Module
+
+All eleven PDB procedures from `prim.c` are restored with the exact 4,628-byte
+`primDrawingSurface`, draw/display environments, 40-byte `POLY_FT4`, texture
+window records, score globals, and the executable's initialized 244-byte TIM
+payload. `prim_gSetBkColor` writes the two PDB-owned draw environments at
+offsets `25..27`; the earlier private color copies were not canonical and have
+been removed.
+
+The matched executable leaves its PSX compatibility helpers as bare returns.
+That detail affects generated code: `AddBlur` receives its texture-page value
+from the caller's surviving AX value, and the texture-window/translucency
+procedures have no memory effect. Direct-call scanning finds no callers for the
+legacy blur, quick-draw, score-digit initialization, score-number, callback,
+texture-window, or translucency procedures. `initscoredigits` therefore retains
+the installed behavior: its absolute developer path fails before the dormant
+tail consumes a `TIM_IMAGE` that the no-op `OpenTIM` and `ReadTIM` never fill.
+No parser or synthetic success path is supplied.
+
+The `jpb_prim_retail_differential` test maps the shipped PE into executable
+memory. It compares 256 randomized complete blur buffers, 64 randomized full
+draw-surface mutations, quick-surface pointer ownership, and every non-pointer
+byte of emitted score quads against the retail machine code. Ordering-table
+tags are checked independently against each run's required low-24-bit pointer
+chain.
+
+## Legacy Controller Text
+
+The final `player.c` procedure, `player_ControllerDump`, is restored from RVA
+`0xE6D90`. When screenshots are not being captured it takes the last sixteen
+bytes of player zero's `PreMotion`, capitalizes the five lowercase controller
+tokens, removes `L`, `M`, `R`, and `S`, and writes that result plus the current
+motion name through the exact legacy text path. The executable performs no
+null check before dereferencing the current motion, and the reconstruction does
+not add one.
+
+That dependency required restoring `Text_gWrite`, `Text_gWriteSub`, and
+`winDrawTexture`. Their exact initialized `asciiRemap[256]`, `SmallFont[102]`,
+`Colors[17]`, and `MonospaceWidth` globals are copied from the matched
+executable. The recovered renderer preserves first-line width calculation,
+alignment and wrapping flags, signed brightness math, newline behavior,
+texture flipping, explicit-size scaling, alpha encodings, and the `0.001`
+`frontZ` increment. It also preserves a generated-code quirk in which wrapped
+negative X coordinates pass through an unsigned 64-bit-to-float conversion and
+become `INT_MIN` at the final screen rectangle.
+
+`jpb_text_legacy_retail_differential` maps the shipped executable, redirects
+only its `_DrawTexture` boundary to the test observer, and compares complete
+destination/source rectangles, colors, alpha, depth, return widths, and
+`frontZ` mutations against the reconstruction. The player regression verifies
+the screenshot gate, token filtering, and both emitted diagnostic lines.
+
+## Jonny Win32 Transforms
+
+All four PDB procedures from `win32/jonnywin.c` are restored. Direct executable
+disassembly establishes that `SetupWorldmeshMatrix` mutates the supplied
+`MATRIX` in place: every basis float is multiplied by the shared `256.0f`
+constant, while each signed integer translation is converted to float, scaled,
+and truncated back to an integer. The float-vector transform retains retail's
+`count != 0` loop condition, and focused tests cover packed vectors, float
+vectors, transform setup, and world-mesh scaling.
+
+## DirectDraw Error Reporting
+
+Both procedures from `d3derr.cpp` are restored from the shipped executable.
+The PDB-owned `alldderrs` global retains its exact 199-record `_d3derr`
+layout: 198 error/message pairs followed by the zero/null sentinel. Both
+procedures independently perform the original linear scan and unknown values
+use `?Noerror?`. The diagnostic path ignores its legacy message argument,
+masks the printed error to 15 bits, formats `%s(%d): err %d - %s\n`, and sends
+the result to `OutputDebugStringA`. The focused regression resolves every
+table entry and checks both sentinel and unknown-code behavior.
+
+## Slot Sampling And Animation Compression
+
+Both `slots.c` procedures now preserve the matched 704-byte `cubeStack`
+layout, the six-frame `libpartanimtick` cadence, target/tracker resets, bounds
+tracking, and the exact rectangular accumulation written into `animTrans`.
+The `slot_levelstart` procedure deliberately retains its undefined integer
+return after resetting the two PDB-owned counters.
+
+All four `compress.c` procedures are restored across the 0-, 4-, 6-, 7-,
+9-, and 12-bit packed vector forms, optional one- or two-byte pad payloads,
+raw translation frames, and 12-bit rotational frame addition. The focused
+test maps the shipped executable and compares every possible control byte in
+both pad-width modes, 2,048 randomized complete frame additions, and raw
+translation copies directly against the retail machine code.
+
+## Legacy Color Basic Commands
+
+All eight `colorb.c` procedures are restored with the PDB-owned `cb_list`,
+`pen`, and `penColor` globals. The command parser allocates the exact 16-,
+24-, and 32-byte intrusive records for line, point, circle, and move entries,
+including each argument-count overload and inherited pen color. The shipped
+draw procedure remains a bare no-op; clear and shutdown paths remove and free
+every queued record. Focused tests cover every successful overload, list
+ordering, the no-op draw, and both cleanup entry points.
+
+## Typed Zero-BSS Allocation
+
+Both project procedures in `zerobss.cpp` are restored from the matched PDB and
+executable. `ZeroBSS` preserves the unchecked 66-entry variable cache and all
+eleven enum-selected allocation classes: byte, short, 32-bit scalar, vector,
+pointer, collision record, and complete player record. Requests below two
+elements allocate one value, recognized allocations are fully zeroed, cached
+pointers ignore later type and size requests, and unknown types remain
+uncached. The retail `ZeroBSS_ClearAll` procedure remains its exact bare no-op,
+so cached storage intentionally persists for process lifetime.
+
+## Win32 Memory Card
+
+All fourteen `win_memcard.c` procedures are restored from direct executable
+disassembly. They retain the fixed `c:\\katavo\\winver\\memcard` path, the
+`-1` current-card substitution, one shared 256-byte path buffer, Win32 file
+enumeration state, exact load error codes, and save diagnostics. Seven retail
+entry points remain bare no-ops. The original null-only search-handle test and
+double `fclose` on an opened load path are intentionally preserved rather than
+silently repaired; focused tests exercise path selection, missing-file state,
+unchanged output pointers, and the inert entry points without writing files.
+
+## Legacy VRAM Palette Utilities
+
+All six `vram.c` procedures now retain the exact 16-entry page and subpage
+coordinate tables, unclamped page lookup, clamped subpage lookup, CLUT address
+decoding, 5-bit channel maxima, shared fixed-12 normalization scale, and
+translucency-bit update. Direct callee review also moved the three-byte
+`LoadClut` body from beneath the wrong later PDB marker back to its own entry
+in `linkstubs.c`. As in the shipped PC
+executable, `StoreImage`, `LoadClut`, and `DrawSync` remain bare compatibility
+returns; no invented backing VRAM or palette fallback has been introduced.
+The palette routines consequently preserve the retail stack-data behavior
+rather than pretending those inert transfers produced valid image data.
+
+## Map Animation
+
+All seven `mapanim.c` procedures are reconstructed with the PDB's exact
+2,716-byte `wsl_BT_ANIMMAP`, 2,644-byte `wsl_BT_PARTNODE`, and compact part
+entry layouts. The recovered path preserves fixed-12 frame interpolation,
+strict end-frame wrapping, the 32-entry child/sibling traversal stack,
+orientation matrix construction, parent-relative pivots, the authored Z
+offset, enemy activation flags, and all type `0..7` state transitions and
+early returns. The three public compatibility entries remain their shipped
+bare returns. Focused tests cover interpolation and matrix publication plus
+every animation type, delay/state changes, looping, and pause behavior.
+
+## Bucket Archive Registry
+
+All 29 project procedures in `bucket.c` are reconstructed from the matched PDB
+and direct executable disassembly. The PDB-sized 4,419-pointer `bucketList` is
+mechanically extracted from shipped `game.exe` RVA `0x4A6DB0`, with the exact
+main, character, level, train, arena, save, and front archive spans plus its
+single circular-search sentinel. `bucketCom[13]` and `bucketModels[25]` retain
+their initialized retail values.
+
+The restored code preserves JBUK directory records, RLCP metadata and
+checksums, cached-bucket reuse, full and offset run-length decoding, byte-sum
+checksums, circular bucket lookup, and the original persistent lookup-string
+allocations. Writer/log entry points that ship inert remain inert; no archive,
+texture, or filesystem fallback is introduced. Focused tests cover registry
+landmarks, wraparound lookup, raw and compressed directory entries, complete
+and partial decompression, cached archive access, initialization, and utility
+commands.
+
+## Win32 File IO
+
+All eleven `win32/IO.c` procedures are checked instruction by instruction
+against shipped RVAs `0x128630..0x12897F`. The reconstruction restores the
+exact inert diagnostics, successful-open `updateBucket` call, signed size and
+seek conversions, stream ownership, load wrappers, and the three-byte
+register-preserving `file_ReadPC` return.
+
+Retail `file_AppendFile` passes the literal mode `"awb"` to its statically
+linked CRT. Direct disassembly of `__acrt_stdio_parse_mode<char>` proves that
+the second `w` is rejected, `errno` becomes `EINVAL`, and the invalid-parameter
+path is entered. No game code installs a replacement invalid-parameter
+handler. The reconstruction therefore retains this dormant retail failure;
+it does not silently substitute working `"ab"` append behavior. The focused
+test uses a test-only returning handler to observe the null-open branch without
+terminating its process, then validates the remaining stream, memory, whole-
+file, wrapper, and chunk-loading paths.
+
+## Win32 Model Nodes
+
+All six `win32/nodes.c` procedures are checked against the complete shipped
+range `0x129030..0x12A6CB`. PDB type recovery replaces every former reserved
+range with the exact 136-byte `primRendPacket` and 1,032-byte
+`SramModelStack` fields. The renderer now publishes `Mnode.v3CurrentRotation`
+from animation or absolute rotation before matrix construction and preserves
+retail's mandatory, unchecked scene-physics and detached-effect ownership.
+The exact explicit-zero `jon_otagpos` body is restored at RVA `0xB5A60` and
+used by the node path.
+
+The PDB declares `gRendPacket[512]`, while both packet writers accept indices
+through `0x200`; index 512 therefore writes into the shipped BSS gap beyond
+the declared array. That latent off-by-one remains visible rather than being
+masked by a 513-record replacement. Focused coverage exercises packed vertex
+decoding, shared point-cache ownership, triangle and quad submission, material
+color rules, hierarchy transforms, current/absolute rotation publication,
+clipping, event/effect masks, linked physics state, and the packet rejection
+boundary. Rendering, combat, physics, model, and BMD dependent suites pass.
+
+## Jedi Gameplay Owner
+
+All 30 `jedi.c` procedures are reviewed against the matched PDB, raw Ghidra
+output, initialized executable data, and direct shipped-instruction checks.
+The completed surface includes progression and award calculation, player
+validation, initialization and callbacks, ranged weapon creation, saber
+presentation and contact, color selection, secrets and stats, and both-player
+combo presentation. The reconstruction preserves retail's branch-specific
+saber node fetches and unchecked failure points instead of compressing them
+behind a shared fallback.
+
+The audit corrected inverted health, Force, and combo award gates and restored
+the exact combo glyph mapping, pivots, scales, spacing, player-two overrides,
+and return-register residue. Its coupled `game_checkCompleteAchievements`
+review also removed a reconstruction-only call to achievement ID `0` for
+levels 11 through 14. Focused tests cover award thresholds and side effects,
+combo draw calls and coordinates, saber behavior, player initialization, and
+completion-only versus score-bearing achievement routes.
+
+## Game Lifecycle And HUD Owner
+
+All 84 `game.c` procedures are now represented and reviewed against matched
+PDB module 0039 and shipped RVAs `0xA5620..0xAB4DB`. The five formerly absent
+owners are split into archive members for the complete frame loop, main game
+loop, per-level initialization, variable/system initialization, and level-mode
+loader. Their recovered paths preserve signed mode and player-count tests,
+SDL event ordering, input-clear cadence, the level-eight render exception,
+music gates, stage/continue transitions, and the exact integer quit result.
+
+The sweep also restored `clearzerobss` in system reset, the low-byte-only
+`menuVars.fcount` clear, signed-byte `GameState` suppression, and the retail
+`LevelExit` clear. Difficulty setup now reads the selected level and exposes
+invalid state instead of substituting a reconstruction fallback. Callback
+consumers use exact `funcArray` slots 6 and 48; the two private callback
+mirrors and the prefill of all 50 slots are removed.
+
+A full-owner direct-callee comparison found two older omissions. `_AddBar`
+now always calls `_DrawTile2D` with the authored rectangle and forced `0x7f`
+alpha instead of disappearing unless a reconstruction-only hook was installed,
+and `game_ProcessStatus` again invokes the shipped completion linkstub on the
+level-complete path. The remaining structural call differences are proven
+compiler inlining, branch factoring, or exact shared helpers. Focused game,
+frame, play, runtime-title, AI, physics, collision, combat, pickup, camera,
+model/scene, and boss/vehicle matrices pass 19/19 in Release and Debug; the
+Release PC executable also builds.
+
+## FX And Particle Owner
+
+All 17 `fx.c` procedures are represented and reviewed against matched PDB
+module 0038 and shipped RVAs `0xA2CB0..0xA5612`. The exact PDB particle
+launcher, particle, eight-particle block, and list layouts replace the former
+cleanup-only byte views. The restored owner includes model-hierarchy glow
+traversal, fixed-to-float glow forwarding, two-sided screen sections, seeded
+color generation, particle allocation/cleanup, lifetime updates, transformed
+trails, color interpolation, and the two shipped bare-return compatibility
+procedures.
+
+The audit removes the reconstruction-only glowing-man callback that previously
+replaced all retail traversal and restores pointer-only material ownership in
+`fx_Init`; texture load failure is no longer hidden by a later texture-field
+retry. It also finds an omitted per-segment `SetCameraMatrix` call in
+`fx_PlasmaZap` and proves from PDB symbols that the particle launch basis calls
+`sin` at RVA `0x206740` and `cos` at RVA `0x216A40`, correcting a plausible but
+reversed decompiler interpretation. The retained executable contains no direct
+particle-launch or particle-update callers, and its launch body leaves several
+list fields unwritten; those dormant facts remain exposed instead of being
+filled with inferred behavior. Direct glowing-man and float-conversion
+regressions pass in Release and Debug, and the Release PC executable builds.
+
+## Windows Input Translation
+
+The completed `wInput.c` audit recovered the exact `_SDL_GameController *`
+owners `gGameControllers[2]` and `sdlPads[5]` plus the initialized nine-byte
+`controlLimits` table at RVA `0x4D4A58`: `16, 26, 36, 46, 56, 66, 76, 86,
+106`. `ReadJoystickInput` treats option bytes as unchecked indices into this
+table, caps the selected byte at `127.0f`, and divides it by `127.0f`. Stick
+axes are independently divided by `32767.0f`, preserving the shipped signed
+full-scale asymmetry. The XInput port had instead treated the selected bytes
+as percentages divided by `100.0f`, then applied XInput's 7,849-unit
+left-stick dead-zone. The port now passes raw signed axes through the exact
+table-derived threshold path; the default walk/run thresholds are `36/127`
+and `106/127`, and no extra dead-zone remains.
+
+The initialized-data pass also restores all three 17-entry SDL button maps.
+Xbox uses the executable's generic `0,1,2,3` face order, PS4/PS5 changes map
+slot 6 from Back (`4`) to Touchpad (`20`), and Switch swaps both A/B and X/Y.
+The two input-type globals and `lastUsedInputType` initialize to `-1`, both
+joystick indices initialize to `-1`, `firstRun` initializes to `1`, and the
+two mutable threshold temporaries initialize to `0.25f` and `0.98f`, matching
+the bytes in the shipped image rather than zero-filled reconstruction state.
+
+Direct executable checks also distinguish P2's controller handle from the
+frontend `p2Connected` flag: `P2Disconnected` sets `p2Disconnected` and clears
+`gGameControllers[1]` without writing `p2Connected`. Rumble start retains its
+signed `controllerIndex < 3` test, while rumble stop retains the unsigned
+`controllerIndex < 3` test and therefore rejects negative indices.
+
+The audit also restores `ReadKeyboardInput`, `ReadJoystickInput`, the initialized
+`ReadGameInput` function pointer, controller open/detach ownership, the complete
+P2 event loop, and start-device selection. The shipped Switch join buttons are
+reversed, a Steam Deck guard refuses P1 reuse, and P1 replacement scans all five
+slots in ascending order so the highest eligible slot wins. The DirectInput
+compatibility block retains its zero-initialized interface GUID and exact COM
+vtable operations. Direct instructions prove that three non-void compatibility
+exports return without defining a value and `InitKeyboardInput` dereferences an
+uninitialized local device; those dormant defects remain visible rather than
+being replaced with substitute behavior. The coverage ledger records 26/26
+procedures. Focused input and Win32/XInput ownership tests pass in Release and
+Debug, and the Release PC executable builds.
+
+## Texture Cache Ownership
+
+Direct checks of `_LoadTexture` (`0x1262E0`), `_TryLoadTexture`
+(`0x126770`), `_FreeTexture` (`0x125F50`), and `_ClearTextureCache`
+(`0x125B70`) establish two independent caches. `_LoadTexture` owns an
+unordered full-path cache; `_TryLoadTexture` owns an ordered base-name cache
+cleared only by `_ClearTextureCache`. `_FreeTexture` removes the full-path
+entry only when the material still owns a texture, releases that texture, and
+leaves the material type and filename untouched.
+
+The shipped failure behavior is deliberately retained. A failed primary file
+load retries exact path `../../../res/default\\o_default.tga`; if both loads
+fail, the material is returned to the pool but its pointer remains in the
+full-path cache. A later request therefore returns that stale, texture-less
+material. Likewise, `_TryLoadTexture` returns any non-null cached material
+without rechecking its texture pointer. Focused regressions lock both quirks,
+the separate cache lifetimes, arena-to-FED path rewriting, and case-sensitive
+filename conversion/classification.
+
+## Direct3D Enumeration
+
+All ten project-owned `d3denum.cpp` procedures are reconstructed from the
+matched PDB layouts and direct executable instructions. The exact 1,256-byte
+device record, 20-record global list, DXGI adapter enumeration, default-adapter
+selection, DirectDraw driver walk, D3D7 device filtering, mode sorting, and
+default-device priority are restored.
+
+The retail defects remain observable: the public confirmation callback is
+ignored, enumeration return values are discarded, global counts are not reset,
+hardware capability is stored as raw bit `0x80000`, and allocations made for
+rejected devices are leaked. Final enumeration status is selected solely from
+the enumerated and accepted counters (`0x81000002`, `0x81000003`, or `S_OK`).
+Focused tests cover deterministic mode/device branches and the host's live DXGI
+and DirectDraw paths in Debug and Release; the full PC executable links in both
+configurations.
+
+## D3D Framework and Texture Backend
+
+The first dependency-closed D3D12 texture slice is reconstructed from the
+matched PDB layouts and direct executable instructions. `CD3DFramework12` now
+uses the exact 640-byte release layout for the restored fields, including the
+two-element fence and allocator arrays, frame index, descriptor owner, and
+command-list flag. Its constructor preserves the executable's exact write
+footprint rather than zeroing fields the retail constructor leaves untouched.
+Descriptor allocation, recycling, index calculation, command-list close, and
+texture fence waits are restored with the shipped LIFO and MSVC vector-growth
+behavior.
+
+The 416-byte concrete `Texture` owner now restores both constructor paths,
+intrusive-list ownership, destruction, `Restore`, `UpdateTexture`, empty
+resource creation, SRV publication, all legacy texture factories, global
+texture deletion, bitmap and raw-RGBA surface copying, image decoding, and the direct `PHL::Texture2D`
+factory. The factory path
+preserves retail's ignored empty-texture dimensions and private base-type
+write; global deletion preserves the shipped explicit release followed by
+`ComPtr::Reset` before scalar deletion. The former production texture-factory
+test override has been removed. The seven- and ten-argument
+`UpdateSubresources` procedures retain their exact footprint allocation,
+row-copy, and buffer/texture copy branches.
+
+`CopyRGBADataToSurface` retains the shipped 256x256 RGBA8 destination,
+256-byte-aligned source footprint, unchecked default-resource creation, and
+transient upload-resource lifetime. Its focused GPU test intercepts only the
+copy call to hold a test-side upload reference through execution; production
+continues to release that upload immediately after command recording, exposing
+the retail lifetime defect instead of silently extending it.
+
+`CopyBitmapToSurface` retains the shipped oversized bitmap buffer, separate
+four-byte-per-pixel staging buffer, upload prefill, and subsequent
+`UpdateSubresources` overwrite from the original bitmap buffer. It also keeps
+the executable's bit-count row pitch, `m_dwPitch` slice pitch, unchecked bitmap
+query, ignored map/update results after successful upload allocation, and the
+same transient upload lifetime. A real GPU round trip verifies the resulting
+first-row copy and zero-filled second row for a 32-bpp two-row bitmap.
+
+The image-loading chain now uses only the shipped SDL2/SDL2_image decoder
+boundary. `LoadImageData`, `LoadPNGFile`, and `LoadTargaFile` preserve their
+distinct format conversion, locking, alpha-state, pitch, vertical-flip,
+diagnostic, and cleanup behavior. Real-asset tests decode the installed
+`a_blob.png` and `a_blob.tga` and compare every flipped row. The dynamic Windows
+binding resolves only the mandatory canonical DLL/export names and fails fast
+when that import surface is unavailable; it does not provide an alternate
+decoder.
+
+`CreateSRVHeap` restores the exact command-list close/execute/wait/reset cycle,
+COPY_DEST RGBA8 resource, `/res/` debug-name trimming, shared descriptor
+allocation, bitmap-byte upload, SRV creation, and shipped lack of a final
+shader-resource transition. `CreateTextureFromFile` restores its pre-load
+`PAIN`/`PAINTEX` releases, private type and desired-format writes, and the
+canonical 256x256 two-color DIB fallback used after load failure. Focused GPU
+readback verifies uploaded bitmap rows and the fallback's exact pixel pattern.
+
+The shared `d3dframe` module is complete at 33/33 project procedures. The
+legacy 96-byte `CD3DFramework7` owner restores DirectDraw creation and
+cooperative flags, fullscreen and windowed surface chains, clipper ownership,
+hardware/system-memory selection, Z-format enumeration and attachment,
+viewport setup, presentation, repaint, restoration, initialization cleanup,
+and exact HRESULT mappings. The 640-byte `CD3DFramework12` owner restores its
+window movement, swap-chain presentation, SDL texture/UI bridge, RTV and D32
+depth creation, resize lifecycle, and exact selective teardown behavior.
+Focused ABI-level DirectDraw probes and real hidden-window D3D12 resources
+cover these paths without substituting host-specific fallback behavior.
+
+Focused Debug and Release tests use real D3D12 devices, queues, descriptor
+heaps, command lists, fences, upload/default/readback resources, and pixel
+round trips. They verify constructor bytes, descriptor exhaustion and reuse,
+state transitions, lazy upload allocation, factory-created resource metadata,
+SRV indexing, destructor recycling, legacy factory field writes, intrusive
+list teardown, and the exact resource-release call count. `d3dtextr` is
+complete at 29/29 project procedures and `d3dframe` is complete at 33/33;
+both focused suites and the full PC executable build in Debug and Release.
 
 ## Ghidra export
 

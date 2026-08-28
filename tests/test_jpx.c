@@ -1,4 +1,5 @@
 #include "jpb/jpx.h"
+#include "jpb/memory.h"
 #include "jpb/software_renderer.h"
 
 #include <float.h>
@@ -202,12 +203,20 @@ int main(void)
     uint8_t invalid[FILE_SIZE];
     uint8_t runtime_bytes[FILE_SIZE];
     uint8_t runtime_storage[FILE_SIZE];
+    uint8_t canonical_bytes[22] = {0};
     uint8_t vertex_swap[JPB_JPX_VERTEX_SIZE];
     uint8_t second_strip_vertices[4 * JPB_JPX_VERTEX_SIZE];
     uint8_t near_clip_vertices[8 * JPB_JPX_VERTEX_SIZE];
     uint8_t near_clip_second_vertices[4 * JPB_JPX_VERTEX_SIZE];
     JPBJpxDescriptor descriptors[2];
     JPBJpxDescriptor runtime_descriptors[2];
+    int32_t canonical_descriptor[4] = {
+        (int32_t)UINT32_C(0x11223344),
+        (int32_t)UINT32_C(0x55667788),
+        (int32_t)UINT32_C(0x99aabbcc),
+        (int32_t)UINT32_C(0xddeeff00)
+    };
+    _Material canonical_material;
     JPBJpxLoadConfig config;
     JPBJpxView view;
     JPBSoftwareJpxScene software_scene;
@@ -223,6 +232,7 @@ int main(void)
     uint32_t pixels[64 * 64];
     float depth_values[64 * 64];
     const char *runtime_path = "jpb_jpx_runtime_test.bin";
+    const char *canonical_path = "jpb_jpx_canonical_test.bin";
     FILE *runtime_file;
     int user_resolver_calls = 0;
 
@@ -874,8 +884,7 @@ int main(void)
     patch_site_calls = 0;
     last_patch_offset = 0;
     spatial_node_calls = 0;
-    jpx_SetRuntimeConfig(&config);
-    CHECK(InitJPX((char *)runtime_path) == JPB_JPX_OK);
+    CHECK(jpx_LoadFile(runtime_path, &config, &view) == JPB_JPX_OK);
     CHECK(resolver_calls == 2);
     CHECK(user_resolver_calls == 2);
     CHECK(progress_calls == 4);
@@ -883,9 +892,7 @@ int main(void)
     CHECK(patch_site_calls == 2);
     CHECK(last_patch_offset == SECOND_STRIP);
     CHECK(spatial_node_calls == 1);
-    CHECK(WorldmeshData == (int32_t *)(runtime_storage + WORLD_OFFSET));
-    CHECK(gJpxWorldmeshSize == FILE_SIZE - WORLD_OFFSET);
-    CHECK(jpx_GetRuntimeView()->stripCount == 2);
+    CHECK(view.stripCount == 2);
     CHECK(memcmp(
               runtime_storage + FIRST_STRIP,
               runtime_descriptors[1].bytes,
@@ -894,10 +901,35 @@ int main(void)
               runtime_storage + SECOND_STRIP,
               runtime_descriptors[0].bytes,
               JPB_JPX_DESCRIPTOR_SIZE) == 0);
-    jpx_SetRuntimeConfig(NULL);
-    CHECK(WorldmeshData == NULL);
-    CHECK(gJpxWorldmeshSize == 0);
     CHECK(remove(runtime_path) == 0);
+
+    write_u16(canonical_bytes, 0);
+    write_u16(canonical_bytes + 2, 6);
+    write_u16(canonical_bytes + 4, 0);
+    write_u32(canonical_bytes + 6, 0);
+    write_u32(canonical_bytes + 10, 0);
+    runtime_file = fopen(canonical_path, "wb");
+    CHECK(runtime_file != NULL);
+    CHECK(fwrite(
+              canonical_bytes,
+              1,
+              sizeof(canonical_bytes),
+              runtime_file) == sizeof(canonical_bytes));
+    CHECK(fclose(runtime_file) == 0);
+    memset(&canonical_material, 0, sizeof(canonical_material));
+    canonical_material.texture = canonical_descriptor;
+    level_materials[0] = &canonical_material;
+    memset(mem_pool_3a, 0, sizeof(canonical_bytes));
+    WorldmeshData = NULL;
+    gJpxWorldmeshSize = 123;
+    CHECK(InitJPX((char *)canonical_path) == 0);
+    CHECK(WorldmeshData == (int32_t *)(void *)(mem_pool_3a + 6));
+    CHECK(memcmp(
+              WorldmeshData,
+              canonical_descriptor,
+              sizeof(canonical_descriptor)) == 0);
+    CHECK(gJpxWorldmeshSize == 123);
+    CHECK(remove(canonical_path) == 0);
 
     CHECK(jpx_Inspect(NULL, 0, &view) == JPB_JPX_TRUNCATED);
     puts("jpx tests passed");

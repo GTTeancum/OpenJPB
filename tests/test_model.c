@@ -199,6 +199,54 @@ static int test_bounded_bad_child(void)
     return 0;
 }
 
+static int test_multiple_registered_geometry_bounds(void)
+{
+    uint8_t first_archive[4 + 5 * sizeof(geomData)];
+    uint8_t second_archive[4 + 5 * sizeof(geomData)];
+    uint8_t unknown_archive[4 + 5 * sizeof(geomData)];
+    JPBBmdView first_view;
+    JPBBmdView second_view;
+    modelObject *first;
+    modelObject *second;
+    modelObject *first_again;
+
+    make_model_archive(first_archive, sizeof(first_archive));
+    make_model_archive(second_archive, sizeof(second_archive));
+    make_model_archive(unknown_archive, sizeof(unknown_archive));
+    CHECK(jpb_BmdInspect(
+              first_archive, sizeof(first_archive),
+              &first_view) == JPB_BMD_OK);
+    CHECK(jpb_BmdInspect(
+              second_archive, sizeof(second_archive),
+              &second_view) == JPB_BMD_OK);
+    ((geomData *)(void *)second_view.payload)[1].trans.vx = 99;
+
+    pointerRegistry_Reset();
+    model_InitModels();
+    jpb_ModelSetGeometryBounds(
+        first_view.payload, first_view.payload_size);
+    jpb_ModelSetGeometryBounds(
+        second_view.payload, second_view.payload_size);
+
+    first = model_gInitModelRoot(
+        (geomData *)(void *)first_view.payload, "first", 2);
+    second = model_gInitModelRoot(
+        (geomData *)(void *)second_view.payload, "second", 3);
+    first_again = model_gInitModelRoot(
+        (geomData *)(void *)first_view.payload, "first", 4);
+
+    CHECK(first != NULL);
+    CHECK(second != NULL);
+    CHECK(first_again != NULL);
+    CHECK(first->pRootNode->v3Translation.vx == 10);
+    CHECK(second->pRootNode->v3Translation.vx == 99);
+    CHECK(first_again->pRootNode->v3Translation.vx == 10);
+    CHECK(model_gInitModelRoot(
+              (geomData *)(void *)(unknown_archive + 4),
+              "unknown", 5) == NULL);
+    return 0;
+}
+
 static int test_live_material_relocation(void)
 {
     uint8_t archive[4 + 5 * sizeof(geomData)];
@@ -313,15 +361,47 @@ static int test_texture_packer(void)
     return 0;
 }
 
+static int test_console_node_command(void)
+{
+    Mnode head;
+    Mnode source;
+    Mnode expected_head;
+    Mnode expected_source;
+    float arguments[3] = {2.0f, 8.0f, 1.25f};
+
+    memset(&head, 0x11, sizeof(head));
+    memset(&source, 0x22, sizeof(source));
+    head.id = (modelNodeId)(NODE_DYNAMIC | 8);
+    source.id = (modelNodeId)(NODE_DYNAMIC | 8);
+    coll_gRegisterNode(0, &head);
+    coll_gRegisterNode(2, &source);
+
+    CHECK(console_NodeCommand(3, NULL, NULL, arguments) == 5120);
+    CHECK((source.flags & JPB_COLLISION_FLAG_SCALE_OVERRIDE) != 0);
+    CHECK(source.v3Scale.vx == 5120);
+    CHECK(source.v3Scale.vy == 5120);
+    CHECK(source.v3Scale.vz == 5120);
+
+    expected_head = source;
+    expected_source = head;
+    CHECK(console_NodeCommand(1, NULL, NULL, arguments) ==
+          (int)(uintptr_t)&source);
+    CHECK(memcmp(&head, &expected_head, sizeof(head)) == 0);
+    CHECK(memcmp(&source, &expected_source, sizeof(source)) == 0);
+    return 0;
+}
+
 int main(void)
 {
     int result = 0;
 
     result |= test_registry_and_hierarchy();
     result |= test_bounded_bad_child();
+    result |= test_multiple_registered_geometry_bounds();
     result |= test_live_material_relocation();
     result |= test_texture_tracker_and_suffix();
     result |= test_texture_packer();
+    result |= test_console_node_command();
     if (result == 0) {
         puts("model tests passed");
     }

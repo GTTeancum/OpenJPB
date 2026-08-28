@@ -1,159 +1,125 @@
 /*
- * PARTIALLY REVIEWED RECONSTRUCTION
+ * COMPLETE REVIEWED RECONSTRUCTION
  * PDB module: 0071
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\TransparentTextureDatabase.obj
  * Primary source: W:\SWJediPowerBattles\work\rendering\TransparentTextureDatabase.cpp
  * Compiler language: c++
  * Emitted procedures: 278
  *
- * The two game-owned classifier bodies and their complete initializer data
- * are reviewed below. Standard-library implementation procedures remain as
- * inventory comments.
+ * The two game-owned classifier bodies, exact vector/set globals, and both
+ * dynamic initializers are reviewed below. Standard-library implementation
+ * procedures remain as inventory comments.
  */
 
 #include "jpb/transparent_texture_database.h"
+#include "jpb/textutil.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <set>
+#include <string>
+#include <vector>
 
-namespace {
-
-struct TextureNameSet {
-    const char *const *names;
-    std::size_t count;
-};
-
-#define TEXTURE_SET(array_name) \
-    { array_name, sizeof(array_name) / sizeof(array_name[0]) }
-#define EMPTY_TEXTURE_SET { nullptr, 0 }
-
-/* Exact four-entry glassTextures initializer at RVA 0x1470. */
-const char *const kGlassTextures[] = {
+/* Exact PDB globals at matched-PC RVAs 0x546490 and 0x5464B0. */
+std::vector<std::string> glassTextures = {
     "t_railing.tga",
     "t_orangeglass.tga",
     "t_orange.tga",
     "t_windows.tga"
 };
 
-/*
- * Exact unique membership of levelTextures[26], recovered from the
- * initializer at RVA 0x1640. Repeated initializer entries are intentionally
- * collapsed because the reference containers are std::set instances.
- */
-const char *const kLevel1Textures[] = {
-    "t_railing.tga", "t_o_floorbase.tga", "t_o_floor1.tga",
-    "t_o_floor5.tga", "t_o_floor3b.tga", "t_o_floor6a.tga",
-    "t_gtubes.tga", "t_o_floortile.tga", "o_floorbase.tga",
-    "t_orangeglass.tga", "t_orange.tga"
+std::set<std::string> levelTextures[26] = {
+    {},
+    {
+        "t_railing.tga", "t_o_floorbase.tga", "t_o_floor1.tga",
+        "t_o_floor5.tga", "t_o_floor3b.tga", "t_o_floor6a.tga",
+        "t_gtubes.tga", "t_o_floortile.tga", "o_floorbase.tga",
+        "t_orangeglass.tga", "t_orange.tga"
+    },
+    {
+        "p_hang_vein.tga", "p_leaf10.tga", "p_grass3.tga",
+        "p_fern06a.tga", "p_mush1.tga", "p_leaf3.tga",
+        "p_fern02.tga", "p_leaf2.tga", "p_leaf5.tga",
+        "p_leaf9.tga", "p_fern07a.tga", "p_fern08a.tga",
+        "p_fern03.tga", "p_fern03a.tga", "p_fern05.tga",
+        "p_fern01a.tga", "p_mush3aa.tga", "p_leaf6.tga",
+        "p_leaf7.tga", "p_grass1.tga", "p_grass2.tga",
+        "p_fern04.tga", "p_leaf4a.tga", "p_fern05a.tga",
+        "p_leaf8.tga", "p_mush2.tga"
+    },
+    {
+        "theed0.tga", "theed1.tga", "theed2.tga", "theed3.tga",
+        "p_arch2.tga", "p_arch2a.tga", "p_arch3.tga",
+        "p_arch4.tga", "p_arch4a.tga", "p_arch3a.tga",
+        "p_arch5.tga", "p_brchtop.tga", "p_brchfrnt.tga",
+        "p_brchside.tga", "p_arch1.tga", "p_arch1b.tga",
+        "p_arch1c.tga", "p_theed0_b.tga", "p_theed2_b.tga"
+    },
+    {
+        "leaf1.tga", "t_windows.tga", "p_tree.tga", "w_metal1.tga",
+        "p_gridfloor.tga", "t_pal_16.tga", "p_tree_bottom.tga"
+    },
+    {},
+    {
+        "p_corus_window1.tga", "p_lights_closer.tga",
+        "p_lights_large.tga", "p_small_lights.tga",
+        "p_corus_26.tga", "p_corus_window2.tga", "t_windowtest.tga",
+        "p_corus_window1.tgap_lights_closer.tgap_corus_26.tga"
+        "p_corus_window2.tgap_small_lights.tgap_lights_large.tga"
+        "t_windowtest.tga"
+    },
+    {
+        "p_leaf3.tga", "p_fern08a.tga", "p_fern06a.tga",
+        "p_leaf2.tga", "p_leaf4a.tga", "p_leaf9.tga",
+        "p_leaf8.tga", "p_leaf5.tga", "p_fern04.tga",
+        "t_1moss.tga", "p_grass1.tga", "p_grass2.tga",
+        "p_fern03.tga", "p_fern07a.tga", "t_dam_1wall.tga"
+    },
+    {
+        "p_streets0_b.tga", "p_brchtop.tga", "p_brchfrnt.tga",
+        "p_brchside.tga", "t_water1a.tga", "p_streets2_b.tga",
+        "p_streets3_b.tga"
+    },
+    {
+        "p_hang11.tga", "p_ivy.tga", "p_brchtop.tga",
+        "p_brchfrnt.tga", "p_brchside.tga", "p_growthd.tga",
+        "p_growthb.tga", "p_growtha.tga", "p_growthc.tga",
+        "p_leaf1.tga", "t_water.tga", "t_waterStatic.tga"
+    },
+    {"t_laser1.tga", "t_water.tga"},
+    {
+        "t_orangefloor.tga", "t_floorctr.tga", "t_redfloor.tga",
+        "t_bluefloor.tga", "pal_52.bmp", "leaf1.tga",
+        "t_windows.tga", "t_floorctr1.tga"
+    },
+    {},
+    {
+        "p_gnga0.tga", "p_gnga2.tga", "t_gngaglass.tga",
+        "t_blueglass.tga", "t_orangeglass.tga", "t_yellowglass.tga"
+    },
+    {},
+    {
+        "p_corus_window1.tga", "p_lights_closer.tga",
+        "p_lights_large.tga", "p_small_lights.tga",
+        "p_corus_26.tga", "p_corus_window2.tga", "t_windowtest.tga",
+        "p_corus_window1.tgap_lights_closer.tgap_corus_26.tga"
+        "p_corus_window2.tgap_small_lights.tgap_lights_large.tga"
+        "t_windowtest.tga"
+    },
+    {"p_train4.tga"},
+    {"p_train4.tga"},
+    {},
+    {},
+    {},
+    {"fade.bmpfade.bmp"},
+    {"p_train2.tga"},
+    {},
+    {},
+    {"t_o_floor6a.tga", "t_railing.tga", "fed2a.tga"}
 };
 
-const char *const kLevel2Textures[] = {
-    "p_hang_vein.tga", "p_leaf10.tga", "p_grass3.tga",
-    "p_fern06a.tga", "p_mush1.tga", "p_leaf3.tga",
-    "p_fern02.tga", "p_leaf2.tga", "p_leaf5.tga",
-    "p_leaf9.tga", "p_fern07a.tga", "p_fern08a.tga",
-    "p_fern03.tga", "p_fern03a.tga", "p_fern05.tga",
-    "p_fern01a.tga", "p_mush3aa.tga", "p_leaf6.tga",
-    "p_leaf7.tga", "p_grass1.tga", "p_grass2.tga",
-    "p_fern04.tga", "p_leaf4a.tga", "p_fern05a.tga",
-    "p_leaf8.tga", "p_mush2.tga"
-};
-
-const char *const kLevel3Textures[] = {
-    "theed0.tga", "theed1.tga", "theed2.tga", "theed3.tga",
-    "p_arch2.tga", "p_arch2a.tga", "p_arch3.tga",
-    "p_arch4.tga", "p_arch4a.tga", "p_arch3a.tga",
-    "p_arch5.tga", "p_brchtop.tga", "p_brchfrnt.tga",
-    "p_brchside.tga", "p_arch1.tga", "p_arch1b.tga",
-    "p_arch1c.tga", "p_theed0_b.tga", "p_theed2_b.tga"
-};
-
-const char *const kLevel4Textures[] = {
-    "leaf1.tga", "t_windows.tga", "p_tree.tga", "w_metal1.tga",
-    "p_gridfloor.tga", "t_pal_16.tga", "p_tree_bottom.tga"
-};
-
-const char *const kCorusTextures[] = {
-    "p_corus_window1.tga", "p_lights_closer.tga",
-    "p_lights_large.tga", "p_small_lights.tga",
-    "p_corus_26.tga", "p_corus_window2.tga", "t_windowtest.tga",
-    "p_corus_window1.tgap_lights_closer.tgap_corus_26.tga"
-    "p_corus_window2.tgap_small_lights.tgap_lights_large.tga"
-    "t_windowtest.tga"
-};
-
-const char *const kLevel7Textures[] = {
-    "p_leaf3.tga", "p_fern08a.tga", "p_fern06a.tga",
-    "p_leaf2.tga", "p_leaf4a.tga", "p_leaf9.tga",
-    "p_leaf8.tga", "p_leaf5.tga", "p_fern04.tga",
-    "t_1moss.tga", "p_grass1.tga", "p_grass2.tga",
-    "p_fern03.tga", "p_fern07a.tga", "t_dam_1wall.tga"
-};
-
-const char *const kLevel8Textures[] = {
-    "p_streets0_b.tga", "p_brchtop.tga", "p_brchfrnt.tga",
-    "p_brchside.tga", "t_water1a.tga", "p_streets2_b.tga",
-    "p_streets3_b.tga"
-};
-
-const char *const kLevel9Textures[] = {
-    "p_hang11.tga", "p_ivy.tga", "p_brchtop.tga",
-    "p_brchfrnt.tga", "p_brchside.tga", "p_growthd.tga",
-    "p_growthb.tga", "p_growtha.tga", "p_growthc.tga",
-    "p_leaf1.tga", "t_water.tga", "t_waterStatic.tga"
-};
-
-const char *const kLevel10Textures[] = {
-    "t_laser1.tga", "t_water.tga"
-};
-
-const char *const kLevel11Textures[] = {
-    "t_orangefloor.tga", "t_floorctr.tga", "t_redfloor.tga",
-    "t_bluefloor.tga", "pal_52.bmp", "leaf1.tga",
-    "t_windows.tga", "t_floorctr1.tga"
-};
-
-const char *const kLevel13Textures[] = {
-    "p_gnga0.tga", "p_gnga2.tga", "t_gngaglass.tga",
-    "t_blueglass.tga", "t_orangeglass.tga", "t_yellowglass.tga"
-};
-
-const char *const kLevel16Textures[] = { "p_train4.tga" };
-const char *const kLevel17Textures[] = { "p_train4.tga" };
-const char *const kLevel21Textures[] = { "fade.bmpfade.bmp" };
-const char *const kLevel22Textures[] = { "p_train2.tga" };
-const char *const kLevel25Textures[] = {
-    "t_o_floor6a.tga", "t_railing.tga", "fed2a.tga"
-};
-
-const TextureNameSet kLevelTextures[26] = {
-    EMPTY_TEXTURE_SET,
-    TEXTURE_SET(kLevel1Textures),
-    TEXTURE_SET(kLevel2Textures),
-    TEXTURE_SET(kLevel3Textures),
-    TEXTURE_SET(kLevel4Textures),
-    EMPTY_TEXTURE_SET,
-    TEXTURE_SET(kCorusTextures),
-    TEXTURE_SET(kLevel7Textures),
-    TEXTURE_SET(kLevel8Textures),
-    TEXTURE_SET(kLevel9Textures),
-    TEXTURE_SET(kLevel10Textures),
-    TEXTURE_SET(kLevel11Textures),
-    EMPTY_TEXTURE_SET,
-    TEXTURE_SET(kLevel13Textures),
-    EMPTY_TEXTURE_SET,
-    TEXTURE_SET(kCorusTextures),
-    TEXTURE_SET(kLevel16Textures),
-    TEXTURE_SET(kLevel17Textures),
-    EMPTY_TEXTURE_SET,
-    EMPTY_TEXTURE_SET,
-    EMPTY_TEXTURE_SET,
-    TEXTURE_SET(kLevel21Textures),
-    TEXTURE_SET(kLevel22Textures),
-    EMPTY_TEXTURE_SET,
-    EMPTY_TEXTURE_SET,
-    TEXTURE_SET(kLevel25Textures)
-};
+namespace {
 
 int equalFolded(const char *left, const char *right)
 {
@@ -224,11 +190,20 @@ int mirrorNameMatches(const char *mirrorName, const char *sourceName)
     return 1;
 }
 
-int nameInSet(const char *name, const TextureNameSet &set, int mirrorNames)
+int nameInGlassMirrorSet(const char *name)
 {
-    for (std::size_t index = 0; index < set.count; ++index) {
-        if ((mirrorNames && mirrorNameMatches(name, set.names[index])) ||
-            (!mirrorNames && equalFolded(name, set.names[index]))) {
+    for (const std::string &sourceName : glassTextures) {
+        if (mirrorNameMatches(name, sourceName.c_str())) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int nameInLevelMirrorSet(const char *name, int level)
+{
+    for (const std::string &sourceName : levelTextures[level]) {
+        if (mirrorNameMatches(name, sourceName.c_str())) {
             return 1;
         }
     }
@@ -237,10 +212,28 @@ int nameInSet(const char *name, const TextureNameSet &set, int mirrorNames)
 
 }  // namespace
 
+/* 0xEEB90, 270 bytes in the matched executable. */
+bool isGlassTexture(const std::string &textureName)
+{
+    const std::string foldedName = toLower(textureName);
+
+    return std::find(
+               glassTextures.begin(),
+               glassTextures.end(),
+               foldedName) != glassTextures.end();
+}
+
+/* 0xEECA0, 242 bytes in the matched executable. */
+bool isTextureTransparent(const std::string &textureID, int level)
+{
+    return levelTextures[level].find(toLower(textureID)) !=
+           levelTextures[level].end();
+}
+
 extern "C" int jpb_IsGlassTexture(const char *texture_name)
 {
-    return nameInSet(
-        texture_name, TEXTURE_SET(kGlassTextures), 0);
+    return texture_name != nullptr &&
+           isGlassTexture(std::string(texture_name));
 }
 
 extern "C" int jpb_IsTextureTransparent(
@@ -249,14 +242,14 @@ extern "C" int jpb_IsTextureTransparent(
     if (level < 0 || level >= 26) {
         return 0;
     }
-    return nameInSet(texture_id, kLevelTextures[level], 0);
+    return texture_id != nullptr &&
+           isTextureTransparent(std::string(texture_id), level);
 }
 
 extern "C" int jpb_IsGlassTextureForJpxMirror(
     const char *material_name)
 {
-    return nameInSet(
-        material_name, TEXTURE_SET(kGlassTextures), 1);
+    return nameInGlassMirrorSet(material_name);
 }
 
 extern "C" int jpb_IsTextureGlassForJpxMirror(
@@ -265,13 +258,12 @@ extern "C" int jpb_IsTextureGlassForJpxMirror(
     if (level < 0 || level >= 26) {
         return 0;
     }
-    for (std::size_t textureIndex = 0;
-         textureIndex < kLevelTextures[level].count;
-         ++textureIndex) {
-        const char *sourceName =
-            kLevelTextures[level].names[textureIndex];
-        if (mirrorNameMatches(material_name, sourceName) &&
-            nameInSet(sourceName, TEXTURE_SET(kGlassTextures), 0)) {
+    for (const std::string &sourceName : levelTextures[level]) {
+        if (mirrorNameMatches(material_name, sourceName.c_str()) &&
+            std::find(
+                glassTextures.begin(),
+                glassTextures.end(),
+                sourceName) != glassTextures.end()) {
             return 1;
         }
     }
@@ -284,23 +276,8 @@ extern "C" int jpb_IsTextureTransparentForJpxMirror(
     if (level < 0 || level >= 26) {
         return 0;
     }
-    return nameInSet(material_name, kLevelTextures[level], 1);
+    return nameInLevelMirrorSet(material_name, level);
 }
-
-/* 0xEEB90, 270 bytes in the matched executable. */
-bool isGlassTexture(const std::string &textureName)
-{
-    return jpb_IsGlassTexture(textureName.c_str()) != 0;
-}
-
-/* 0xEECA0, 242 bytes in the matched executable. */
-bool isTextureTransparent(const std::string &textureID, int level)
-{
-    return jpb_IsTextureTransparent(textureID.c_str(), level) != 0;
-}
-
-#undef EMPTY_TEXTURE_SET
-#undef TEXTURE_SET
 
 /* 0x1470, 461 bytes, local, 5 named locals
  * `dynamic initializer for 'glassTextures''

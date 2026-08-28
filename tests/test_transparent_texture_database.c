@@ -22,7 +22,10 @@ static int test_exact_classifiers(void)
     CHECK(jpb_IsTextureTransparent("p_fern05a.tga", 2));
     CHECK(jpb_IsTextureTransparent("p_theed2_b.tga", 3));
     CHECK(jpb_IsTextureTransparent("t_pal_16.tga", 4));
-    CHECK(jpb_IsTextureTransparent("t_waterStatic.tga", 9));
+    CHECK(jpb_IsTextureTransparent("t_water.tga", 9));
+    /* Retail lowercases the query but not this initializer entry. */
+    CHECK(!jpb_IsTextureTransparent("t_waterStatic.tga", 9));
+    CHECK(!jpb_IsTextureTransparent("t_waterstatic.tga", 9));
     CHECK(jpb_IsTextureTransparent("p_train4.tga", 16));
     CHECK(jpb_IsTextureTransparent("p_train4.tga", 17));
     CHECK(jpb_IsTextureTransparent("p_train2.tga", 22));
