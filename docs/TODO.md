@@ -2,7 +2,15 @@
 
 ## Open Items at a Glance
 
-- [x] Fix the 2026-08-27 headless soak blocker. Matching RelWithDebInfo symbols identify the shared null dereference as `CSteamAchievements::SetAchievement`, not FontAtlas. Explicit `--control-harness` runs now install a stateful achievement platform adapter; all 42 rows from formerly failing levels and the optimized Release FED/Mini4/Train4 triad complete with zero hard failures.
+- [ ] Live-review FED wall and doorway collision. The shipped `WorldBlocking` vertical-state read and `CheckCubeBlocking` slide continuation are now restored; repeated doorway wall-jump abuse lands grounded and idle in the automated FED route instead of pinning the player or retriggering the intro.
+- [ ] Live-review gameplay audio for crackle/pops. Effects and music now use the shipped SDL_mixer backend and exact 44.1 kHz float-stereo/8192-buffer setup instead of one WinMM device per sound.
+- [ ] Live-review gameplay Pause, including Continue, Controls, Audio, Combos, Ultimate Saber, and Quit. Continue, Controls, and Quit-to-title pass complete front-end-to-game automated routes; Audio and Combos enter their canonical modes, and the fresh-game Ultimate Saber entry remains locked `OFF`. The shipped `gamepauseMenuMdef` has no Restart item; death/reset owns level restart separately.
+- [x] Resolve the remaining Streets/Train2/Core soak warnings. Streets reaches its canonical ending and the fixed-length harness was overrunning the ending-camera pan; Train2's only placement is a class-72 pickup without an enemy runtime owner; Streets endpoint sampling selected a boundary actor; and Core remains in its authored AI-36 opening camera lock. The soak tool now records the Streets terminal state, excludes pickups, and samples interior placements without weakening genuine visibility/crash checks.
+- [ ] Recheck New Game overwrite through level select. Ten-run lifecycle coverage and the focused overwrite route pass after the D3D solid-fade fix, but live review remains required.
+- [ ] Live-test pickups, death/retry, continues, and game over. Focused collection and lifecycle regressions pass; the visible user path remains unsigned.
+- [x] Complete the 2026-08-31 autonomous stability pass. The long matrix completed `65` scenarios with `25` pass / `40` warning / `0` fail, the fixed boss rerun passed `7/7`, the clean Release suite passed `929/929`, and the final staged build passed the `11/11` collision/lifecycle/Pause/audio gate. See `docs/OVERNIGHT_SMOKE_SOAK_20260831.md`.
+- [x] Complete the 2026-08-28/29 overnight smoke and soak pass. The long matrix finished `65` scenarios at `5400` route / `1800` placement frames with `34` pass / `31` warning / `0` fail; all warnings are recovered deaths, forced-coordinate visibility misses, or Core's authored quickload control lock. Hardware boss smoke passed `7/7`, all eight FMVs decoded/presented with audio and explicit skip edges, the clean Release suite passed `922/922`, and six startup/menu/handoff routes each passed ten consecutive lifecycle runs. See `docs/OVERNIGHT_SMOKE_SOAK_20260829.md`.
+- [x] Fix headless achievement crashes. Matching symbols identify the null dereference as `CSteamAchievements::SetAchievement`; all diagnostic process modes now install the stateful platform adapter even without simulated controls, and the repaired Coruscant boss route plus the complete seven-boss matrix pass.
 - [ ] Investigate exposing the retained achievement system. Trace the shipped executable/PDB platform path to determine how the GOG build suppresses Steam services, then assess a canonical PC-facing achievement backend without changing the original unlock conditions.
 - [x] Complete the module-by-module blanket reconstruction audit against the local PDB and shipped executable. Mechanical project-body coverage is 2,018/2,018 (100%) with zero comment-only shells. The canonical gameplay-constructor chain is restored and validated in Debug and Release, and the final `wHook` platform-boundary audit is closed.
 - [x] Complete the dependency-closed `PlayVideo` audit: all 21 bundled Theora owners, decoder startup, worker-thread ownership, localized path selection, audio queueing, frame timing, skip events, rendering, and teardown are restored from local PDB/executable evidence.
@@ -10,19 +18,22 @@
 - [ ] Live-review the VS arena handoff and first gameplay frame.
 - [ ] Verify keyboard controls remain neutral while the game is unfocused.
 - [ ] Live-review grounded traversal around walls, rocks, and other small rises after restoring the retail physics constructor.
+- [ ] Re-test the FED opening-door droid crowd after restoring `CharBlocking`'s shipped 3D separation vector; confirm the player cannot be pinned inside the left wall.
+- [x] Restore runtime texture resolution to prefer sibling TGA, fall back to sibling PNG, and use the canonical default texture only after both fail. A 900-frame neutral FED run reports zero texture load, cache, or fallback failures.
+- [x] Bake the shipped game's nine-image icon group into `jpb_pc_game.exe` and link the release game as a Windows GUI executable so it no longer opens a console window.
 - [ ] Live-review corrected Darth Maul double-blade attachment. The blanket audit omitted Core Maul and its old validator repeated the renderer's own endpoint formula; both shipped Maul BMD chains and both model IDs now have independent runtime and unit coverage.
 - [x] Saber draw path signed off after live level-2 review.
-- [ ] Recheck New Game overwrite through level select; the D3D solid-fade crash is fixed.
+- [ ] Live-review the repaired 1P FED handoff. The host model-texture cache now uses stable storage at the recovered 800-material bound instead of the unrelated 32-node bound; the hidden D3D route completes without texture saturation or BMD failure.
 - [ ] Finish FED camera parity and framing.
-- [ ] Correct the FED scripted-opening timing and composition.
-- [ ] Live-test pickups, death/retry, continues, and game over.
+- [x] Restore and lock the FED scripted-opening timing. Real authored replay attaches player AI at frame `240`, releases at `306` after `32` AI ticks, hands the camera from dolly `145` to `56` at frames `334/335`, and does not reattach through frame `480`; focused regressions enforce the exact sequence.
 - [ ] Diagnose the unattended upside-down/death-like failure.
-- [ ] Audit scripted player control across all levels.
+- [x] Audit scripted player control across all levels. All `40` external attach/release edges and `10` authored self-release edges are mapped from shipped J3D data; malformed/unresolved edges are zero, owner `4/5` proxies have verified release paths, the Palace checkpoint-6 skip is restored from `enemy_ParseOpcodes`, and FED timing/re-entry regressions pass.
 - [ ] Confirm New Game level selection no longer rumbles before its FMV.
 - [ ] Complete manual FMV review.
+- [ ] Live-review startup FMV timing. Movie requests now wait for the presentation owner, and audible output remains paused until the first video frame is submitted; level 1 queues once during loading and no longer launches twice.
 - [x] Assess the post-fix soak warnings. None demonstrates a gameplay failure: death telemetry is sticky after recovery, placement teleports can put the player behind geometry, and the two 600-frame zero-energy rows complete their canonical exit/recovery paths when given enough time.
-- [ ] Finish FMV hardening and decoder packaging.
-- [ ] Expand boss coverage and repeat visible boss smoke.
+- [x] Finish FMV return-state review. Native linked decoding, all-eight movie/audio smoke, intro/ending skip cleanup, repeated decoder teardown, and natural EOF return to the title loop pass.
+- [ ] Expand remaining Palace/Hangar lifecycle coverage and repeat visible boss smoke. Core Maul's anchor, model, damage, death animation, and terminal placement cleanup are proven.
 
 ## 1. Active Priorities
 
@@ -78,7 +89,7 @@
 - [x] Complete the 29/29-procedure `vectors` audit. Restore the three exact `PushMatrix`/`PopMatrix` pairs, their retail address-residue return values and depth-15 behavior, plus `vec_gDefinePlane`'s inert `debug_printf` call; focused tests exercise every public vector procedure.
 - [x] Complete the 11/11-procedure `IO` audit. Restore the exact diagnostics, `updateBucket` call, register-preserving `file_ReadPC`, and retail `"awb"` append mode. Direct CRT RE proves that mode is rejected and enters the invalid-parameter path, so the dormant append failure is exposed rather than replaced with working `"ab"` behavior. The focused test intercepts the call before the CRT and installs a test-only invalid-parameter guard, so a broken interception reports a normal failure instead of opening a modal assertion.
 - [x] Complete the 6/6-procedure `nodes` audit. Replace inferred render-packet/model-stack ranges with the complete PDB fields, publish each node's exact current rotation, remove noncanonical detached-part ownership guards, restore the real `jon_otagpos` callee, and retain retail's accepted packet index `0x200` beyond its 512-record PDB array.
-- [x] Complete the 31/31-procedure `sound` audit. Restore the exact 43-entry `tAudioSFX_Bank` table, four-slot `tBankHandle` owner and latent accepted slot `4`, 100-record loop owner, filename lookup, random-call side effect, channel-zero/bank-zero quirks, cosine stereo pan, spatial/2D volume branch, and per-channel loop updates; keep only the external mixer calls behind the WinMM boundary.
+- [x] Complete the 31/31-procedure `sound` audit. Restore the exact 43-entry `tAudioSFX_Bank` table, four-slot `tBankHandle` owner and latent accepted slot `4`, 100-record loop owner, filename lookup, random-call side effect, channel-zero/bank-zero quirks, cosine stereo pan, spatial/2D volume branch, and per-channel loop updates; bind the external calls to the shipped SDL2_mixer backend.
 - [x] Complete the 30/30-procedure `jedi` audit. Restore the exact progression, award, secret, stat, and combo-presentation owners; correct all three inverted award gates; preserve the shipped saber node-fetch and failure structure; and repair the coupled level-achievement route so completion-only stages never submit achievement ID `0`.
 - [x] Restore exact `game_InitGameSystems` and its `initArrays`, `clearzerobss`, and `initXAstuff` dependencies; focused coverage verifies the world clear, all seven pointer registries, callback publication, and lifecycle reset flags after canonical memory-system boot.
 - [x] Complete the 9/9-procedure `cube` audit: restore exact `initUVs`, the full JPX `plotsomecubes` traversal/submission path, `GPUcluts`, and the `makecull`/`seecull` dependencies; remove the noncanonical legacy-render hook and all unproven world/map/dolly/level guards. Focused level-world, Jonny, primitive, projection, and render-node tests pass.
@@ -154,13 +165,17 @@ The corrected no-harness arena hold remains on authored dolly `45` and camera ty
 - [ ] Record a retail FED run from first left-stick movement through shutdown, then compare it frame-for-frame with the portable trace.
 - [ ] Prove later-track framing sequentially; treat sustained black void or loss of visible gameplay geometry as a failure requiring another source audit.
 - [ ] Remove or replace every remaining local camera remap, forced dolly, or nearest-track rule that is not proven by the PDB or shipped executable.
-- [ ] Correct the FED scripted-opening duration from authoritative local evidence.
+- [x] Correct the FED scripted-opening duration from authoritative local evidence. Authored replay attaches player AI at frame `240`, releases at `306` after `32` AI ticks, and hands the camera from dolly `145` to `56` at frames `334/335`.
 - [ ] Recheck the FED opening-director composition after the cube-selector fix.
 
 ### 1.4 Player Collision - Pending Live Review
 
 - [x] Audit `MovePlayer`, `WorldBlocking`, `CheckCubeBlocking`, `newclosestPoly`, dynamic `_solid` construction, and the sphere/polygon kernel against the local PDB-paired executable.
 - [x] Restore the retail `loader_CreateCharacter` ownership path: both portable player slots now use `physics_gCreateObject(sceneObject*)`, which sets `physicsObject.maxledge` to `0x10000`, instead of bypassing it with `physics_gGetNewObject` and leaving the field at zero. Enemy-pool construction restores the same constructor field after its local pool reset because PDB `loader_CreateEnemy` delegates each actor to `loader_CreateCharacter`.
+- [x] Correct `CharBlocking` against shipped RVA `0xDC2D0`: the flat-distance calculation normalizes into `angle`, preserving `newangle` as the full 3D character-separation vector used by the push. The former reconstruction overwrote `newangle` with the flattened vector. A vertical-offset regression distinguishes the two paths.
+- [x] Correct the exact reported FED wall-jump pin against shipped `WorldBlocking` RVA `0xDEBB0`. The executable reads descending velocity from `physicsObject+0x10C` (`airmov.vy`) before and after node-center lookup; the reconstruction incorrectly read collision-adjusted `mov.vy` at `+0x118`, which a simultaneous wall contact zeros before the landing gate. The exact `(10069, 3804, -7437)` route now lands at `y=3714`, leaves Motion 4 by frame 61, and has a real-asset regression.
+- [x] Stress the FED opening doorway after the correction. A 1,800-frame explicit traversal-harness run crossed the opening and fought through the droid crowd without leaving floor height; a separate 900-frame neutral run remained grounded and unstuck. Neither reproduced the reported wall pin.
+- [ ] Manually re-test the exact opening-door crowd case from the reported failure; confirm the corrected descent field also closes the live wall pin under enemy pressure.
 - [ ] Live-review grounded traversal against FED/level-2 walls, rocks, and low geometry; confirm the player no longer becomes pinned until jumping.
 
 PDB evidence: module 51 `loader_CreateCharacter` lists `physics_gCreateObject` as its physics-component callee. Module 60 identifies `maxledge` at `physicsObject+0x1b0`; shipped `physics_gCreateObject` RVA `0xE13C0` stores `0x10000`, and shipped `CheckCubeBlocking` RVA `0xDC5F0` compares grounded rise against that field before either publishing the new position or cancelling horizontal movement.
@@ -181,23 +196,25 @@ Authoritative anchors: `coll_CheckNodeCollision` RVA `0x25790`, `coll_CheckProje
 
 - [ ] Manually verify staged FED pickup collection, healing/score, death restart, continue consumption, and game-over behavior.
 - [ ] Reproduce the unattended upside-down/death-like failure and identify whether it is death, physics, or camera state.
-- [ ] Audit every canonical scripted player-control takeover across all levels for correct ownership, timing, release, and neutral input afterward.
+- [x] Audit every canonical scripted player-control takeover across all levels for correct ownership, timing, release, and neutral input afterward. All `40` external attach/release edges and `10` self-release edges resolve through shipped J3D data with no malformed or unresolved ownership paths.
 
 ### 1.7 Pending Manual Review
 
 - [ ] Repeat New Game with an existing save, confirm overwrite, and continue through player count, difficulty, character select, and level select without an exit.
+- [ ] Start a 1P FED game and confirm the first gameplay frame renders normally without purple materials or an immediate exit.
 - [ ] Hold gameplay keys while another application owns foreground focus; confirm the game receives no keyboard movement, actions, menu input, FMV skip, or cheat chords.
 - [x] Saber smoothness and complete draw path signed off in live level-2 review.
 - [ ] Confirm New Game level selection no longer rumbles before its FMV; menu `0x66` alone suppresses the transition pulse.
 - [ ] Verify startup and level-1 FMVs in a visible, unmuted window, including volume, A/V sync, skip, and return state.
+- [ ] Confirm opening-FMV audio begins with its first visible frame rather than during application loading.
 - [ ] Repeat boss smoke visibly with local display and audio available.
 
 ### 1.8 Follow-up
 
 - [x] Triage the remaining soak warnings. The post-crash-fix corpus has `27` warnings: `25` runs recover from an observed death and finish with positive energy; Train3 placement `6` reaches the training player-exit path and clears the forced placement; and an extended Train5 placement `5` run reaches afterlife at frame `610`, player exit/game-death at `670`, and finishes at `750` with energy restored to `100`. Train2 placement `0` projects the player on-screen but its retained frame proves the forced pickup-coordinate teleport leaves the player fully occluded behind foreground geometry. None is a demonstrated gameplay failure.
 - [x] Re-run the complete soak from a properly staged executable directory. The 2026-08-28 Release run completed all 65 rows with `36` pass / `29` warning / `0` fail and zero FontAtlas errors. All warnings match recovered deaths, authored exits, a sample ending before recovery, or forced-placement occlusion.
-- [ ] Harden FMV failure and cleanup paths, settle decoder shipping, and extend framebuffer proof coverage.
-- [ ] Find authoritative anchors for final/Core Maul and Palace/Hangar set pieces before expanding boss coverage.
+- [x] Finish the natural-end FMV return-state review. A 27-second movie decoded all 810 source frames and returned to the title loop for 182 frames before clean shutdown.
+- [x] Find the authoritative final/Core Maul anchor. Palace offscreen activators and the Hangar objective lifecycle remain separate discovery work.
 
 ## 2. Status Snapshot
 
@@ -228,6 +245,7 @@ Authoritative anchors: `coll_CheckNodeCollision` RVA `0x25790`, `coll_CheckProje
 - Corrected FED `D` route: `265/265` framing samples onscreen, final dolly `56`, target at `368,214`, camera/player distance about `973`, and no late camera drift after the player stopped. The old selector ended on dolly `0` with target Y about `1005` on a `960x540` frame.
 - Corrected FED `W` route at `1920x1080`: `265/265` framing samples onscreen, `0` offscreen, `0` deaths, `0` missed presentation intervals, and no black void in the retained final frame.
 - Staged no-harness FED check: `scripted=0`, neutral pad state, `25/25` available framing samples onscreen, `0` missed presentation intervals, and `59.81 FPS` over `360` frames.
+- Final autonomous build staged with SHA256 `F8F7D6AD44C4718851E5C9446C9C46E7149E1008D0777408516CDA5997F3623D`. Its no-harness 120-frame FED smoke exits `0`, keeps both players' input histories neutral, renders the player in all `120` frames, and reports zero texture warnings and zero FontAtlas errors.
 - Complete camera-owner audit: all 23 PDB procedures were checked against direct shipped-executable disassembly, including every camera type, target/height selection, lead/slide arithmetic, focused-camera residue, debug/console owner, and level-specific branch. This closes the source owner; the later-track retail-versus-portable movement trail remains a separate integration evidence gap.
 - FED type-1 execution audit: a function-by-function comparison against the raw Ghidra export and direct shipped-EXE disassembly now covers the solo-player alias, target construction, `camera_SetCameraPos`/`camera_StuffCamera` branch order, movement normalization, X/Z fixed-point lead asymmetry, transition acceptance, snap/slide state, one view conversion per frame, camera-before-render ordering, and fixed `0x800` gameplay step. The portable FED frame cannot fall through to its legacy orbit-camera builder after collision load. The following view-matrix conversion and D3D projection also match retail's 53-degree vertical FOV and live `width / height` aspect. The corrected normalization mismatch does not affect the retained ordinary-range solo traces; later-track collision/selector inputs still require the retail movement trace before the blocker can close.
 - Retail cadence audit: `game_gPlayTheGame` calls `game_OneGameLoop` once per outer render iteration, `__EndRender`/presentation is the pacing boundary, and the gameplay globals remain fixed at `gGlobalFrameRate=0x800` and `fGlobalFrameRate=0.5`. There is no separate half-rate camera/simulation gate to restore. The short portable FED opening therefore remains an authored takeover/interpreter timing defect, not evidence that the whole game loop advances twice per retail frame.
@@ -244,6 +262,7 @@ Authoritative anchors: `coll_CheckNodeCollision` RVA `0x25790`, `coll_CheckProje
 - `tools/compare_camera_trails.ps1` checks 52 mapped retail/portable fields on common authoritative frame numbers, reports rows missing from either trail, reports the first divergence per field, and emits side-by-side one-second player/eye/dolly/lead pulses. Synthetic exact-match, single-field mismatch, and missing-frame fixtures passed, then were removed.
 - Supplemental FED navigation ran 3,599 recorded rows but stalled in the first combat pocket, so it is not later-track evidence. It exercised fixed opening dollies `144/145/146` and normal dolly `56`, kept every sampled gameplay frame onscreen, and exposed no black void before an unrelated authored-attack validation failure; the temporary executable and trail were removed.
 - Lifecycle audit: shipped `game_ResetGameSystems` restores events, physics, players, enemies, then cameras before powerups, damage, zero-BSS flags, visibility/material/audio, music, and Pikobi visibility. The portable `game_ProcessStatus`, `game_ResetGameSystems`, and `game_runStage` owners now reproduce that sequence after a completed gameplay frame when `StageExit` is set. A real FED regression forces the shipped death state and verifies spawn, energy, player flags, continue count, camera/system reset, and pickup restoration on the next frame.
+- Scripted-control ownership audit: all installed J3D data contains `40` external player-control toggles, `10` authored self-releases, four unreferenced owner-4/5 placements, and zero malformed `0x60f` edges. Direct `enemy_ParseOpcodes` review restored the omitted Palace checkpoint-six suppression for placements `209/210`. FED now has hard real-asset milestones for player attach at frame `240`, self-release at frame `306`, camera handoff at frame `334`, and no reattachment through frame `480`; direct `game_OneGameLoop`, `scene_middleRender`, and `enemy_HandleEnemies` review confirms one AI tick per rendered gameplay frame with `timeAdj=1`.
 - No-harness opening audit after the fixed-dolly repair: dollies `144 -> 146 -> 145` retain lead `0/0/0`, normal dolly `56` resumes at frame `335`, authored post-cutscene movement peaks at `191` units of lead, and lead returns to zero by frame `540` with no later drift through frame `899`. The disposable per-frame trace was removed after the audit.
 - FED dolly `8` has an exact installed-data regression at player position `7040,4096,-6400`: flags `0x103a` must produce focus `8099,4576,-8252` and angle `220,1024`. A layered FED collision sweep resolves selector-owned dolly `8` across 274 samples (`x=6528..7552`, `z=-25472..-5504`, `y=3872..4128`), and its sampled entry near `7296,4096,-8320` projects onscreen. A local collision-resolved harness from that entry never reached `-6400`; it entered an invalid fall/death state near `7090,4359,-7590`, so it is not canonical traversal evidence. Review confirmed the retained final composition is within the bounds of normal game behavior, so its visible black edge is not a blocker. FED has no placements for camera-mutating AI `71` or `91`, and the six placed camera-flag scripts do not mutate dolly `8` at this boundary. Keep the broader live retail/manual selector trail open, but do not retune this authored dolly or add a rejection fallback.
 - Headless input-trail recording now works under the explicit control harness and records camera type, dolly/flags, lead/dot, projected player position, on-screen counts, and transition counts per frame. The first post-fix sweep returned from fixed dollies `144/146/145` to dolly `56` with `1265/1265` projected gameplay samples on-screen, but collision kept that sweep inside the opening room, so it is not later-track proof.
@@ -281,7 +300,7 @@ Authoritative anchors: `coll_CheckNodeCollision` RVA `0x25790`, `coll_CheckProje
 
 - Done: startup FMV hidden-window smoke passed against the staged exe: `out/immediate_blockers/title_movie_validate_hidden_window.ppm`, with `requests=1,resolved=1,launched=1,presented=119,failures=0,last=0`.
 - Done: level-1 FMV asset hidden-window smoke passed against the staged exe: `out/immediate_blockers/level1_movie_validate_hidden_window.ppm`, with `requests=1,resolved=1,launched=1,presented=120,failures=0,last=1`.
-- Done: staged `ffmpeg.exe` beside the game exe because decoder lookup no longer searches `PATH`. This adds `227,398,656` bytes to `C:\Games\Star Wars Jedi Power Battles`.
+- Done: removed the obsolete staged and build-tree `ffmpeg.exe` copies after final native validation; the linked decoder passes all eight movie/audio rows without either file.
 - Done: FMV audio now writes decoded PCM to the default WinMM output during unmuted in-window playback. Proof: `out/immediate_blockers/title_movie_audio_output_hidden_window.ppm`, with `audio_output=1` and `audio_queued=737792/65`.
 - Done: FMVs can now be skipped with a fresh keyboard confirm/back press or XInput A/B/Start/Back press. Proof: `out/immediate_blockers/title_movie_skip_hidden_window.ppm`, with `presented=20` and `skips=1`.
 - Partially reviewed: the current staged build has had a live/manual in-window test. Audible FMV volume/sync and later FED camera behavior beyond the exercised route remain open.
@@ -321,6 +340,12 @@ Authoritative anchors: `coll_CheckNodeCollision` RVA `0x25790`, `coll_CheckProje
 
 ### 6.2 Crash and Validation Fixes
 
+- Done: broad overnight smoke and soak completed across user-facing routes on `2026-08-28/29`.
+  - Long level matrix: `34` pass / `31` warn / `0` fail across `65` scenarios at `5400` route frames and `1800` placement frames. Every process completed its exact frame budget; no run ended at zero energy, failed to recover after death, crashed, or timed out.
+  - Hardware coverage: `20/23` levels passed the 900-frame first pass; extended Core/Train5/Train6 runs confirmed Core remains in its authored quickload control lock while both train routes recover after death. Exact forced-placement boss smoke passed `7/7`.
+  - Presentation coverage: all eight FMVs decoded and presented with nonzero audio, all eight explicit skip-edge runs passed, the focused New Game/Continue/powerup/death/VS/handoff set passed `12/12`, and six startup/menu/handoff routes each passed ten consecutive repetitions.
+  - Regression gate: the clean optimized Release suite passed `922/922`. Three stale test contracts exposed by the first run were corrected: the active-enemy fixture now owns an achievement observer, the relocated BMD fixture owns a valid texture, and the radar validator checks the exact `transHandle` material submitted by `enemy_Radar`.
+  - Durable report: `docs/OVERNIGHT_SMOKE_SOAK_20260829.md`. Raw ledgers and telemetry are under `out/overnight-20260828`.
 - Done: complete staged Release soak refreshed `2026-08-28` in `docs/LEVEL_SOAK_20260828.md` and `out/level-soak-20260828-staged-full/results.json`.
   - Result: `36` passed / `29` warned / `0` failed across all 65 route and sampled-placement rows.
   - The executable was staged with the shipped resource tree, `SDL2.dll`, and `SDL2_ttf.dll`; all 89 logs contain zero FontAtlas errors.
@@ -375,15 +400,16 @@ Authoritative anchors: `coll_CheckNodeCollision` RVA `0x25790`, `coll_CheckProje
 ### 7.3 Audio
 
 - Done: decoded FMV PCM now queues to the default WinMM output during unmuted in-window playback.
+- Done: WinMM output opens paused and starts only after the first decoded movie frame has been submitted to the D3D presenter. Movie requests are deferred until the outer window/presentation loop is ready.
+- Done: the canonical level-1 load request is retained across runtime construction and launches once after handoff; the former host-side duplicate is suppressed.
 - Done: the muted/headless diagnostic now proves PCM samples are produced even when audible output cannot be checked.
 - Open: run a live verification pass for volume and A/V sync once speakers or headphones can be used.
 
 ### 7.4 Decoder Dependency
 
-- Done: the launcher now requires `ffmpeg.exe` beside `jpb_pc_game.exe`; it does not search `PATH`, so an unstaged decoder remains visible.
-- Current implementation still relies on an external `ffmpeg.exe` binary, currently staged beside the game exe for manual testing.
-- Open: either bundle a known ffmpeg build beside `jpb_pc_game.exe` or replace the child-process decoder with a linked library/backend.
-- Open: improve the visible error path when `ffmpeg.exe` is missing so the title menu reports the issue cleanly.
+- Done: replaced the external `ffmpeg.exe` child process with the linked TheoraPlay backend using the shipped Ogg/Theora/Vorbis stack.
+- Done: `jpb_pc_game.exe` no longer searches for or requires `ffmpeg.exe`; all eight shipped movies decode with video and audio in headless native smoke.
+- Done: removed the obsolete 227,398,656-byte `ffmpeg.exe` copies from both `build/Release` and the game folder, reclaiming about 434 MiB. All eight native movie/audio smoke rows pass without either copy; see `docs/FMV_NATIVE_NO_FFMPEG_AUDIT.md`.
 
 ### 7.5 Coverage
 
@@ -392,7 +418,7 @@ Authoritative anchors: `coll_CheckNodeCollision` RVA `0x25790`, `coll_CheckProje
 - Current in-window proof: `docs/FMV_HARDWARE_SMOKE_AUDIT.md` reports `8 passed / 0 failed` for 60-frame hidden hardware/window checks refreshed on `2026-08-15 03:12:00 -04:00`; each row records matching runtime/capture framebuffer dimensions.
 - Current visible default-window proof: `docs/FMV_VISIBLE_DEFAULT_SMOKE_AUDIT.md` reports `8 passed / 0 failed` for 60-frame visible/windowed checks at the default framebuffer refreshed on `2026-08-15 03:11:16 -04:00`; each row records `runtime=1793x1009, capture=1793x1009`.
 - Current larger-frame proof: `docs/FMV_HARDWARE_1080_SMOKE_AUDIT.md` reports `8 passed / 0 failed` for 60-frame hidden hardware/window checks at `1920x1080` refreshed on `2026-08-15 03:05:40 -04:00`.
-- Open: confirm retail behavior for movie flags, skip/cancel input, movie end, and returning to the correct title/menu state.
+- Done: shipped decoder flags, fresh-edge keyboard/controller skipping, natural movie end, and return to the title/menu loop are regression-covered from local executable/PDB evidence.
 
 ### 7.6 Visual Proof
 
@@ -407,7 +433,8 @@ Authoritative anchors: `coll_CheckNodeCollision` RVA `0x25790`, `coll_CheckProje
 - Done: short visible default-framebuffer FMV smoke passes all movie indices `0..7`.
 - Pending review: do not run more long FMV playback smoke until the current FMV work is reviewed.
 - Done: `tools/clean_smoke_outputs.ps1 -PruneLegacyHardwareProofs` pruned stale legacy hardware proof videos/exe snapshots from `out/hardware_proofs`, freeing `46.27 MB` and leaving current contact-sheet proof artifacts intact.
-- Open: watch process/thread cleanup on early exit, skip, and repeated movie triggers.
+- Done: intro and ending early-skip runs exit cleanly, and the linked decoder unit test starts and tears down a shipped movie three times in one process.
+- Done: movie index `2` reached natural EOF with 810 decoded source frames, then rendered 182 title frames and shut down cleanly; see `docs/FMV_NATIVE_NATURAL_END_AUDIT.md`.
 - Open: consider frame dropping/latest-frame semantics if decode ever falls behind realtime.
 
 ## 8. Boss Smoke Coverage
@@ -437,9 +464,10 @@ Authoritative anchors: `coll_CheckNodeCollision` RVA `0x25790`, `coll_CheckProje
 
 ### 8.3 Matrix Expansion
 
-- Open: add final/Core Maul and Hangar/Palace set pieces only after their authoritative placement or trigger anchors are identified.
-- Current candidate probe audit: `docs/BOSS_CANDIDATE_PROBE_AUDIT.md` records why Core Maul, Palace offscreen bosses, and Hangar are not promoted yet.
-- Current Core probe evidence: quickload `core` starts on camera-director placement `1` with `corguard.baf`, not a Maul actor; retail `10_CoreMaulFight1.wav` and `10_CoreMaulFight2.wav` exist; explicit P2 Maul-D loading selects models `0/43` and gives P2 resources, but the 180-frame proof has `second_player` pixels at `0`, so the gameplay trigger/visibility path still needs to be found before adding it to boss smoke.
+- Done: identify and add final/Core Maul to boss smoke. Direct executable reconstruction of `loader_loadEnemies` proves that Core actor slot `4` (`corguard.baf`) maps through `sObiNames[43]` to model `43`, `maul_d`; final-arena placement `11` is the 250-HP AI-33 fighter/controller and is now asserted by placement plus loader-resolved model.
+- Done: Core placement `11` reaches zero energy, completes its death animation, clears its handle, and reaches terminal placement status `2`. Direct `core.j3d` inspection proves AI `33` has no extension-spawn opcode and placement `11` has no delete-links; later AI-47 Mauls are independent range-activated stages. See `docs/CORE_MAUL_LIFECYCLE_AUDIT.md`.
+- Current candidate probe audit: `docs/BOSS_CANDIDATE_PROBE_AUDIT.md` records Core's promoted anchor and the remaining Palace/Hangar discovery work.
+- Current Core evidence: placement `11` resolves to model `43` with 250 HP and authored AI `33`; the old explicit-P2 probe was testing the wrong creation path and is retained only as historical evidence.
 - Current Palace/Hangar probe evidence: Palace placements `163/164` are referenced by offscreen kill bookkeeping but remain inactive in direct probes; Hangar is a timer/rescue set piece rather than a distinct boss placement anchor.
 - Keep using actor/AI placement IDs in the ledger so boss-area smoke does not silently turn into generic-level smoke.
 

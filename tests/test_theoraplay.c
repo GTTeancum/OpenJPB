@@ -272,6 +272,8 @@ int main(void)
 
 #if defined(JPB_THEORAPLAY_REAL_MOVIE)
     CHECK(test_real_movie() == 0);
+    CHECK(test_real_movie() == 0);
+    CHECK(test_real_movie() == 0);
 #endif
 
     jpb_THEORAPLAYDestroyDecoderForTest(decoder);

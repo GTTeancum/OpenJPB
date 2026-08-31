@@ -3639,6 +3639,14 @@ jpb_enemy_execute_authored_opcode(
             return JPB_ENEMY_OPCODE_PARSE_INVALID_DATA;
         }
 
+        /* Retail RVAs 0x4A655..0x4A660 leave these completed Palace
+         * control placements untouched after checkpoint six. */
+        if (GameStruct.CurrentLevel == 5 &&
+            (enemy_id == 209 || enemy_id == 210) &&
+            GameStruct.checkpoint[5] >= 6) {
+            return JPB_ENEMY_OPCODE_PARSE_COMPLETE;
+        }
+
         /*
          * Matched enemy_ParseOpcodes RVAs 0x4A660..0x4A670 read offset
          * 0x34 in wsl_BAP_PLACEMENT, the PDB-backed

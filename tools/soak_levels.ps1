@@ -196,8 +196,9 @@ function Convert-ToResult {
     $combined = $Run.text
     $actualFrames = Get-MatchValue $combined '^frames=(\d+) '
     $gameLevel = Get-MatchValue $combined '^game_state=\(level=(\d+)'
-    $finalEnergy = Get-MatchValue $combined '^player_lifecycle=\(energy=-?\d+/(-?\d+)'
+    $finalEnergy = Get-MatchValue $combined '^player_lifecycle=\(energy=(-?\d+)/'
     $deathFrame = Get-MatchValue $combined '^player_lifecycle=.*?death=(\d+)'
+    $deathGameFrame = Get-MatchValue $combined '^player_lifecycle=.*?death_game=(\d+)'
     $exitFrame = Get-MatchValue $combined '^player_lifecycle=.*?exit=(\d+)'
     $visibleFrames = Get-MatchValue $combined '^frames=.*? player_visible_frames=(\d+)'
     $enemyActors = Get-MatchValue $combined '^frames=.*? enemy=\(actors=([^,]+),'
@@ -214,6 +215,7 @@ function Convert-ToResult {
     $jumpCallbacks = Get-MatchValue $combined '^frames=.*? callbacks=\d+/(\d+)/'
     $cameraCollision = Get-MatchValue $combined '^frames=.*? camera=\(dolly=-?\d+,flags=[0-9a-fA-F]+,initial=-?\d+,unique=\d+,transitions=\d+,authored=\d+,collision=([0-9.]+)'
     $runtimePlacement = Get-MatchValue $combined 'placement=([-0-9]+),motion=' 1
+    $cubeFlags = Get-MatchValue $combined '^control_context=.*?cube_flags=([0-9a-fA-F]+)'
     $crashSignal = [regex]::IsMatch(
         $combined,
         'runtime init failed|fatal error|AddressSanitizer|unhandled exception|assertion failed|access violation',
@@ -226,8 +228,26 @@ function Convert-ToResult {
         $displacement = [Math]::Sqrt($deltaX * $deltaX + $deltaZ * $deltaZ)
     }
 
+    $expectedFrameCount = if ($Kind -eq 'route') {
+        $Frames
+    } else {
+        $PlacementFrames
+    }
     $failures = New-Object System.Collections.Generic.List[string]
     $warnings = New-Object System.Collections.Generic.List[string]
+    $terminalState = ''
+    $streetsEnding =
+        $Kind -eq 'route' -and
+        $Entry.Index -eq 8 -and
+        $null -ne $cubeFlags -and
+        (([Convert]::ToUInt32($cubeFlags, 16) -band 8) -ne 0) -and
+        $null -ne $deathGameFrame -and
+        [int]$deathGameFrame -gt 0 -and
+        $null -ne $visibleFrames -and
+        [int]$visibleFrames -gt 0
+    if ($streetsEnding) {
+        $terminalState = 'streets-ending'
+    }
     if ($Run.timedOut) { $failures.Add('timeout') }
     if ($Run.exitCode -ne 0) { $failures.Add("exit=$($Run.exitCode)") }
     if ($gameLevel -ne ([string]$Entry.Index)) {
@@ -235,11 +255,14 @@ function Convert-ToResult {
     }
     if ($null -eq $actualFrames) {
         $failures.Add('missing frame summary')
+    } elseif ([int]$actualFrames -ne $expectedFrameCount) {
+        $failures.Add("frames=$actualFrames expected=$expectedFrameCount")
     }
     if ($null -eq $triangles -or [int64]$triangles -le 0) {
         $failures.Add("triangles=$triangles")
     }
-    if ($null -eq $pixels -or [int64]$pixels -le 0) {
+    if (($null -eq $pixels -or [int64]$pixels -le 0) -and
+        -not $streetsEnding) {
         $warnings.Add("pixels=$pixels")
     }
     if ($null -eq $visibleFrames -or [int]$visibleFrames -le 0) {
@@ -250,6 +273,22 @@ function Convert-ToResult {
     }
     if ($deathFrame -ne '0') {
         $warnings.Add("death=$deathFrame")
+    }
+    $minimumDirectionFrames = [Math]::Max(
+        1,
+        [int][Math]::Floor($expectedFrameCount / 100.0))
+    # Mini2 hands control to the mounted Kadu actor; ordinary Jedi input
+    # telemetry intentionally stops after that canonical level-12 handoff.
+    if ($Kind -eq 'route' -and $Entry.Index -ne 12 -and
+        ($null -eq $directionFrames -or
+         [int]$directionFrames -lt $minimumDirectionFrames)) {
+        $warnings.Add(
+            "direction=$directionFrames expected-at-least=$minimumDirectionFrames")
+    }
+    if ($Kind -eq 'route' -and
+        [int]$locomotionFrames -le 0 -and
+        $displacement -lt 1.0) {
+        $warnings.Add("control-response=none")
     }
     if ($crashSignal) {
         $failures.Add('crash marker')
@@ -276,13 +315,15 @@ function Convert-ToResult {
         timedOut = $Run.timedOut
         seconds = $Run.seconds
         frames = [int]$actualFrames
-        expectedFrames = if ($Kind -eq 'route') { $Frames } else { $PlacementFrames }
+        expectedFrames = $expectedFrameCount
         triangles = [int64]$triangles
         pixels = [int64]$pixels
         visibleFrames = [int]$visibleFrames
         finalEnergy = [int]$finalEnergy
         deathFrame = [int]$deathFrame
+        deathGameFrame = [int]$deathGameFrame
         exitFrame = [int]$exitFrame
+        terminalState = $terminalState
         enemyActors = $enemyActors
         runtimePlacement = $runtimePlacement
         motion = $motion
@@ -314,7 +355,10 @@ function Get-LevelPlacements {
         $run.text,
         '^enemy_placement=\(id=(\d+),actor=(-?\d+),ai=(-?\d+),actor_name=([^,]+),.*?class=(-?\d+),status=(-?\d+),.*?loc=(-?\d+)/(-?\d+)/(-?\d+)',
         [System.Text.RegularExpressions.RegexOptions]::Multiline)) {
-        if ([int]$match.Groups[5].Value -lt 0) {
+        # Class 72 is the canonical pwrdrink/pickup actor. It has no enemy
+        # runtime owner, so forcing it cannot test NPC/enemy visibility.
+        if ([int]$match.Groups[5].Value -lt 0 -or
+            [int]$match.Groups[5].Value -eq 72) {
             continue
         }
         $placements += [pscustomobject]@{
@@ -342,12 +386,10 @@ function Select-PlacementSamples {
     $wanted = [System.Collections.Generic.List[int]]::new()
     $count = [Math]::Min($PlacementSamplesPerLevel, $sorted.Count)
     for ($i = 0; $i -lt $count; ++$i) {
-        if ($count -eq 1) {
-            $index = [int][Math]::Floor(($sorted.Count - 1) / 2.0)
-        } else {
-            $index = [int][Math]::Round(
-                $i * (($sorted.Count - 1) / [double]($count - 1)))
-        }
+        # Use interior quantiles. Endpoint placements are commonly startup or
+        # terminal actors and make poor coverage samples for the level body.
+        $index = [int][Math]::Round(
+            (($i + 1.0) / ($count + 1.0)) * ($sorted.Count - 1))
         if (-not $wanted.Contains($index)) {
             $wanted.Add($index)
         }
@@ -468,6 +510,8 @@ $lines.Add('| --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --
 foreach ($result in $results) {
     $target = if ($result.kind -eq 'placement') {
         "id=$($result.placementId) ``$($result.actorName)`` runtime=$($result.runtimePlacement)"
+    } elseif (-not [string]::IsNullOrWhiteSpace($result.terminalState)) {
+        "route (terminal=$($result.terminalState))"
     } else {
         'route'
     }
@@ -495,7 +539,7 @@ foreach ($result in $results) {
 $lines.Add('')
 $lines.Add('## Crash Signals')
 $lines.Add('')
-$lines.Add('A row fails for timeout, nonzero exit, wrong level, missing frame summary, missing geometry, or explicit crash markers. Missing gameplay pixels, no visible player samples, player death, low or zero travel, and runtime-current-enemy mismatches are retained as route-quality warnings rather than crash failures.')
+$lines.Add('A row fails for timeout, nonzero exit, wrong level, missing frame summary, missing geometry, or explicit crash markers. Missing gameplay pixels, no visible player samples, player death, low or zero travel, and runtime-current-enemy mismatches are retained as route-quality warnings rather than crash failures. Streets zero-pixel output is accepted only when the canonical ending flag, death-game transition, and prior visible-player frames prove that the fixed-length harness continued beyond terminal gameplay.')
 $lines.Add('')
 $lines.Add('Each row has a matching console log under the output directory. Captures are omitted by default to keep soak output small.')
 $lines | Set-Content -LiteralPath $LedgerPath -Encoding utf8

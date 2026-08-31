@@ -26,6 +26,13 @@ typedef struct ProbeBounds {
     int valid;
 } ProbeBounds;
 
+typedef struct ProbeAlphaRange {
+    double minimum;
+    double maximum;
+    double total;
+    size_t samples;
+} ProbeAlphaRange;
+
 _Static_assert(
     UFBX_HEADER_VERSION == 6001u,
     "jpb_fbx_level_probe requires the matched ufbx 0.6.1 header");
@@ -93,6 +100,40 @@ static void probe_face_bounds(
             }
         }
     }
+}
+
+static ProbeAlphaRange probe_face_alpha(
+    const ufbx_mesh *mesh,
+    const ufbx_mesh_material *mesh_material)
+{
+    ProbeAlphaRange range = {DBL_MAX, -DBL_MAX, 0.0, 0};
+    size_t face_list_index;
+
+    if (!mesh->vertex_color.exists) {
+        return range;
+    }
+    for (face_list_index = 0;
+         face_list_index < mesh_material->face_indices.count;
+         ++face_list_index) {
+        uint32_t face_index =
+            mesh_material->face_indices.data[face_list_index];
+        ufbx_face face = mesh->faces.data[face_index];
+        uint32_t vertex_offset;
+
+        for (vertex_offset = 0;
+             vertex_offset < face.num_indices;
+             ++vertex_offset) {
+            uint32_t index = face.index_begin + vertex_offset;
+            double alpha =
+                ufbx_get_vertex_vec4(&mesh->vertex_color, index).w;
+
+            if (alpha < range.minimum) range.minimum = alpha;
+            if (alpha > range.maximum) range.maximum = alpha;
+            range.total += alpha;
+            ++range.samples;
+        }
+    }
+    return range;
 }
 
 static ufbx_string probe_texture_filename(const ufbx_material *material)
@@ -366,6 +407,7 @@ int main(int argc, char **argv)
             int glass = transparent && jpb_IsGlassTexture(base);
             ProbeBounds bounds = {0};
             ProbeBounds material_game_bounds = {0};
+            ProbeAlphaRange alpha_range;
 
             if (mesh_material->num_faces == 0) {
                 continue;
@@ -374,10 +416,12 @@ int main(int argc, char **argv)
                 node, mesh, mesh_material, &bounds,
                 &material_game_bounds,
                 &game_bounds, level_index, reference_space);
+            alpha_range = probe_face_alpha(mesh, mesh_material);
             printf(
                 "  material[%zu] name=%.*s texture=%.*s "
                 "texture_path=%.*s pass=%s "
                 "faces=%zu triangles=%zu "
+                "vertex_alpha=%.6f..%.6f/%.6f/%zu "
                 "bounds=%.6f,%.6f,%.6f..%.6f,%.6f,%.6f "
                 "game_bounds=%.3f,%.3f,%.3f..%.3f,%.3f,%.3f\n",
                 material_index,
@@ -392,6 +436,11 @@ int main(int argc, char **argv)
                 probe_pass_name(transparent, glass),
                 mesh_material->num_faces,
                 mesh_material->num_triangles,
+                alpha_range.samples != 0 ? alpha_range.minimum : 0.0,
+                alpha_range.samples != 0 ? alpha_range.maximum : 0.0,
+                alpha_range.samples != 0
+                    ? alpha_range.total / (double)alpha_range.samples : 0.0,
+                alpha_range.samples,
                 bounds.minX,
                 bounds.minY,
                 bounds.minZ,

@@ -579,14 +579,14 @@ int camera_SetCameraPos(int camera_type)
         target.vz = camera_scaled_average(position0->vz, position1->vz);
         if (camera_type == 5) {
             if (selected0_active) {
-                gpWorld->location.vx = (int32_t)physics0->pos.vx;
-                gpWorld->location.vy = (int32_t)physics0->pos.vy;
-                gpWorld->location.vz = (int32_t)physics0->pos.vz;
+                gpWorld->location.vx = (int32_t)maPhysicsData[0].pos.vx;
+                gpWorld->location.vy = (int32_t)maPhysicsData[0].pos.vy;
+                gpWorld->location.vz = (int32_t)maPhysicsData[0].pos.vz;
             }
             if (selected1_active) {
-                gpWorld->location.vx = (int32_t)physics1->pos.vx;
-                gpWorld->location.vy = (int32_t)physics1->pos.vy;
-                gpWorld->location.vz = (int32_t)physics1->pos.vz;
+                gpWorld->location.vx = (int32_t)maPhysicsData[1].pos.vx;
+                gpWorld->location.vy = (int32_t)maPhysicsData[1].pos.vy;
+                gpWorld->location.vz = (int32_t)maPhysicsData[1].pos.vz;
             }
             target.vx = gpWorld->location.vx;
             target.vy = gpWorld->location.vy;
@@ -1090,13 +1090,13 @@ static int camera_StuffCamera(
             (GameStruct.NumPlayers == 2 ? 0x4e8 : 0x4d0);
         if (obj_gCheckObjectFlag(
                 &player0->playerRoot, 0, UINT32_C(0x20)) == 0 &&
-            (float)maximum_x < physics->pos.vx) {
-            maximum_x = (int32_t)physics->pos.vx;
+            (float)maximum_x < maPhysicsData[0].pos.vx) {
+            maximum_x = (int32_t)maPhysicsData[0].pos.vx;
         }
         if (obj_gCheckObjectFlag(
                 &player1->playerRoot, 0, UINT32_C(0x20)) == 0 &&
-            (float)maximum_x < physics2->pos.vx) {
-            maximum_x = (int32_t)physics2->pos.vx;
+            (float)maximum_x < maPhysicsData[1].pos.vx) {
+            maximum_x = (int32_t)maPhysicsData[1].pos.vx;
         }
         focus_x = camera_wrap_add(maximum_x, 0x29c);
         focus_z = position->vz;

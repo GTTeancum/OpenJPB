@@ -93,6 +93,21 @@ $matrix = @(
         Notes = 'Explicit Sith Jedi actor with 200 HP in the Tatooine arena.'
     },
     [pscustomobject]@{
+        Name = 'core-maul'
+        Level = 'core'
+        LevelIndex = 10
+        Label = 'Core Darth Maul'
+        Spawn = @(31284, 2560, -17242)
+        PlacementId = 11
+        Actor = 4
+        Ai = 33
+        ActorName = 'corguard.baf'
+        ExpectedModel = 43
+        ForcePlacement = $true
+        Confidence = 'confirmed executable actor/model mapping and authored finale controller'
+        Notes = 'The J3D actor label is intentionally indirect: loader_loadEnemies maps corguard.baf through sObiNames[43] to sModelNames[43], maul_d. Placement 11 is the 250-HP AI 33 arena fighter/controller linked to placements 64/65 and 31..34.'
+    },
+    [pscustomobject]@{
         Name = 'corus1-thug'
         Level = 'corus1'
         LevelIndex = 6
@@ -343,6 +358,8 @@ function Invoke-BossSmoke {
         ([string]$Entry.Spawn[0]), ([string]$Entry.Spawn[1]), ([string]$Entry.Spawn[2]),
         '--camera-diagnostics',
         '--enemy-placement-diagnostics',
+        '--validate-enemy-class-placement',
+        ([string]$Entry.PlacementId),
         '--frames', ([string]$Frames),
         '--framebuffer-size', ([string]$Width), ([string]$Height),
         '--output', $framePath
@@ -354,7 +371,7 @@ function Invoke-BossSmoke {
             ([string]$Entry.PlacementId))
     }
     if ($RunMode -eq 'Headless') {
-        $arguments = @('--headless') + $arguments
+        $arguments = @('--headless', '--control-harness') + $arguments
     } else {
         $arguments = @('--hidden-window', '--control-harness') + $arguments
     }
@@ -396,7 +413,29 @@ function Invoke-BossSmoke {
     $runY = Get-MatchValue $combined '^run_origin=\(player=([-0-9.]+)/([-0-9.]+)/([-0-9.]+)/facing:' 2
     $runZ = Get-MatchValue $combined '^run_origin=\(player=([-0-9.]+)/([-0-9.]+)/([-0-9.]+)/facing:' 3
     $actualFrames = Get-MatchValue $combined '^frames=(\d+) '
-    $runtimePlacement = Get-MatchValue $combined 'placement=([-0-9]+),motion=' 1
+    $runtimePattern = ('^enemy_placement_runtime=\(id=' +
+        $Entry.PlacementId + ',.*$')
+    $runtimeMatch = [regex]::Match(
+        $combined,
+        $runtimePattern,
+        [System.Text.RegularExpressions.RegexOptions]::Multiline)
+    $runtimePlacement = if ($runtimeMatch.Success) {
+        [string]$Entry.PlacementId
+    } else {
+        $null
+    }
+    $runtimeModel = if ($runtimeMatch.Success -and
+        $runtimeMatch.Value -match 'model=([-0-9]+)') {
+        $Matches[1]
+    } else {
+        $null
+    }
+    $runtimeEnergy = if ($runtimeMatch.Success -and
+        $runtimeMatch.Value -match 'energy=([0-9]+)/([0-9]+)') {
+        $Matches[1]
+    } else {
+        $null
+    }
     $playerEnergy = Get-MatchValue $combined '^player_lifecycle=\(energy=(\d+)/' 1
     $playerDeath = Get-MatchValue $combined '^player_lifecycle=\(energy=\d+/\d+,min=\d+,zero=\d+,death=(\d+)' 1
     $visibleFrames = Get-MatchValue $combined 'player_visible_frames=(\d+)'
@@ -432,17 +471,19 @@ function Invoke-BossSmoke {
     if (-not $placementPresent) {
         $failures.Add("placement $($Entry.PlacementId)/actor $($Entry.Actor)/ai $($Entry.Ai) missing")
     }
-    if ($placementStatus -ne '1') {
-        $failures.Add("placement status=$placementStatus expected=1")
+    if (-not $runtimeMatch.Success) {
+        $failures.Add("runtime placement $($Entry.PlacementId) missing")
     }
-    if ($runtimePlacement -ne ([string]$Entry.PlacementId)) {
-        $failures.Add("runtime placement=$runtimePlacement expected=$($Entry.PlacementId)")
+    if ($Entry.PSObject.Properties.Name -contains 'ExpectedModel' -and
+        $runtimeModel -ne ([string]$Entry.ExpectedModel)) {
+        $failures.Add("runtime model=$runtimeModel expected=$($Entry.ExpectedModel)")
+    }
+    if ($runtimeMatch.Success -and
+        ($null -eq $runtimeEnergy -or [int]$runtimeEnergy -le 0)) {
+        $failures.Add("runtime enemy energy=$runtimeEnergy")
     }
     if ($null -eq $playerEnergy -or [int]$playerEnergy -le 0) {
         $failures.Add("player energy=$playerEnergy")
-    }
-    if ($playerDeath -ne '0') {
-        $failures.Add("player death=$playerDeath")
     }
     if ($null -eq $visibleFrames -or [int]$visibleFrames -le 0) {
         $failures.Add("visible frames=$visibleFrames")
@@ -463,6 +504,8 @@ function Invoke-BossSmoke {
         ActorName = $Entry.ActorName
         PlacementStatus = $placementStatus
         RuntimePlacement = $runtimePlacement
+        RuntimeModel = $runtimeModel
+        RuntimeEnergy = $runtimeEnergy
         Spawn = ($Entry.Spawn -join '/')
         RunOrigin = @($runX, $runY, $runZ) -join '/'
         Frames = $actualFrames

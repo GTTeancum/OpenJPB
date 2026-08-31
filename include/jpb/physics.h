@@ -96,6 +96,27 @@ typedef struct _collidevars {
 } _collidevars;
 
 /*
+ * Opt-in host diagnostics for an exact CheckCubeBlocking contact. This is
+ * outside the retail ABI and only observes data already selected by the
+ * canonical collision path.
+ */
+typedef struct JPBPhysicsCollisionDiagnostics {
+    uint64_t sequence;
+    int32_t valid;
+    int32_t objectId;
+    int32_t collisionIndex;
+    FVECTOR from;
+    FVECTOR to;
+    FVECTOR movement;
+    FVECTOR resolvedMovement;
+    _movement_packet packet;
+    _collide_info selectedInfo;
+    uintptr_t cube;
+    uintptr_t entry;
+    uintptr_t poly;
+} JPBPhysicsCollisionDiagnostics;
+
+/*
  * Exact matched-PC PDB type 0x125F. Native pointers preserve the PDB layout
  * on x64 and intentionally compact this runtime-only record on 32-bit Xbox.
  */
@@ -230,6 +251,9 @@ int newclosestPoly(
  * variable with the same PDB name in intersec.c.
  */
 _solid *jpb_PhysicsGetWhichSolid(void);
+void jpb_PhysicsSetCollisionDiagnosticsObject(int object_id);
+int jpb_PhysicsGetCollisionDiagnostics(
+    JPBPhysicsCollisionDiagnostics *diagnostics);
 int jpb_PhysicsCheckCubeBlocking(
     playerObject *player,
     FVECTOR *world,

@@ -172,6 +172,8 @@ static int test_geometry_view(void)
     JPBSoftwareDepthBuffer depth_buffer;
     JPBSoftwareRenderStats render_stats;
     _Material source_material = {0};
+    JPBSoftwareTexture source_texture = {0};
+    static const uint32_t white_pixel = UINT32_C(0xffffffff);
     MATRIX view_matrix;
     _animFrame key_frame;
     FVECTOR world_position = {1.0f, 2.0f, 3.0f};
@@ -231,6 +233,13 @@ static int test_geometry_view(void)
     CHECK(jpb_BmdInspect(
               archive, sizeof(archive), &view) == JPB_BMD_OK);
     view.material_handles_relocated = 1;
+    source_texture.pixels = &white_pixel;
+    source_texture.width = 1;
+    source_texture.height = 1;
+    source_texture.stridePixels = 1;
+    source_texture.samplerType = TEXTURESAMPLER_LINEARCLAMP;
+    source_texture.colorOverride = -1;
+    source_material.texture = &source_texture;
     records[1].t.TextureID =
         (uint64_t)(uintptr_t)&source_material;
     CHECK(jpb_BmdGetGeometry(
@@ -505,6 +514,7 @@ static int test_geometry_view(void)
     test_material_flags = JPB_MATERIAL_MODE_TWO_SIDED;
     source_material.flags = JPB_MATERIAL_MODE_TWO_SIDED;
     test_color_override = 100;
+    source_texture.colorOverride = 100;
     CHECK(jpb_SoftwareClearDepthBuffer(&depth_buffer) == 1);
     memset(pixels, 0, sizeof(pixels));
     memset(&render_stats, 0, sizeof(render_stats));
@@ -539,6 +549,7 @@ static int test_geometry_view(void)
     test_material_flags = JPB_MATERIAL_MODE_BACKFACE_REJECT;
     source_material.flags = JPB_MATERIAL_MODE_BACKFACE_REJECT;
     test_color_override = -1;
+    source_texture.colorOverride = -1;
 
     /*
      * The D3D perspective stage clips a primitive that straddles camera

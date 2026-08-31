@@ -9,21 +9,29 @@ forced and verified with `placementStatus=1` and `runtimePlacement=<target id>`.
 
 ## Core Darth Maul
 
-Status: pending discovery; not promoted.
+Status: authoritative anchor found; promoted to boss smoke.
 
 - Retail stream evidence exists: `10_CoreMaulFight1.wav` and
   `10_CoreMaulFight2.wav` are present in the recovered stream table.
-- Quickload `core` initializes level `10`, but the camera director starts on
-  placement `1`, actor `4`, AI `36`, actor `corguard.baf`; the loaded JPX
-  placement dump does not expose a Maul or `sithjedi.baf` actor.
-- Recovered code points to special handling for model `43` (`maul_d_model`) in
-  damage/blocking behavior, which suggests the final duel may be staged through
-  player/model state rather than a normal enemy placement.
-- Explicit two-player Maul-D probing selected models `0/43` and loaded P2 with
-  `energy:200/200`, but the 180-frame validation reported
-  `second_player=(ready=1,triangles=823,pixels=0)` and failed because the
-  second selected character was not posed/rendered visibly. That is useful
-  load evidence, but not visual boss-smoke proof yet.
+- The earlier probe confused the J3D actor-path label with the loaded model.
+  Direct executable reconstruction of `loader_loadEnemies` shows that
+  `corguard.baf` matches `sObiNames[43]`, then loads `sModelNames[43]`,
+  `maul_d`. Core actor slot `4` is therefore Darth Maul model `43`.
+- Placement `11` is the authoritative final-arena anchor: actor `4`, AI `33`,
+  owner `2`, 250 HP, position `31284/2560/-17242`.
+- A 1,800-frame process-local probe resolved placement `11` as live object `2`,
+  model `43`, energy `250/250`, with authored AI and rendered geometry. The
+  smoke matrix now asserts the placement and the loader-resolved model instead
+  of looking for a literal `sithjedi.baf` label.
+- Direct comparison with the installed executable found a reconstruction field
+  error in `loader_FinalizeEnemyPlayer`: retail writes model exclusion bit
+  `0x200` at player offset `+0x144` (`forceFlags`), while the reconstructed
+  source wrote it at `+0x140` (`pFlags`). That made listed models, including
+  both Mauls, fail the exact `player_DoCollisions` `0x602` mask. The corrected
+  loader preserves `pFlags` and writes the canonical field.
+- After the field correction, a process-local canonical-contact run against
+  placement `11` records model `43`, attack contact, one processed damage event,
+  and energy changing from `250` to `238`.
 
 Probe logs:
 
@@ -31,9 +39,12 @@ Probe logs:
 - `out/boss-candidate-probes/core-maul-d-p2.console.txt`
 - `out/boss-candidate-probes/core-maul-d-p2-180.console.txt`
 
-Next credible step: find the original Core duel trigger or add a narrowly
-scoped debug spawn/pose hook for the second player, then require visible P2
-pixels before considering a Core Maul smoke row.
+Lifecycle proof is complete. A bounded canonical-contact run drives placement
+`11` from one HP through its death animation to terminal placement status `2`
+with a cleared handle. Direct `core.j3d` inspection also corrects an earlier
+assumption: AI `33` contains no extension-spawn opcode and placement `11` has
+zero delete-links. Its `enemyExt[0]=64` is AI data, while later AI-47 Maul
+placements `31..34` are independent range-activated encounter stages.
 
 ## Palace Offscreen Bosses
 

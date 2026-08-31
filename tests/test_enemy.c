@@ -15,6 +15,7 @@
 #include "jpb/menu.h"
 #include "jpb/model.h"
 #include "jpb/physics.h"
+#include "jpb/platform.h"
 #include "jpb/player.h"
 #include "jpb/scene.h"
 #include "jpb/sprite.h"
@@ -25,6 +26,20 @@
 
 static int failures;
 static uint32_t test_pose_words[3];
+
+static int observe_achievement_complete(int id, void *user_data)
+{
+    (void)id;
+    (void)user_data;
+    return 1;
+}
+
+static int observe_achievement_incomplete(int id, void *user_data)
+{
+    (void)id;
+    (void)user_data;
+    return 0;
+}
 
 static void init_test_animations(void)
 {
@@ -893,6 +908,8 @@ static void test_authored_opcode_traversal_boundary(void)
     sceneObject vehicle_scene;
     physicsObject vehicle_physics;
     wsl_ENEMY status_enemy;
+    wsl_BAP_PLACEMENT palace_player_placement;
+    wsl_BAP_PLACEMENT *palace_placements[211];
     BAP_AI *world_ais[1];
     UDATA variables[3];
     uint16_t unsupported = UINT16_MAX;
@@ -920,6 +937,10 @@ static void test_authored_opcode_traversal_boundary(void)
     memset(&vehicle_scene, 0, sizeof(vehicle_scene));
     memset(&vehicle_physics, 0, sizeof(vehicle_physics));
     memset(&status_enemy, 0, sizeof(status_enemy));
+    memset(&palace_player_placement, 0,
+           sizeof(palace_player_placement));
+    memset(palace_placements, 0,
+           sizeof(palace_placements));
     placements[0] = &placement;
     memset(variables, 0, sizeof(variables));
     for (node = 0; node < node_count; ++node) {
@@ -1599,6 +1620,27 @@ static void test_authored_opcode_traversal_boundary(void)
     CHECK(status_enemy.exit_flag == 1);
     CHECK((gaPlayerData[0].pFlags & 0x10U) == 0);
     CHECK(target_motions[2].Lock == 0x19);
+
+    placement.aiDf.enemyExt[0] = 209;
+    palace_player_placement.aiDf.ownerType = 4;
+    palace_placements[209] = &palace_player_placement;
+    world.apEnemy = palace_placements;
+    world.nEnemy = 211;
+    gaPlayerData[0].pEnemy = &status_enemy;
+    status_enemy.exit_flag = 0;
+    GameStruct.CurrentLevel = 5;
+    GameStruct.checkpoint[5] = 6;
+    enemy.currAIMode = 0;
+    CHECK(jpb_enemy_ParseOpcodes(
+              &enemy, &unsupported) ==
+          JPB_ENEMY_OPCODE_PARSE_COMPLETE);
+    CHECK(gaPlayerData[0].pEnemy == &status_enemy);
+    CHECK(status_enemy.exit_flag == 0);
+    gaPlayerData[0].pEnemy = NULL;
+    GameStruct.checkpoint[5] = 0;
+    world.apEnemy = placements;
+    world.nEnemy = 1;
+    placement.aiDf.enemyExt[0] = 0;
     placement.aiDf.ownerType = 0;
     nodes[3].opcode = 0x606;
     world.player0 = &player;
@@ -2078,6 +2120,10 @@ static void test_active_enemy_frame_owner(void)
 
 static void test_active_enemy_frame_globals(void)
 {
+    const JPBPlatformAchievementHooks achievement_hooks = {
+        observe_achievement_complete,
+        observe_achievement_incomplete
+    };
     EnemyFixture debug_enemy;
     WorldData world;
     playerObject player0;
@@ -2126,6 +2172,7 @@ static void test_active_enemy_frame_globals(void)
     nextLevel = 0;
     pLatestDebugEnemy = &debug_enemy.enemy;
     pDebugEnemy = NULL;
+    jpb_PlatformSetAchievementHooks(&achievement_hooks, NULL);
 
     CHECK(
         jpb_enemy_ProcessActiveFrame(
@@ -2169,6 +2216,7 @@ static void test_active_enemy_frame_globals(void)
     timeAdj = old_time_adjustment;
     pLatestDebugEnemy = NULL;
     pDebugEnemy = NULL;
+    jpb_PlatformSetAchievementHooks(NULL, NULL);
     nextLevel = 0;
     gpWorld = NULL;
 }

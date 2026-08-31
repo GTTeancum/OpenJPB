@@ -1,4 +1,4 @@
-/* Diagnostic host for exercising real WinMM output without a game window. */
+/* Diagnostic host for exercising real SDL_mixer output without a game window. */
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -7,7 +7,10 @@
 #include "jpb/game.h"
 #include "jpb/level_world.h"
 #include "jpb/pc_audio_win32.h"
+#include "jpb/resources.h"
 #include "jpb/sound.h"
+
+#include "pc_log_win32.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -32,6 +35,8 @@ int main(int argc, char **argv)
     int value;
     int index;
     ULONGLONG start;
+    char base_path[1024];
+    int parent;
 
     if (argc < 5) {
         print_usage(argv[0]);
@@ -62,6 +67,26 @@ int main(int argc, char **argv)
         print_usage(argv[0]);
         return 2;
     }
+    jpb_PCLogStart(argc, argv);
+    if (strlen(argv[1]) >= sizeof(base_path)) {
+        return 2;
+    }
+    strcpy(base_path, argv[1]);
+    for (parent = 0; parent < 5; ++parent) {
+        char *slash = strrchr(base_path, '\\');
+        char *forward = strrchr(base_path, '/');
+
+        if (forward != NULL && (slash == NULL || forward > slash)) {
+            slash = forward;
+        }
+        if (slash == NULL) {
+            return 2;
+        }
+        *slash = '\0';
+    }
+    if (!jpb_ResourceSetBasePath(base_path)) {
+        return 2;
+    }
     game_setDefaultOptions();
     audio = jpb_PCAudioCreate(
         argv[1],
@@ -74,8 +99,8 @@ int main(int argc, char **argv)
         return 3;
     }
     if (mode == 0) {
-        sound_handle = sound_Play(NULL, value, argv[5], 0);
-        if (sound_handle == 0) {
+        sound_handle = sound_playSfx(NULL, value, argv[5], 0);
+        if (sound_handle == UINT16_MAX) {
             fputs("could not open or play SFX WAV\n", stderr);
             jpb_PCAudioDestroy(audio);
             return 4;
@@ -98,11 +123,12 @@ int main(int argc, char **argv)
         jpb_PCAudioUpdate(audio);
         Sleep(10);
     }
-    if (sound_handle != 0) {
+    if (mode == 0 && sound_handle != UINT16_MAX) {
         sound_StopSound(sound_handle);
     } else {
         stopXA();
     }
     jpb_PCAudioDestroy(audio);
+    jpb_PCLogStop(0);
     return 0;
 }

@@ -4820,6 +4820,12 @@ _Material *_LoadTexture(
         &width,
         &height);
     if (texture == nullptr) {
+        std::fprintf(
+            stderr,
+            "texture_fallback=(requested=%s,platform=%s,level=%d)\n",
+            resolvedFilename,
+            platformFilename.c_str(),
+            static_cast<int>(static_cast<std::int8_t>(LevelSelect)));
         texture = jpb_TextureLoadPlatformResource(
             "../../../res/default\\o_default.tga",
             static_cast<unsigned>(option & UINT32_C(0xff)),

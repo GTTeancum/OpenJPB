@@ -513,11 +513,51 @@ size_t jpb_LoaderLoadPowerupModels(void)
     return loaded;
 }
 
-static int loader_FinalizeEnemyPlayer(
-    playerObject *player, wsl_ENEMY *pEnemy, int modelID)
+static void loader_ApplyEnemyModelSpecials(
+    playerObject *player, Motion *motions, int modelID)
 {
     static const uint64_t player_flag_model_mask =
         UINT64_C(0x10040000200);
+
+    /* Retail writes these model bits at player +0x144 (forceFlags), not the
+     * adjacent pFlags field at +0x140. */
+    switch (modelID) {
+    case 9:
+        motions[86].FunctPtr = 0x18;
+        player->forceFlags |= UINT32_C(0x200);
+        break;
+    case 0x15:
+        motions[95].FunctPtr = 0x0b;
+        motions[96].FunctPtr = 0x0b;
+        motions[97].FunctPtr = 0x0b;
+        motions[114].FunctPtr = 0x0b;
+        break;
+    case 0x22:
+        motions[76].FunctPtr = 0x19;
+        player->forceFlags |= UINT32_C(0x200);
+        break;
+    case 0x2b:
+    case 0x2f:
+    case 0x33:
+    case 0x4d:
+    case 0x6a:
+        player->forceFlags |= UINT32_C(0x200);
+        break;
+    case 0x38:
+        motions[76].FunctPtr = 0x19;
+        break;
+    default:
+        if (modelID < 0x29 &&
+            ((player_flag_model_mask >> modelID) & UINT64_C(1)) != 0) {
+            player->forceFlags |= UINT32_C(0x200);
+        }
+        break;
+    }
+}
+
+static int loader_FinalizeEnemyPlayer(
+    playerObject *player, wsl_ENEMY *pEnemy, int modelID)
+{
     wsl_BAP_PLACEMENT *pPlace = pEnemy->pPlace;
     sceneObject *scene = (sceneObject *)player->playerRoot.pParent;
     physicsObject *physics = (physicsObject *)scene->pPhysics;
@@ -582,38 +622,7 @@ static int loader_FinalizeEnemyPlayer(
 
     motions = player->paMotions;
     motions[2].Lock = motions[1].Lock;
-    switch (modelID) {
-    case 9:
-        motions[86].FunctPtr = 0x18;
-        player->pFlags |= UINT32_C(0x200);
-        break;
-    case 0x15:
-        motions[95].FunctPtr = 0x0b;
-        motions[96].FunctPtr = 0x0b;
-        motions[97].FunctPtr = 0x0b;
-        motions[114].FunctPtr = 0x0b;
-        break;
-    case 0x22:
-        motions[76].FunctPtr = 0x19;
-        player->pFlags |= UINT32_C(0x200);
-        break;
-    case 0x2b:
-    case 0x2f:
-    case 0x33:
-    case 0x4d:
-    case 0x6a:
-        player->pFlags |= UINT32_C(0x200);
-        break;
-    case 0x38:
-        motions[76].FunctPtr = 0x19;
-        break;
-    default:
-        if (modelID < 0x29 &&
-            ((player_flag_model_mask >> modelID) & UINT64_C(1)) != 0) {
-            player->pFlags |= UINT32_C(0x200);
-        }
-        break;
-    }
+    loader_ApplyEnemyModelSpecials(player, motions, modelID);
     (void)ai_ValidateData(player);
     return player->playerRoot.objectID;
 }
@@ -623,6 +632,12 @@ int jpb_LoaderFinalizeEnemyForTest(wsl_ENEMY *pEnemy)
 {
     return loader_FinalizeEnemyPlayer(
         pEnemy->pPlayer, pEnemy, pEnemy->pPlayer->playerID);
+}
+
+void jpb_LoaderApplyEnemyModelSpecialsForTest(
+    playerObject *player, Motion *motions, int model_id)
+{
+    loader_ApplyEnemyModelSpecials(player, motions, model_id);
 }
 #endif
 

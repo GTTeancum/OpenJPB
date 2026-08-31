@@ -469,20 +469,23 @@ static int test_gameplay_camera_owner(void)
     }
 
     {
+        physicsObject saved_street_physics[2] = {
+            maPhysicsData[0], maPhysicsData[1]
+        };
+
         memset(dolly, 0, sizeof(*dolly));
         GameStruct.NumPlayers = 1;
         LevelSelect = 5;
         gGlobalFrameRate = 0;
         fixture.players[1].playerRoot.objectID = -1;
-        fixture.physics[0].vpos.vx = 100;
-        fixture.physics[0].vpos.vy = 200;
-        fixture.physics[0].vpos.vz = 300;
-        fixture.physics[0].pos.vx = 100.0f;
-        fixture.physics[0].pos.vy = 200.0f;
-        fixture.physics[0].pos.vz = 300.0f;
-        fixture.physics[1].pos.vx = 9000.0f;
-        fixture.physics[1].pos.vy = 9999.0f;
-        fixture.physics[1].pos.vz = 7777.0f;
+        fixture.physics[0].pos.vx = -20000.0f;
+        fixture.physics[1].pos.vx = -19000.0f;
+        maPhysicsData[0].pos.vx = 100.0f;
+        maPhysicsData[0].pos.vy = 200.0f;
+        maPhysicsData[0].pos.vz = 300.0f;
+        maPhysicsData[1].pos.vx = 9000.0f;
+        maPhysicsData[1].pos.vy = 9999.0f;
+        maPhysicsData[1].pos.vz = 7777.0f;
 
         camera_SetCurrentCameraType(5);
         CHECK(camera_SetCameraPos(5) == 1);
@@ -492,6 +495,8 @@ static int test_gameplay_camera_owner(void)
         CHECK(fixture.world.location.vx == 100);
         CHECK(fixture.world.location.vy == 200);
         CHECK(fixture.world.location.vz == 300);
+        maPhysicsData[0] = saved_street_physics[0];
+        maPhysicsData[1] = saved_street_physics[1];
     }
 
     {
@@ -580,6 +585,11 @@ static int test_camera_dolly_comes_from_collision_cube(void)
     int32_t *saved_leveldata = leveldata;
     gamestruct saved_game = GameStruct;
     char saved_level = LevelSelect;
+    physicsObject saved_street_physics[2] = {
+        maPhysicsData[0], maPhysicsData[1]
+    };
+    int camera_result;
+    int selected_dolly;
 
     CHECK(storage != NULL);
     camera_gameplay_fixture_init(&fixture);
@@ -614,6 +624,8 @@ static int test_camera_dolly_comes_from_collision_cube(void)
     fixture.physics[0].pos.vz = 128.0f;
     fixture.physics[0].validairground = 256.0f;
     fixture.physics[1] = fixture.physics[0];
+    maPhysicsData[0] = fixture.physics[0];
+    maPhysicsData[1] = fixture.physics[1];
     fixture.players[1].playerRoot.objectID = -1;
     memset(&gCamera, 0, sizeof(gCamera));
     gCamera.viewType = JPB_CAMERA_VIEW_ABSOLUTE_FOCUS;
@@ -621,8 +633,12 @@ static int test_camera_dolly_comes_from_collision_cube(void)
     newcameraflag = 1;
 
     camera_SetCurrentCameraType(5);
-    CHECK(camera_SetCameraPos(5) == 1);
-    CHECK(fixture.world.currentDolly == CUBE_CAMERA);
+    camera_result = camera_SetCameraPos(5);
+    selected_dolly = fixture.world.currentDolly;
+    maPhysicsData[0] = saved_street_physics[0];
+    maPhysicsData[1] = saved_street_physics[1];
+    CHECK(camera_result == 1);
+    CHECK(selected_dolly == CUBE_CAMERA);
 
     gpWorld = saved_world;
     leveldata = saved_leveldata;

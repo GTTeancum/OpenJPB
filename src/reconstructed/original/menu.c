@@ -59,6 +59,9 @@ static void *jpb_menu_p1_character_select_draw_user_data;
 static JPBMenuP2CharacterSelectDrawHook
     jpb_menu_p2_character_select_draw_hook;
 static void *jpb_menu_p2_character_select_draw_user_data;
+static JPBMenuSpecialMessageHook
+    jpb_menu_special_message_hook;
+static void *jpb_menu_special_message_user_data;
 static JPBMenuPlatformHooks jpb_menu_platform_hooks;
 static void *jpb_menu_platform_user_data;
 static uint8_t jpb_menu_load_screen_active;
@@ -164,6 +167,14 @@ void jpb_MenuSetP2CharacterSelectDrawHook(
 {
     jpb_menu_p2_character_select_draw_hook = hook;
     jpb_menu_p2_character_select_draw_user_data = user_data;
+}
+
+void jpb_MenuSetSpecialMessageHook(
+    JPBMenuSpecialMessageHook hook,
+    void *user_data)
+{
+    jpb_menu_special_message_hook = hook;
+    jpb_menu_special_message_user_data = user_data;
 }
 
 void jpb_MenuSetPlatformHooks(
@@ -5197,6 +5208,19 @@ void menu_mainLoop(void)
 
     menuVars.menuModeSP &= 7u;
     menu_readControl();
+    /*
+     * Retail RVA 0xCB1FF routes every non-menu gameplay frame through the
+     * pause/abort owner, then returns without interpreting the menu stack.
+     */
+    if (GameStruct.inMenuFlag == 0) {
+        if (GameStruct.CurrentLevel == 0 &&
+            GameStruct.gameMode == 6 && totalframes < 16) {
+            maskPadBits(0);
+            maskPadBits(1);
+        }
+        menu_checkAbortOrPause();
+        return;
+    }
     if (GameStruct.inMenuFlag != 0 && GameStruct.gameMode == 0) {
         menu_startAcceptDecline(
             JPB_PAD_START, JPB_PAD_COMBO_SOUTH);
@@ -7206,6 +7230,13 @@ void menu_specialMess(uint8_t *mess)
             : UINT16_C(0x2b);
     menuVars.mmSelect1[stack] = 0;
     menuVars.mmSelect2[stack] = 0;
+    if (jpb_menu_special_message_hook != NULL) {
+        jpb_menu_special_message_hook(
+            mess,
+            UINT16_C(0x41),
+            menuVars.menuMode[stack],
+            jpb_menu_special_message_user_data);
+    }
 }
 
 /* 0xCF180, 49 bytes, global, 2 named locals

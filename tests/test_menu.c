@@ -1248,6 +1248,7 @@ static int test_audio_menu_sliders(void)
     menuVars.menuModeSP = 0;
     menuVars.menuMode[0] = 0x10;
     GameStruct.gameMode = 0;
+    GameStruct.inMenuFlag = 1;
     menu_mainLoop();
     CHECK(trace.calls >= 6);
     first_slider = trace.calls - 6;
@@ -1679,6 +1680,7 @@ static int test_character_select_reconnect_presentation(void)
     memset(&text_trace, 0, sizeof(text_trace));
     menuVars.menuModeSP = 0;
     menuVars.menuMode[0] = 0;
+    GameStruct.inMenuFlag = 1;
     menu_mainLoop();
     CHECK(text_trace.calls == 1);
     CHECK(texture_trace.calls == 1);
@@ -2511,6 +2513,7 @@ static int test_main_loop_dispatch(void)
     menuVars.menuMode[0] = 0;
     m_canShowRegisterGame = 1;
     GameStruct.continueAble = 0;
+    GameStruct.inMenuFlag = 1;
     menu_mainLoop();
     CHECK(menuVars.mmSelectPtr == &mainMdef[10]);
 
@@ -2704,6 +2707,7 @@ static int test_demo_movie_owner(void)
     OptionStruct.ScreenHeight = 540;
     scaleAdjustmentMM = 0.5f;
     lastUsedInputType = 0;
+    GameStruct.inMenuFlag = 1;
     jpb_TextSetDrawHook(capture_menu_text, &text_trace);
     menuVars.menuModeSP = 0;
     menuVars.menuMode[0] = 1;
@@ -2721,6 +2725,7 @@ static int test_demo_movie_owner(void)
     OptionStruct.ScreenHeight = 540;
     scaleAdjustmentMM = 0.5f;
     lastUsedInputType = 0;
+    GameStruct.inMenuFlag = 1;
     menuVars.menuModeSP = 0;
     menuVars.menuMode[0] = 1;
     OptionStruct.EULAaccepted = 1;
@@ -3042,6 +3047,7 @@ static int test_eula_presentation_and_acceptance(void)
     menuVars.menuModeSP = 0u;
     menuVars.menuMode[0] = 0x9fu;
     menuVars.pad[0] = 0u;
+    GameStruct.inMenuFlag = 1;
     input_trace.pads[0] = 0u;
     menu_mainLoop();
     CHECK(texture_trace.calls >= 3);
@@ -3172,6 +3178,7 @@ static int test_load_screen_presentation(void)
     menuVars.artloadPos = -32;
     menuVars.menuModeSP = 0u;
     menuVars.menuMode[0] = 0x66u;
+    GameStruct.inMenuFlag = 1;
     jpb_WHookSetClearWindowHook(
         capture_clear_window, &clear_calls);
     menu_mainLoop();
@@ -3441,6 +3448,7 @@ static int test_memory_menu_presentation(void)
 
     memset(&trace, 0, sizeof(trace));
     generateAllText(0);
+    GameStruct.inMenuFlag = 1;
     menuVars.menuModeSP = 0u;
     menuVars.menuMode[0] = 0x31u;
     menu_mainLoop();
@@ -3472,6 +3480,7 @@ static int test_recovered_main_loop_state_routes(void)
     reset_menu_state();
     menuVars.menuMode[0] = 0x40u;
     GameStruct.gameMode = 2;
+    GameStruct.inMenuFlag = 1;
     GameStruct.letterboxFlag = 0;
     GameStruct.letterboxFlag2 = 1;
     menu_mainLoop();
@@ -3482,6 +3491,7 @@ static int test_recovered_main_loop_state_routes(void)
     reset_menu_state();
     menuVars.menuMode[0] = 0x41u;
     GameStruct.gameMode = 2;
+    GameStruct.inMenuFlag = 1;
     GameStruct.GameState = UINT32_MAX;
     menu_mainLoop();
     CHECK((GameStruct.GameState & UINT32_C(0x02000000)) == 0u);
@@ -3491,6 +3501,7 @@ static int test_recovered_main_loop_state_routes(void)
     reset_menu_state();
     menuVars.menuMode[0] = 0x32u;
     GameStruct.gameMode = 6;
+    GameStruct.inMenuFlag = 1;
     menu_mainLoop();
     CHECK(menuVars.menuMode[0] == 0u);
     return 0;
@@ -3517,6 +3528,7 @@ static int test_extended_main_loop_state_routes(void)
     jpb_MenuSetPlatformHooks(&hooks, &platform_trace);
     jpb_TextSetDrawHook(capture_menu_text, &text_trace);
     generateAllText(0);
+    GameStruct.inMenuFlag = 1;
     scaleAdjustmentMM = 1.0f;
     GameStruct.xaNum = UINT16_C(0x1234);
     GameStruct.xaFlag = UINT16_C(0x5678);
@@ -3687,6 +3699,7 @@ static int test_title_load_presentation(void)
     memset(&trace, 0, sizeof(trace));
     menuVars.menuModeSP = 0u;
     menuVars.menuMode[0] = 0x26u;
+    GameStruct.inMenuFlag = 1;
     jpb_WHookSetClearWindowHook(
         capture_clear_window, &clear_calls);
     menu_mainLoop();
@@ -3714,6 +3727,7 @@ static int test_recovered_definition_routes(void)
 
     reset_menu_state();
     generateAllText(0);
+    GameStruct.inMenuFlag = 1;
     jpb_TextSetDrawHook(capture_menu_text, &trace);
     CHECK(memcarddebugMdef[39] == 0u);
     CHECK(movieMenuMdef[22] == 0x14u);
@@ -4524,6 +4538,21 @@ static int test_abort_pause_and_overlay(void)
     MenuRumbleTrace rumble_trace;
     MenuAudioControlTrace xa_trace;
     MenuSoundControlTrace sound_trace;
+    MenuInputTrace input_trace;
+
+    reset_menu_state();
+    memset(&input_trace, 0, sizeof(input_trace));
+    LevelSelect = 2;
+    memset(padMaskBits, 0xff, sizeof(padMaskBits));
+    input_trace.pads[0] = JPB_PAD_START;
+    jpb_InputSetProvider(read_menu_pad, &input_trace);
+    menu_mainLoop();
+    CHECK((GameStruct.GameState & UINT32_C(0x02000000)) != 0);
+    CHECK(GameStruct.inMenuFlag == 1);
+    CHECK(menuVars.menuModeSP == 2u);
+    CHECK(menuVars.menuMode[1] == 0x40u);
+    CHECK(menuVars.menuMode[2] == 0x14u);
+    jpb_InputSetProvider(NULL, NULL);
 
     reset_menu_state();
     LevelSelect = 1;
@@ -6544,6 +6573,7 @@ static int test_score_screen_main_dispatch(void)
     scaleAdjustmentMM = 1.0f;
     allText[237] = "PLAYER ONE";
     GameStruct.NumPlayers = 1;
+    GameStruct.inMenuFlag = 1;
     menuVars.menuModeSP = 0;
     menuVars.menuMode[0] = 0x27;
     menuVars.scoreoLevel = 1;
@@ -7016,6 +7046,7 @@ static int test_p1_character_selection_state(void)
         capture_p1_character_select, &draw_trace);
     jpb_InputSetProvider(read_menu_pad, &input_trace);
     GameStruct.NumPlayers = 1;
+    GameStruct.inMenuFlag = 1;
     menuVars.menuModeSP = 0;
     menuVars.menuMode[0] = 0x0e;
     menu_mainLoop();
@@ -7032,6 +7063,7 @@ static int test_p1_character_selection_state(void)
     memset(&input_trace, 0, sizeof(input_trace));
     jpb_InputSetProvider(read_menu_pad, &input_trace);
     GameStruct.NumPlayers = 1;
+    GameStruct.inMenuFlag = 1;
     newMenu_currentModelSelectBaseP1 = obi_wan_model;
     menuVars.menuModeSP = 0;
     menuVars.menuMode[0] = 0x0e;
@@ -7134,6 +7166,7 @@ static int test_p2_character_selection_state(void)
         capture_p2_character_select, &draw_trace);
     jpb_InputSetProvider(read_menu_pad, &input_trace);
     GameStruct.NumPlayers = 2;
+    GameStruct.inMenuFlag = 1;
     menuVars.menuModeSP = 0;
     menuVars.menuMode[0] = 0x0e;
     menu_mainLoop();
@@ -7157,6 +7190,7 @@ static int test_p2_character_selection_state(void)
         capture_p2_character_select, &draw_trace);
     jpb_InputSetProvider(read_menu_pad, &input_trace);
     GameStruct.NumPlayers = 1;
+    GameStruct.inMenuFlag = 1;
     menuVars.menuMode[0] = 0x0d;
     menu_mainLoop();
     menu_mainLoop();
@@ -7863,6 +7897,7 @@ static int test_jedi_combo_presentation(void)
     memset(&trace, 0, sizeof(trace));
     menuVars.menuModeSP = 0u;
     menuVars.menuMode[0] = 0x11u;
+    GameStruct.inMenuFlag = 1;
     tempPlayersVs = 0;
     p1Disconnected = 0;
     p2Disconnected = 0;

@@ -22,7 +22,14 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 #define CHECK(condition)                                                     \
     do {                                                                     \
@@ -2632,6 +2639,85 @@ static int test_check_cube_blocking_dynamic_contact(void)
     return 0;
 }
 
+static int test_check_cube_blocking_clear_wall_slide(void)
+{
+    int32_t map_storage[8] = {0};
+    int32_t *old_leveldata = leveldata;
+    int old_mapyend = mapyend;
+    int old_numsolids = numsolids;
+    sceneObject player_scene;
+    sceneObject solid_scene;
+    physicsObject physics;
+    playerObject player;
+    Mnode node;
+    _solid solid;
+    geomData geometry;
+    _svector vertices[4];
+    _svector normals[1];
+    int16_t indices[4] = {0, 1, 2, 3};
+    FVECTOR world = {-5.0f, 11.0f, 0.0f};
+    FVECTOR dir = {-10.0f, 10.0f, 0.0f};
+    FVECTOR normal = {-0.70710677f, 0.70710677f, 0.0f};
+    float ground = -32768.0f;
+    int index_id;
+
+    memset(&player_scene, 0, sizeof(player_scene));
+    memset(&solid_scene, 0, sizeof(solid_scene));
+    memset(&physics, 0, sizeof(physics));
+    memset(&player, 0, sizeof(player));
+    memset(&node, 0, sizeof(node));
+    memset(&solid, 0, sizeof(solid));
+    memset(&geometry, 0, sizeof(geometry));
+    memset(vertices, 0, sizeof(vertices));
+    memset(normals, 0, sizeof(normals));
+    physics_gInitObjects(0);
+    pointerRegistry_Reset();
+
+    player_scene.pPhysics = &physics.physicsRoot;
+    player.playerRoot.pParent = &player_scene.sceneRoot;
+    player.pFlags = 1;
+    physics.physicsRoot.objectID = 2;
+    physics.radius = 1;
+    physics.movemode = MOVE_HOVER;
+    physics.pos = (FVECTOR){5.0f, 1.0f, 0.0f};
+    physics.mov = dir;
+    vertices[0] = (_svector){0, -20, -20};
+    vertices[1] = (_svector){0, -20, 20};
+    vertices[2] = (_svector){0, 20, 20};
+    vertices[3] = (_svector){0, 20, -20};
+    normals[0].vx = 4096;
+    index_id = addPtr(indices, 4);
+    CHECK(index_id >= 0);
+    geometry.numFaces = 1;
+    geometry.pIndex = index_id;
+    solid.flags = 1U << 2;
+    solid.modelnode = &node;
+    solid.geometry = &geometry;
+    solid.coords = vertices;
+    solid.normals = normals;
+    solid_scene.pScene = &solid_scene.sceneRoot;
+    maPhysicsData[0].physicsRoot.objectID = 0;
+    maPhysicsData[0].physicsRoot.pParent = &solid_scene.sceneRoot;
+    maPhysicsData[0].solid = &solid;
+    numsolids = 1;
+    mapyend = 0;
+    leveldata = map_storage + 4;
+    leveldata[-2] = 0;
+
+    /* Retail keeps the candidate endpoint when the post-contact sweep is
+     * clear; stopping at the first contact leaves world.vy near 5 instead. */
+    CHECK(jpb_PhysicsCheckCubeBlocking(
+              &player, &world, &dir, &normal, 14.1421356f, &ground) == 1);
+    CHECK(world.vx > 0.0f);
+    CHECK(world.vy > 6.5f);
+
+    leveldata = old_leveldata;
+    pointerRegistry_Reset();
+    mapyend = old_mapyend;
+    numsolids = old_numsolids;
+    return 0;
+}
+
 static int map_sound_calls;
 static VECTOR map_sound_position;
 static int map_sound_bank;
@@ -3470,6 +3556,30 @@ static int test_character_blocking_kernel(void)
 
     memset(&p0.mov, 0, sizeof(p0.mov));
     memset(&p1.mov, 0, sizeof(p1.mov));
+    p0.flags = UINT32_C(0x2000);
+    p1.flags = UINT32_C(0x2000);
+    p0.mass = 10;
+    p1.mass = 30;
+    p0.radius = 10;
+    p1.radius = 10;
+    p1.pos.vx = 5.0f;
+    p1.pos.vy = 5.0f;
+    CHECK(jpb_PhysicsCharBlockingState(
+              &player0,
+              &p0,
+              &p1,
+              &testpos0,
+              &range) ==
+          JPB_PHYSICS_RESULT_OK);
+    CHECK(fabsf(range - sqrtf(50.0f)) < 0.00001f);
+    CHECK(fabsf(p0.mov.vx - -7.9549513f) < 0.0001f);
+    CHECK(fabsf(p0.mov.vy - 7.9549513f) < 0.0001f);
+    CHECK(fabsf(p1.mov.vx - 2.6516504f) < 0.0001f);
+    CHECK(fabsf(p1.mov.vy - 2.6516504f) < 0.0001f);
+
+    memset(&p0.mov, 0, sizeof(p0.mov));
+    memset(&p1.mov, 0, sizeof(p1.mov));
+    p1.pos.vy = 0.0f;
     p0.flags = 0;
     p1.flags = 0;
     p0.mass = INT16_MAX;
@@ -3778,7 +3888,268 @@ static int test_range_cache_hit_and_miss(void)
     return 0;
 }
 
-int main(void)
+#if defined(_WIN32)
+static uint32_t physics_retail_random_state = UINT32_C(0x50485953);
+
+static uint32_t physics_retail_random(void)
+{
+    physics_retail_random_state =
+        physics_retail_random_state * UINT32_C(1664525) +
+        UINT32_C(1013904223);
+    return physics_retail_random_state;
+}
+
+static float physics_retail_random_float(float low, float high)
+{
+    float unit =
+        (float)(physics_retail_random() & UINT32_C(0x00ffffff)) /
+        16777215.0f;
+
+    return low + (high - low) * unit;
+}
+
+static int test_retail_sphere_polygon_differential(const char *path)
+{
+    typedef int (*RetailSphereAndPoly)(void);
+    typedef float (*RetailVectorNormalize)(FVECTOR *);
+    enum {
+        RETAIL_VECTOR_NORMALIZE_RVA = 0x9A470,
+        RETAIL_SPHERE_AND_POLY_RVA = 0xE22B0,
+        RETAIL_CVARS_RVA = 0x951AA0,
+        RETAIL_MVP_RVA = 0x954320
+    };
+    HMODULE image = LoadLibraryExA(
+        path, NULL, DONT_RESOLVE_DLL_REFERENCES);
+    uint8_t *base;
+    RetailVectorNormalize retail_vector_normalize;
+    RetailSphereAndPoly retail_sphere_and_poly;
+    _movement_packet *retail_mvp;
+    _collidevars *retail_cvars;
+    int iteration;
+
+    CHECK(image != NULL);
+    base = (uint8_t *)(void *)image;
+    retail_vector_normalize = (RetailVectorNormalize)(void *)(
+        base + RETAIL_VECTOR_NORMALIZE_RVA);
+    retail_sphere_and_poly = (RetailSphereAndPoly)(void *)(
+        base + RETAIL_SPHERE_AND_POLY_RVA);
+    retail_cvars = (_collidevars *)(void *)(base + RETAIL_CVARS_RVA);
+    retail_mvp = (_movement_packet *)(void *)(base + RETAIL_MVP_RVA);
+
+    {
+        _movement_packet initial;
+        _collide_info reconstructed_info;
+        int reconstructed_result;
+        int retail_result;
+
+        memset(&initial, 0, sizeof(initial));
+        initial.points[0] = (FVECTOR){10240.0f, 4096.0f, -6656.0f};
+        initial.points[1] = (FVECTOR){10240.0f, 3840.0f, -6656.0f};
+        initial.points[2] = (FVECTOR){10496.0f, 3840.0f, -6912.0f};
+        initial.points[3] = (FVECTOR){10496.0f, 4096.0f, -6912.0f};
+        initial.facenormal = (FVECTOR){
+            -0x1.69p-1f, 0.0f, -0x1.69p-1f
+        };
+        initial.movement = (FVECTOR){
+            0x1.2f44d8p-3f,
+            0x1.d81d72p-1f,
+            0x1.6e13dp-2f
+        };
+        initial.startpos = (FVECTOR){
+            0x1.44dp+13f,
+            0x1.e6ep+11f,
+            -0x1.ae6p+12f
+        };
+        initial.to = (FVECTOR){
+            0x1.44f1e6p+13f,
+            0x1.ea2c6p+11f,
+            -0x1.adbc52p+12f
+        };
+        initial.radius = 54.0f;
+        initial.distance = 0x1.c9dac2p+4f;
+        initial.numsides = 4;
+        initial.vmin.vx = fminf(
+            initial.startpos.vx, initial.to.vx) - initial.radius;
+        initial.vmin.vy = fminf(
+            initial.startpos.vy, initial.to.vy) - initial.radius;
+        initial.vmin.vz = fminf(
+            initial.startpos.vz, initial.to.vz) - initial.radius;
+        initial.vmax.vx = fmaxf(
+            initial.startpos.vx, initial.to.vx) + initial.radius;
+        initial.vmax.vy = fmaxf(
+            initial.startpos.vy, initial.to.vy) + initial.radius;
+        initial.vmax.vz = fmaxf(
+            initial.startpos.vz, initial.to.vz) + initial.radius;
+
+        mvp = initial;
+        memset(&cvars, 0, sizeof(cvars));
+        reconstructed_result = jpb_PhysicsSphereAndPoly();
+        reconstructed_info = mvp.info;
+
+        *retail_mvp = initial;
+        memset(retail_cvars, 0, sizeof(*retail_cvars));
+        retail_result = retail_sphere_and_poly();
+        if (reconstructed_result != retail_result ||
+            memcmp(
+                &reconstructed_info,
+                &retail_mvp->info,
+                sizeof(reconstructed_info)) != 0) {
+            fprintf(
+                stderr,
+                "FED wall sphere mismatch result=%d/%d type=%d/%d "
+                "dist=%a/%a kiss=%a/%a/%a|%a/%a/%a\n",
+                reconstructed_result,
+                retail_result,
+                (int)reconstructed_info.type,
+                (int)retail_mvp->info.type,
+                (double)reconstructed_info.dist,
+                (double)retail_mvp->info.dist,
+                (double)reconstructed_info.kisspoint.vx,
+                (double)reconstructed_info.kisspoint.vy,
+                (double)reconstructed_info.kisspoint.vz,
+                (double)retail_mvp->info.kisspoint.vx,
+                (double)retail_mvp->info.kisspoint.vy,
+                (double)retail_mvp->info.kisspoint.vz);
+            FreeLibrary(image);
+            return 1;
+        }
+    }
+
+    for (iteration = 0; iteration < 4096; ++iteration) {
+        FVECTOR reconstructed = {
+            physics_retail_random_float(-4096.0f, 4096.0f),
+            physics_retail_random_float(-4096.0f, 4096.0f),
+            physics_retail_random_float(-4096.0f, 4096.0f)
+        };
+        FVECTOR retail = reconstructed;
+        float reconstructed_length = VectorNormalize(&reconstructed);
+        float retail_length = retail_vector_normalize(&retail);
+
+        if (memcmp(&reconstructed_length, &retail_length, sizeof(float)) != 0 ||
+            memcmp(&reconstructed, &retail, sizeof(reconstructed)) != 0) {
+            fprintf(
+                stderr,
+                "VectorNormalize retail mismatch iteration=%d "
+                "length=%a/%a vector=%a/%a/%a|%a/%a/%a\n",
+                iteration,
+                (double)reconstructed_length,
+                (double)retail_length,
+                (double)reconstructed.vx,
+                (double)reconstructed.vy,
+                (double)reconstructed.vz,
+                (double)retail.vx,
+                (double)retail.vy,
+                (double)retail.vz);
+            FreeLibrary(image);
+            return 1;
+        }
+    }
+
+    for (iteration = 0; iteration < 4096; ++iteration) {
+        _movement_packet initial;
+        _collide_info reconstructed_info;
+        int reconstructed_result;
+        int retail_result;
+        float half_x = physics_retail_random_float(8.0f, 512.0f);
+        float half_z = physics_retail_random_float(8.0f, 512.0f);
+        float start_x = physics_retail_random_float(
+            -half_x * 1.5f, half_x * 1.5f);
+        float start_z = physics_retail_random_float(
+            -half_z * 1.5f, half_z * 1.5f);
+        float radius = physics_retail_random_float(1.0f, 96.0f);
+        float start_y = physics_retail_random_float(
+            radius * 0.25f, radius + 256.0f);
+        float distance = physics_retail_random_float(0.25f, 384.0f);
+
+        memset(&initial, 0, sizeof(initial));
+        initial.points[0].vx = -half_x;
+        initial.points[0].vz = -half_z;
+        initial.points[1].vx = half_x;
+        initial.points[1].vz = -half_z;
+        initial.points[2].vx = half_x;
+        initial.points[2].vz = half_z;
+        initial.points[3].vx = -half_x;
+        initial.points[3].vz = half_z;
+        initial.facenormal.vy = 1.0f;
+        initial.movement.vx = physics_retail_random_float(-0.75f, 0.75f);
+        initial.movement.vy = -physics_retail_random_float(0.05f, 1.0f);
+        initial.movement.vz = physics_retail_random_float(-0.75f, 0.75f);
+        VectorNormalize(&initial.movement);
+        initial.startpos.vx = start_x;
+        initial.startpos.vy = start_y;
+        initial.startpos.vz = start_z;
+        initial.to.vx =
+            start_x + initial.movement.vx * distance;
+        initial.to.vy =
+            start_y + initial.movement.vy * distance;
+        initial.to.vz =
+            start_z + initial.movement.vz * distance;
+        initial.vmin.vx = -1024.0f;
+        initial.vmin.vy = -1024.0f;
+        initial.vmin.vz = -1024.0f;
+        initial.vmax.vx = 1024.0f;
+        initial.vmax.vy = 1024.0f;
+        initial.vmax.vz = 1024.0f;
+        initial.radius = radius;
+        initial.distance = distance;
+        initial.numsides = 4;
+
+        mvp = initial;
+        memset(&cvars, 0, sizeof(cvars));
+        reconstructed_result = jpb_PhysicsSphereAndPoly();
+        reconstructed_info = mvp.info;
+
+        *retail_mvp = initial;
+        memset(retail_cvars, 0, sizeof(*retail_cvars));
+        retail_result = retail_sphere_and_poly();
+        if (reconstructed_result != retail_result ||
+            memcmp(
+                &reconstructed_info,
+                &retail_mvp->info,
+                sizeof(reconstructed_info)) != 0) {
+            fprintf(
+                stderr,
+                "sphereAndPoly retail mismatch iteration=%d "
+                "result=%d/%d type=%d/%d dist=%a/%a "
+                "radius=%a distance=%a start=%a/%a/%a "
+                "move=%a/%a/%a half=%a/%a edge=%d/%d "
+                "kiss=%a/%a/%a|%a/%a/%a\n",
+                iteration,
+                reconstructed_result,
+                retail_result,
+                (int)reconstructed_info.type,
+                (int)retail_mvp->info.type,
+                (double)reconstructed_info.dist,
+                (double)retail_mvp->info.dist,
+                (double)initial.radius,
+                (double)initial.distance,
+                (double)initial.startpos.vx,
+                (double)initial.startpos.vy,
+                (double)initial.startpos.vz,
+                (double)initial.movement.vx,
+                (double)initial.movement.vy,
+                (double)initial.movement.vz,
+                (double)half_x,
+                (double)half_z,
+                reconstructed_info.edge,
+                retail_mvp->info.edge,
+                (double)reconstructed_info.kisspoint.vx,
+                (double)reconstructed_info.kisspoint.vy,
+                (double)reconstructed_info.kisspoint.vz,
+                (double)retail_mvp->info.kisspoint.vx,
+                (double)retail_mvp->info.kisspoint.vy,
+                (double)retail_mvp->info.kisspoint.vz);
+            FreeLibrary(image);
+            return 1;
+        }
+    }
+
+    FreeLibrary(image);
+    return 0;
+}
+#endif
+
+int main(int argc, char **argv)
 {
     CHECK(test_debug_player_model_owner() == 0);
     CHECK(test_mesh_console_commands() == 0);
@@ -3813,6 +4184,7 @@ int main(void)
     CHECK(test_world_blocking_core() == 0);
     CHECK(test_check_cube_blocking_no_contact() == 0);
     CHECK(test_check_cube_blocking_dynamic_contact() == 0);
+    CHECK(test_check_cube_blocking_clear_wall_slide() == 0);
     CHECK(test_map_event_tables() == 0);
     CHECK(test_launch_splash() == 0);
     CHECK(test_target_facing_helpers() == 0);
@@ -3823,6 +4195,14 @@ int main(void)
     CHECK(test_move_character_contact_sweep() == 0);
     CHECK(test_move_large_character_node_contacts() == 0);
     CHECK(test_range_cache_hit_and_miss() == 0);
+#if defined(_WIN32)
+    if (argc > 1) {
+        CHECK(test_retail_sphere_polygon_differential(argv[1]) == 0);
+    }
+#else
+    (void)argc;
+    (void)argv;
+#endif
     CHECK(test_launch_map_anim_effects() == 0);
     CHECK(test_process_physics_objects_scheduler() == 0);
     CHECK(test_reset_jedi_complete() == 0);

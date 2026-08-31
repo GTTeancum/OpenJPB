@@ -1,5 +1,5 @@
 /*
- * Dependency-free Win32 audio host for the reconstructed sound scheduler.
+ * Runtime-loaded SDL_mixer host for the reconstructed sound scheduler.
  *
  * Provenance:
  *   direct/decompiled - sound_playSfx uses 64 SDL_mixer channels, six exact
@@ -9,14 +9,14 @@
  *   direct/decompiled - sound_LoadBank maps level 15 to corus1, levels
  *     16..22 to the seven-entry training_level bank, and
  *     jar_jar_playable to gungan_2.
- *   substituted - WinMM waveOut voices replace SDL_mixer on the PC host.
- *     Gameplay code remains independent of both APIs.
+ *   direct/decompiled - the shipped executable imports SDL2_mixer directly:
+ *     one 44.1 kHz float-stereo device, 64 channels, Mix_LoadWAV_RW for SFX,
+ *     and Mix_LoadMUS for streaming music. Gameplay remains API-independent
+ *     through the reconstruction hooks.
  */
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <mmreg.h>
-#include <mmsystem.h>
 
 #include "jpb/pc_audio_win32.h"
 
@@ -28,55 +28,62 @@
 
 #include "pc_log_win32.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 enum {
+    JPB_WAVE_FORMAT_PCM = 1,
+    JPB_WAVE_FORMAT_IEEE_FLOAT = 3,
     JPB_PC_AUDIO_VOICE_COUNT = 64,
     JPB_PC_AUDIO_SAMPLE_CACHE_COUNT = 1024,
-    JPB_PC_AUDIO_WARM_VOICES_PER_FORMAT = 4,
-    JPB_PC_AUDIO_WARM_FORMAT_COUNT = 16,
     JPB_PC_AUDIO_PATH_CAPACITY = 1024
 };
+
+typedef struct SDL_RWops SDL_RWops;
+typedef struct Mix_Chunk Mix_Chunk;
+typedef struct Mix_Music Mix_Music;
+
+typedef struct JPBSdlMixerApi {
+    HMODULE sdlModule;
+    HMODULE mixerModule;
+    SDL_RWops *(__cdecl *SDL_RWFromFile)(const char *, const char *);
+    const char *(__cdecl *SDL_GetError)(void);
+    int (__cdecl *Mix_Init)(int);
+    void (__cdecl *Mix_Quit)(void);
+    int (__cdecl *Mix_OpenAudio)(int, uint16_t, int, int);
+    void (__cdecl *Mix_CloseAudio)(void);
+    int (__cdecl *Mix_AllocateChannels)(int);
+    Mix_Chunk *(__cdecl *Mix_LoadWAV_RW)(SDL_RWops *, int);
+    void (__cdecl *Mix_FreeChunk)(Mix_Chunk *);
+    int (__cdecl *Mix_PlayChannel)(int, Mix_Chunk *, int);
+    int (__cdecl *Mix_SetPanning)(int, uint8_t, uint8_t);
+    int (__cdecl *Mix_SetDistance)(int, uint8_t);
+    int (__cdecl *Mix_Volume)(int, int);
+    int (__cdecl *Mix_FadeOutChannel)(int, int);
+    int (__cdecl *Mix_HaltChannel)(int);
+    void (__cdecl *Mix_Pause)(int);
+    void (__cdecl *Mix_Resume)(int);
+    int (__cdecl *Mix_Playing)(int);
+    Mix_Music *(__cdecl *Mix_LoadMUS)(const char *);
+    void (__cdecl *Mix_FreeMusic)(Mix_Music *);
+    int (__cdecl *Mix_PlayMusic)(Mix_Music *, int);
+    int (__cdecl *Mix_HaltMusic)(void);
+    void (__cdecl *Mix_PauseMusic)(void);
+    void (__cdecl *Mix_ResumeMusic)(void);
+    int (__cdecl *Mix_PlayingMusic)(void);
+    int (__cdecl *Mix_PausedMusic)(void);
+    int (__cdecl *Mix_VolumeMusic)(int);
+} JPBSdlMixerApi;
 
 typedef struct JPBPCAudioSample {
     char path[JPB_PC_AUDIO_PATH_CAPACITY];
     unsigned char *bytes;
     size_t size;
     JPBPCAudioWavInfo info;
+    Mix_Chunk *chunk;
 } JPBPCAudioSample;
-
-typedef struct JPBPCAudioWarmFormat {
-    uint16_t formatTag;
-    uint16_t channels;
-    uint32_t sampleRate;
-    uint32_t averageBytesPerSecond;
-    uint16_t blockAlign;
-    uint16_t bitsPerSample;
-} JPBPCAudioWarmFormat;
-
-typedef struct JPBPCAudioVoice {
-    HWAVEOUT output;
-    WAVEHDR header;
-    JPBPCAudioWarmFormat outputFormat;
-    unsigned char *fileBytes;
-    VECTOR *loopPosition;
-    int borrowedFileBytes;
-    int prepared;
-    int outputReady;
-    int active;
-    int looping;
-    int quiet;
-    int nonSpatial;
-    int voiceSound;
-    int mixerLeft;
-    int mixerRight;
-    int mixerDistance;
-    int mixerVolume;
-    ULONGLONG fadeStart;
-    uint32_t fadeDuration;
-} JPBPCAudioVoice;
 
 struct JPBPCAudio {
     char soundRoot[JPB_PC_AUDIO_PATH_CAPACITY];
@@ -85,32 +92,16 @@ struct JPBPCAudio {
     char levelBank[64];
     const char *const *bankPaths[5];
     int bankPathCount[5];
-    JPBPCAudioVoice voices[JPB_PC_AUDIO_VOICE_COUNT];
-    JPBPCAudioVoice music;
+    JPBSdlMixerApi mixer;
+    Mix_Music *music;
     char currentMusicPath[JPB_PC_AUDIO_PATH_CAPACITY];
     int musicPaused;
     int musicVolume;
     JPBPCAudioStats stats;
     int outputEnabled;
+    int mixerOpened;
     JPBPCAudioSample samples[JPB_PC_AUDIO_SAMPLE_CACHE_COUNT];
     size_t sampleCount;
-    JPBPCAudioWarmFormat warmFormats[JPB_PC_AUDIO_WARM_FORMAT_COUNT];
-    size_t warmFormatCount;
-};
-
-static void pc_audio_seed_voice_outputs(
-    JPBPCAudio *audio,
-    const JPBPCAudioWavInfo *info,
-    const WAVEFORMATEX *format,
-    const char *path);
-
-static const char *const jpb_looping_sounds[] = {
-    "fan_big",
-    "pistloop",
-    "elev1lp",
-    "stapstdy",
-    "tanksty1",
-    "taxiloop"
 };
 
 static uint16_t pc_audio_u16(const unsigned char *bytes)
@@ -187,8 +178,8 @@ int jpb_PCAudioInspectWavMemory(
         cursor = next;
     }
     if (!found_format || !found_data ||
-        (info->formatTag != WAVE_FORMAT_PCM &&
-         info->formatTag != WAVE_FORMAT_IEEE_FLOAT) ||
+        (info->formatTag != JPB_WAVE_FORMAT_PCM &&
+         info->formatTag != JPB_WAVE_FORMAT_IEEE_FLOAT) ||
         (info->channels != 1 && info->channels != 2) ||
         info->sampleRate == 0 ||
         info->averageBytesPerSecond == 0 ||
@@ -317,6 +308,116 @@ static int pc_audio_join(
         ? snprintf(destination, capacity, "%s%c%s", left, separator, right)
         : snprintf(destination, capacity, "%s%s", left, right);
     return written >= 0 && (size_t)written < capacity;
+}
+
+static int pc_audio_load_proc(
+    HMODULE module,
+    const char *name,
+    void *destination,
+    size_t destination_size)
+{
+    FARPROC procedure;
+
+    if (module == NULL || name == NULL || destination == NULL ||
+        destination_size != sizeof(procedure)) {
+        return 0;
+    }
+    procedure = GetProcAddress(module, name);
+    if (procedure == NULL) {
+        return 0;
+    }
+    memcpy(destination, &procedure, sizeof(procedure));
+    return 1;
+}
+
+static void pc_audio_unload_mixer(JPBPCAudio *audio)
+{
+    if (audio == NULL) {
+        return;
+    }
+    if (audio->mixer.mixerModule != NULL) {
+        FreeLibrary(audio->mixer.mixerModule);
+    }
+    if (audio->mixer.sdlModule != NULL) {
+        FreeLibrary(audio->mixer.sdlModule);
+    }
+    memset(&audio->mixer, 0, sizeof(audio->mixer));
+}
+
+static int pc_audio_load_mixer(
+    JPBPCAudio *audio,
+    const char *resource_root)
+{
+    char game_root[JPB_PC_AUDIO_PATH_CAPACITY];
+    char sdl_path[JPB_PC_AUDIO_PATH_CAPACITY];
+    char mixer_path[JPB_PC_AUDIO_PATH_CAPACITY];
+    DWORD flags = LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR |
+                  LOAD_LIBRARY_SEARCH_DEFAULT_DIRS;
+
+#define JPB_LOAD_SDL_PROC(field) \
+    pc_audio_load_proc( \
+        audio->mixer.sdlModule, #field, \
+        &audio->mixer.field, sizeof(audio->mixer.field))
+#define JPB_LOAD_MIX_PROC(field) \
+    pc_audio_load_proc( \
+        audio->mixer.mixerModule, #field, \
+        &audio->mixer.field, sizeof(audio->mixer.field))
+
+    if (audio == NULL || resource_root == NULL ||
+        !pc_audio_copy_string(
+            game_root, sizeof(game_root), resource_root,
+            strlen(resource_root)) ||
+        !pc_audio_parent_directory(game_root, sizeof(game_root)) ||
+        !pc_audio_join(
+            sdl_path, sizeof(sdl_path), game_root, "SDL2.dll") ||
+        !pc_audio_join(
+            mixer_path, sizeof(mixer_path), game_root,
+            "SDL2_mixer.dll")) {
+        return 0;
+    }
+    audio->mixer.sdlModule = LoadLibraryExA(sdl_path, NULL, flags);
+    audio->mixer.mixerModule = LoadLibraryExA(mixer_path, NULL, flags);
+    if (audio->mixer.sdlModule == NULL ||
+        audio->mixer.mixerModule == NULL ||
+        !JPB_LOAD_SDL_PROC(SDL_RWFromFile) ||
+        !JPB_LOAD_SDL_PROC(SDL_GetError) ||
+        !JPB_LOAD_MIX_PROC(Mix_Init) ||
+        !JPB_LOAD_MIX_PROC(Mix_Quit) ||
+        !JPB_LOAD_MIX_PROC(Mix_OpenAudio) ||
+        !JPB_LOAD_MIX_PROC(Mix_CloseAudio) ||
+        !JPB_LOAD_MIX_PROC(Mix_AllocateChannels) ||
+        !JPB_LOAD_MIX_PROC(Mix_LoadWAV_RW) ||
+        !JPB_LOAD_MIX_PROC(Mix_FreeChunk) ||
+        !JPB_LOAD_MIX_PROC(Mix_PlayChannel) ||
+        !JPB_LOAD_MIX_PROC(Mix_SetPanning) ||
+        !JPB_LOAD_MIX_PROC(Mix_SetDistance) ||
+        !JPB_LOAD_MIX_PROC(Mix_Volume) ||
+        !JPB_LOAD_MIX_PROC(Mix_FadeOutChannel) ||
+        !JPB_LOAD_MIX_PROC(Mix_HaltChannel) ||
+        !JPB_LOAD_MIX_PROC(Mix_Pause) ||
+        !JPB_LOAD_MIX_PROC(Mix_Resume) ||
+        !JPB_LOAD_MIX_PROC(Mix_Playing) ||
+        !JPB_LOAD_MIX_PROC(Mix_LoadMUS) ||
+        !JPB_LOAD_MIX_PROC(Mix_FreeMusic) ||
+        !JPB_LOAD_MIX_PROC(Mix_PlayMusic) ||
+        !JPB_LOAD_MIX_PROC(Mix_HaltMusic) ||
+        !JPB_LOAD_MIX_PROC(Mix_PauseMusic) ||
+        !JPB_LOAD_MIX_PROC(Mix_ResumeMusic) ||
+        !JPB_LOAD_MIX_PROC(Mix_PlayingMusic) ||
+        !JPB_LOAD_MIX_PROC(Mix_PausedMusic) ||
+        !JPB_LOAD_MIX_PROC(Mix_VolumeMusic)) {
+        jpb_PCLog(
+            "audio SDL_mixer load failed root=%s win32=%lu",
+            game_root,
+            (unsigned long)GetLastError());
+        pc_audio_unload_mixer(audio);
+        return 0;
+    }
+    jpb_PCLog("audio SDL_mixer loaded path=%s", mixer_path);
+    return 1;
+
+#undef JPB_LOAD_SDL_PROC
+#undef JPB_LOAD_MIX_PROC
 }
 
 static int pc_audio_bank_from_cad(
@@ -469,21 +570,6 @@ int jpb_PCAudioResolveStream(
         path, path_capacity, audio->streamRoot, stream_name);
 }
 
-static int pc_audio_is_looping(const char *sound)
-{
-    size_t index;
-
-    for (index = 0;
-         index < sizeof(jpb_looping_sounds) /
-                     sizeof(jpb_looping_sounds[0]);
-         ++index) {
-        if (strcmp(sound, jpb_looping_sounds[index]) == 0) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
 static JPBPCAudioSample *pc_audio_cached_sample(
     JPBPCAudio *audio,
     const char *path)
@@ -498,7 +584,9 @@ static JPBPCAudioSample *pc_audio_cached_sample(
     for (index = 0; index < audio->sampleCount; ++index) {
         sample = &audio->samples[index];
         if (_stricmp(sample->path, path) == 0) {
-            return sample->bytes != NULL ? sample : NULL;
+            return sample->bytes != NULL &&
+                   (!audio->outputEnabled || sample->chunk != NULL)
+                ? sample : NULL;
         }
     }
     if (audio->sampleCount >= JPB_PC_AUDIO_SAMPLE_CACHE_COUNT) {
@@ -527,176 +615,25 @@ static JPBPCAudioSample *pc_audio_cached_sample(
         memset(sample, 0, sizeof(*sample));
         return NULL;
     }
-    ++audio->sampleCount;
-    return sample;
-}
+    if (audio->outputEnabled) {
+        SDL_RWops *stream =
+            audio->mixer.SDL_RWFromFile(path, "rb");
 
-static void pc_audio_format_from_wav(
-    const JPBPCAudioWavInfo *info,
-    WAVEFORMATEX *format)
-{
-    memset(format, 0, sizeof(*format));
-    format->wFormatTag = info->formatTag;
-    format->nChannels = info->channels;
-    format->nSamplesPerSec = info->sampleRate;
-    format->nAvgBytesPerSec = info->averageBytesPerSecond;
-    format->nBlockAlign = info->blockAlign;
-    format->wBitsPerSample = info->bitsPerSample;
-    format->cbSize = 0;
-}
-
-static int pc_audio_warm_format_matches(
-    const JPBPCAudioWarmFormat *format,
-    const JPBPCAudioWavInfo *info)
-{
-    return format != NULL && info != NULL &&
-           format->formatTag == info->formatTag &&
-           format->channels == info->channels &&
-           format->sampleRate == info->sampleRate &&
-           format->averageBytesPerSecond ==
-               info->averageBytesPerSecond &&
-           format->blockAlign == info->blockAlign &&
-           format->bitsPerSample == info->bitsPerSample;
-}
-
-static void pc_audio_remember_warm_format(
-    JPBPCAudio *audio,
-    const JPBPCAudioWavInfo *info)
-{
-    JPBPCAudioWarmFormat *format;
-
-    if (audio == NULL || info == NULL ||
-        audio->warmFormatCount >= JPB_PC_AUDIO_WARM_FORMAT_COUNT) {
-        return;
-    }
-    format = &audio->warmFormats[audio->warmFormatCount++];
-    format->formatTag = info->formatTag;
-    format->channels = info->channels;
-    format->sampleRate = info->sampleRate;
-    format->averageBytesPerSecond = info->averageBytesPerSecond;
-    format->blockAlign = info->blockAlign;
-    format->bitsPerSample = info->bitsPerSample;
-}
-
-static void pc_audio_store_format(
-    JPBPCAudioWarmFormat *format,
-    const JPBPCAudioWavInfo *info)
-{
-    if (format == NULL || info == NULL) {
-        return;
-    }
-    format->formatTag = info->formatTag;
-    format->channels = info->channels;
-    format->sampleRate = info->sampleRate;
-    format->averageBytesPerSecond = info->averageBytesPerSecond;
-    format->blockAlign = info->blockAlign;
-    format->bitsPerSample = info->bitsPerSample;
-}
-
-static int pc_audio_output_format_warmed(
-    const JPBPCAudio *audio,
-    const JPBPCAudioWavInfo *info)
-{
-    size_t index;
-
-    if (audio == NULL || info == NULL) {
-        return 0;
-    }
-    for (index = 0; index < audio->warmFormatCount; ++index) {
-        if (pc_audio_warm_format_matches(
-                &audio->warmFormats[index], info)) {
-            return 1;
+        sample->chunk = stream != NULL
+            ? audio->mixer.Mix_LoadWAV_RW(stream, 1)
+            : NULL;
+        if (sample->chunk == NULL) {
+            jpb_PCLog(
+                "audio Mix_LoadWAV_RW failed path=%s error=%s",
+                path,
+                audio->mixer.SDL_GetError());
+            free(sample->bytes);
+            memset(sample, 0, sizeof(*sample));
+            return NULL;
         }
     }
-    return 0;
-}
-
-static void pc_audio_warm_output_sample(
-    JPBPCAudio *audio,
-    const JPBPCAudioSample *sample)
-{
-    WAVEFORMATEX format;
-    WAVEHDR header;
-    HWAVEOUT output = NULL;
-    MMRESULT result;
-    DWORD warm_bytes;
-    int warmed;
-
-    if (audio == NULL || sample == NULL ||
-        !audio->outputEnabled ||
-        sample->bytes == NULL ||
-        sample->info.dataOffset >= sample->size ||
-        sample->info.dataSize == 0) {
-        return;
-    }
-    pc_audio_format_from_wav(&sample->info, &format);
-    warmed = pc_audio_output_format_warmed(audio, &sample->info);
-    if (warmed) {
-        pc_audio_seed_voice_outputs(
-            audio, &sample->info, &format, sample->path);
-        return;
-    }
-    if (audio->warmFormatCount >= JPB_PC_AUDIO_WARM_FORMAT_COUNT) {
-        jpb_PCLog("audio output warm format cache full");
-        return;
-    }
-    result = waveOutOpen(
-        &output,
-        WAVE_MAPPER,
-        &format,
-        0,
-        0,
-        CALLBACK_NULL);
-    if (result != MMSYSERR_NOERROR) {
-        jpb_PCLog(
-            "audio output warm waveOutOpen failed path=%s result=%u "
-            "format=%u channels=%u hz=%lu bits=%u",
-            sample->path,
-            (unsigned)result,
-            (unsigned)format.wFormatTag,
-            (unsigned)format.nChannels,
-            (unsigned long)format.nSamplesPerSec,
-            (unsigned)format.wBitsPerSample);
-        return;
-    }
-    warm_bytes = sample->info.dataSize;
-    if (warm_bytes > 4096U) {
-        warm_bytes = 4096U;
-    }
-    if (sample->info.blockAlign > 1) {
-        warm_bytes -=
-            warm_bytes % (DWORD)sample->info.blockAlign;
-    }
-    if (warm_bytes == 0 ||
-        (size_t)sample->info.dataOffset + (size_t)warm_bytes >
-            sample->size) {
-        waveOutClose(output);
-        jpb_PCLog(
-            "audio output warm skipped invalid data path=%s",
-            sample->path);
-        return;
-    }
-    memset(&header, 0, sizeof(header));
-    header.lpData =
-        (LPSTR)(sample->bytes + sample->info.dataOffset);
-    header.dwBufferLength = warm_bytes;
-    result = waveOutPrepareHeader(output, &header, sizeof(header));
-    if (result == MMSYSERR_NOERROR) {
-        result = waveOutWrite(output, &header, sizeof(header));
-        (void)waveOutReset(output);
-        (void)waveOutUnprepareHeader(output, &header, sizeof(header));
-    }
-    (void)waveOutClose(output);
-    if (result != MMSYSERR_NOERROR) {
-        jpb_PCLog(
-            "audio output warm write failed path=%s result=%u",
-            sample->path,
-            (unsigned)result);
-        return;
-    }
-    pc_audio_remember_warm_format(audio, &sample->info);
-    pc_audio_seed_voice_outputs(
-        audio, &sample->info, &format, sample->path);
+    ++audio->sampleCount;
+    return sample;
 }
 
 static int pc_audio_bank_entry_path(
@@ -757,293 +694,17 @@ static int pc_audio_preload_bank_samples(
                 paths[index] != NULL ? paths[index] : "<null>");
             return 0;
         }
-        pc_audio_warm_output_sample(audio, sample);
+        (void)sample;
     }
     return 1;
 }
 
-static void pc_audio_clear_voice(
-    JPBPCAudioVoice *voice,
-    int keep_output)
-{
-    HWAVEOUT output;
-    JPBPCAudioWarmFormat output_format;
-    int output_ready;
-
-    if (voice == NULL) {
-        return;
-    }
-    output = voice->output;
-    output_format = voice->outputFormat;
-    output_ready = voice->outputReady;
-    if (voice->output != NULL) {
-        if (voice->active) {
-            (void)waveOutReset(voice->output);
-        }
-        if (voice->prepared) {
-            (void)waveOutUnprepareHeader(
-                voice->output, &voice->header, sizeof(voice->header));
-        }
-        if (!keep_output) {
-            (void)waveOutClose(voice->output);
-            output = NULL;
-            output_ready = 0;
-            memset(&output_format, 0, sizeof(output_format));
-        }
-    }
-    if (!voice->borrowedFileBytes) {
-        free(voice->fileBytes);
-    }
-    memset(voice, 0, sizeof(*voice));
-    if (keep_output && output != NULL && output_ready) {
-        voice->output = output;
-        voice->outputFormat = output_format;
-        voice->outputReady = 1;
-    }
-}
-
-static void pc_audio_recycle_voice(JPBPCAudioVoice *voice)
-{
-    pc_audio_clear_voice(voice, 1);
-}
-
-static void pc_audio_release_voice(JPBPCAudioVoice *voice)
-{
-    pc_audio_clear_voice(voice, 0);
-}
-
-static int pc_audio_voice_output_matches(
-    const JPBPCAudioVoice *voice,
-    const JPBPCAudioWavInfo *info)
-{
-    return voice != NULL && info != NULL &&
-           voice->output != NULL &&
-           voice->outputReady &&
-           pc_audio_warm_format_matches(&voice->outputFormat, info);
-}
-
-static int pc_audio_prepare_voice_output(
-    JPBPCAudioVoice *voice,
-    const JPBPCAudioWavInfo *info,
-    const WAVEFORMATEX *format,
-    const char *path)
-{
-    MMRESULT result;
-
-    if (voice == NULL || info == NULL || format == NULL) {
-        return 0;
-    }
-    if (pc_audio_voice_output_matches(voice, info)) {
-        return 1;
-    }
-    pc_audio_release_voice(voice);
-    result = waveOutOpen(
-        &voice->output,
-        WAVE_MAPPER,
-        format,
-        0,
-        0,
-        CALLBACK_NULL);
-    if (result != MMSYSERR_NOERROR) {
-        jpb_PCLog(
-            "audio stream waveOutOpen failed path=%s result=%u "
-            "format=%u channels=%u hz=%lu bits=%u",
-            path,
-            (unsigned)result,
-            (unsigned)format->wFormatTag,
-            (unsigned)format->nChannels,
-            (unsigned long)format->nSamplesPerSec,
-            (unsigned)format->wBitsPerSample);
-        pc_audio_release_voice(voice);
-        return 0;
-    }
-    pc_audio_store_format(&voice->outputFormat, info);
-    voice->outputReady = 1;
-    return 1;
-}
-
-static void pc_audio_seed_voice_outputs(
-    JPBPCAudio *audio,
-    const JPBPCAudioWavInfo *info,
-    const WAVEFORMATEX *format,
-    const char *path)
-{
-    size_t index;
-    int ready_count = 0;
-
-    if (audio == NULL || info == NULL || format == NULL) {
-        return;
-    }
-    for (index = 0; index < JPB_PC_AUDIO_VOICE_COUNT; ++index) {
-        JPBPCAudioVoice *voice = &audio->voices[index];
-
-        if (!voice->active &&
-            pc_audio_voice_output_matches(voice, info)) {
-            ++ready_count;
-        }
-    }
-    while (ready_count < JPB_PC_AUDIO_WARM_VOICES_PER_FORMAT) {
-        JPBPCAudioVoice *voice = NULL;
-
-        for (index = 0; index < JPB_PC_AUDIO_VOICE_COUNT; ++index) {
-            if (!audio->voices[index].active &&
-                audio->voices[index].output == NULL) {
-                voice = &audio->voices[index];
-                break;
-            }
-        }
-        if (voice == NULL ||
-            !pc_audio_prepare_voice_output(voice, info, format, path)) {
-            return;
-        }
-        ++ready_count;
-    }
-}
-
-static JPBPCAudioVoice *pc_audio_choose_voice(
-    JPBPCAudio *audio,
-    const JPBPCAudioWavInfo *info,
-    size_t *voice_index)
-{
-    JPBPCAudioVoice *empty_voice = NULL;
-    size_t empty_index = 0;
-    JPBPCAudioVoice *available_voice = NULL;
-    size_t available_index = 0;
-    size_t index;
-
-    if (audio == NULL || info == NULL) {
-        return NULL;
-    }
-    for (index = 0; index < JPB_PC_AUDIO_VOICE_COUNT; ++index) {
-        JPBPCAudioVoice *voice = &audio->voices[index];
-
-        if (voice->active) {
-            continue;
-        }
-        if (pc_audio_voice_output_matches(voice, info)) {
-            if (voice_index != NULL) {
-                *voice_index = index;
-            }
-            return voice;
-        }
-        if (voice->output == NULL && empty_voice == NULL) {
-            empty_voice = voice;
-            empty_index = index;
-        }
-        if (available_voice == NULL) {
-            available_voice = voice;
-            available_index = index;
-        }
-    }
-    if (empty_voice != NULL) {
-        if (voice_index != NULL) {
-            *voice_index = empty_index;
-        }
-        return empty_voice;
-    }
-    if (available_voice != NULL && voice_index != NULL) {
-        *voice_index = available_index;
-    }
-    return available_voice;
-}
-
-static void pc_audio_gains(
-    const JPBPCAudioVoice *voice,
-    float *left_gain,
-    float *right_gain)
-{
-    float attenuation =
-        (255.0f - (float)voice->mixerDistance) / 255.0f;
-    float mixer_volume = (float)voice->mixerVolume;
-
-    if (mixer_volume > 128.0f) {
-        mixer_volume = 128.0f;
-    }
-    *left_gain =
-        ((float)voice->mixerLeft / 255.0f) *
-        attenuation *
-        (mixer_volume / 128.0f);
-    *right_gain =
-        ((float)voice->mixerRight / 255.0f) *
-        attenuation *
-        (mixer_volume / 128.0f);
-}
-
-static void pc_audio_set_voice_volume(
-    JPBPCAudioVoice *voice)
-{
-    float left;
-    float right;
-    DWORD volume;
-    unsigned left_word;
-    unsigned right_word;
-    float fade = 1.0f;
-
-    if (voice == NULL || voice->output == NULL) {
-        return;
-    }
-    pc_audio_gains(voice, &left, &right);
-    if (voice->fadeDuration != 0) {
-        ULONGLONG elapsed = GetTickCount64() - voice->fadeStart;
-
-        if (elapsed >= voice->fadeDuration) {
-            fade = 0.0f;
-        } else {
-            fade = 1.0f -
-                (float)elapsed / (float)voice->fadeDuration;
-        }
-    }
-    left *= fade;
-    right *= fade;
-    left_word = (unsigned)(left * 65535.0f);
-    right_word = (unsigned)(right * 65535.0f);
-    if (left_word > 65535U) {
-        left_word = 65535U;
-    }
-    if (right_word > 65535U) {
-        right_word = 65535U;
-    }
-    volume = (DWORD)(left_word | (right_word << 16));
-    (void)waveOutSetVolume(voice->output, volume);
-}
-
-static void pc_audio_reap(JPBPCAudio *audio)
-{
-    size_t index;
-
-    if (audio == NULL) {
-        return;
-    }
-    for (index = 0; index < JPB_PC_AUDIO_VOICE_COUNT; ++index) {
-        JPBPCAudioVoice *voice = &audio->voices[index];
-
-        if (!voice->active) {
-            continue;
-        }
-        if ((voice->header.dwFlags & WHDR_DONE) != 0) {
-            pc_audio_recycle_voice(voice);
-        } else if (voice->fadeDuration != 0 &&
-                   GetTickCount64() - voice->fadeStart >=
-                       voice->fadeDuration) {
-            pc_audio_recycle_voice(voice);
-        } else if (voice->looping || voice->fadeDuration != 0) {
-            pc_audio_set_voice_volume(voice);
-        }
-    }
-    if (audio->music.active && !audio->music.looping &&
-        (audio->music.header.dwFlags & WHDR_DONE) != 0) {
-        pc_audio_release_voice(&audio->music);
-        audio->currentMusicPath[0] = '\0';
-        audio->musicPaused = 0;
-    }
-}
 
 void jpb_PCAudioUpdate(JPBPCAudio *audio)
 {
     if (audio == NULL) {
         return;
     }
-    pc_audio_reap(audio);
     update_looped_sounds();
 }
 
@@ -1090,86 +751,28 @@ static uint16_t pc_audio_play_hook(
     void *user_data)
 {
     JPBPCAudio *audio = (JPBPCAudio *)user_data;
-    JPBPCAudioVoice *voice = NULL;
     JPBPCAudioSample *sample = (JPBPCAudioSample *)chunk;
-    JPBPCAudioWavInfo info;
-    WAVEFORMATEX format;
     const char *name = pc_audio_sound_name(sound);
-    size_t index = 0;
-    MMRESULT result;
+    int channel;
 
+    (void)position;
     (void)flag;
     (void)bank_id;
     if (audio == NULL || !audio->outputEnabled || name == NULL ||
-        sample == NULL) {
+        sample == NULL || sample->chunk == NULL) {
         return UINT16_MAX;
     }
-    pc_audio_reap(audio);
-    info = sample->info;
-    pc_audio_format_from_wav(&info, &format);
-    voice = pc_audio_choose_voice(audio, &info, &index);
-    if (voice == NULL) {
-        return UINT16_MAX;
-    }
-    if (!pc_audio_prepare_voice_output(
-            voice, &info, &format, sample->path)) {
-        return UINT16_MAX;
-    }
-    voice->fileBytes = sample->bytes;
-    voice->borrowedFileBytes = 1;
-    memset(&voice->header, 0, sizeof(voice->header));
-    voice->header.lpData =
-        (LPSTR)(voice->fileBytes + info.dataOffset);
-    voice->header.dwBufferLength = info.dataSize;
-    voice->looping = loops == -1;
-    if (voice->looping) {
-        voice->header.dwFlags = WHDR_BEGINLOOP | WHDR_ENDLOOP;
-        voice->header.dwLoops = UINT32_MAX;
-    }
-    result = waveOutPrepareHeader(
-        voice->output, &voice->header, sizeof(voice->header));
-    if (result != MMSYSERR_NOERROR) {
+    channel = audio->mixer.Mix_PlayChannel(
+        -1, sample->chunk, loops);
+    if (channel < 0 || channel >= JPB_PC_AUDIO_VOICE_COUNT) {
         jpb_PCLog(
-            "audio stream prepare failed path=%s result=%u",
+            "audio Mix_PlayChannel failed path=%s error=%s",
             sample->path,
-            (unsigned)result);
-        pc_audio_release_voice(voice);
+            audio->mixer.SDL_GetError());
         return UINT16_MAX;
-    }
-    voice->prepared = 1;
-    voice->active = 1;
-    voice->quiet = sound[0] == '-';
-    voice->nonSpatial =
-        position == NULL ||
-        name[0] == 'z' ||
-        name[0] == 'v' ||
-        strchr(sound, '!') == sound ||
-        (sound[0] == '-' && sound[1] == '!');
-    voice->voiceSound = name[0] == 'v';
-    voice->mixerLeft = 255;
-    voice->mixerRight = 255;
-    voice->mixerDistance = 0;
-    voice->mixerVolume = 128;
-    voice->loopPosition = voice->looping ? position : NULL;
-    if (!voice->looping) {
-        voice->loopPosition = position;
-    }
-    pc_audio_set_voice_volume(voice);
-    result = waveOutWrite(
-        voice->output, &voice->header, sizeof(voice->header));
-    if (result != MMSYSERR_NOERROR) {
-        jpb_PCLog(
-            "audio stream write failed path=%s result=%u",
-            sample->path,
-            (unsigned)result);
-        pc_audio_release_voice(voice);
-        return UINT16_MAX;
-    }
-    if (!voice->looping) {
-        voice->loopPosition = NULL;
     }
     ++audio->stats.sfxStarted;
-    return (uint16_t)index;
+    return (uint16_t)channel;
 }
 
 static void pc_audio_stop_hook(
@@ -1177,16 +780,11 @@ static void pc_audio_stop_hook(
     void *user_data)
 {
     JPBPCAudio *audio = (JPBPCAudio *)user_data;
-    size_t index;
 
-    if (audio == NULL) {
+    if (audio == NULL || handle >= JPB_PC_AUDIO_VOICE_COUNT) {
         return;
     }
-    index = (size_t)handle;
-    if (index < JPB_PC_AUDIO_VOICE_COUNT &&
-        audio->voices[index].active) {
-        pc_audio_recycle_voice(&audio->voices[index]);
-    }
+    (void)audio->mixer.Mix_HaltChannel((int)handle);
 }
 
 static void pc_audio_fade_hook(
@@ -1195,22 +793,19 @@ static void pc_audio_fade_hook(
     void *user_data)
 {
     JPBPCAudio *audio = (JPBPCAudio *)user_data;
-    size_t index;
+    int milliseconds;
 
-    if (audio == NULL) {
-        return;
-    }
-    index = (size_t)handle;
-    if (index >= JPB_PC_AUDIO_VOICE_COUNT ||
-        !audio->voices[index].active) {
+    if (audio == NULL || handle >= JPB_PC_AUDIO_VOICE_COUNT) {
         return;
     }
     if (fade_time == 0) {
-        pc_audio_recycle_voice(&audio->voices[index]);
+        (void)audio->mixer.Mix_HaltChannel((int)handle);
         return;
     }
-    audio->voices[index].fadeStart = GetTickCount64();
-    audio->voices[index].fadeDuration = fade_time;
+    milliseconds = fade_time > (uint32_t)INT_MAX
+        ? INT_MAX : (int)fade_time;
+    (void)audio->mixer.Mix_FadeOutChannel(
+        (int)handle, milliseconds);
 }
 
 static int pc_audio_bank_hook(
@@ -1254,21 +849,33 @@ static int pc_audio_setup_hook(
 {
     JPBPCAudio *audio = (JPBPCAudio *)user_data;
 
-    (void)value1;
-    (void)value2;
-    (void)value3;
     if (audio == NULL) {
         return -1;
     }
+    if (!audio->outputEnabled) {
+        return operation == JPB_SOUND_SETUP_ALLOCATE_CHANNELS
+            ? value0 : 0;
+    }
     switch (operation) {
     case JPB_SOUND_SETUP_INIT:
-        return 0;
+        return audio->mixer.Mix_Init(value0);
     case JPB_SOUND_SETUP_OPEN_AUDIO:
+        if (audio->mixer.Mix_OpenAudio(
+                value0, (uint16_t)value1, value2, value3) < 0) {
+            jpb_PCLog(
+                "audio Mix_OpenAudio failed hz=%d format=%04x "
+                "channels=%d buffer=%d error=%s",
+                value0,
+                (unsigned)(uint16_t)value1,
+                value2,
+                value3,
+                audio->mixer.SDL_GetError());
+            return -1;
+        }
+        audio->mixerOpened = 1;
         return 0;
     case JPB_SOUND_SETUP_ALLOCATE_CHANNELS:
-        return value0 < JPB_PC_AUDIO_VOICE_COUNT
-            ? value0
-            : JPB_PC_AUDIO_VOICE_COUNT;
+        return audio->mixer.Mix_AllocateChannels(value0);
     default:
         return -1;
     }
@@ -1282,35 +889,29 @@ static void pc_audio_channel_hook(
     void *user_data)
 {
     JPBPCAudio *audio = (JPBPCAudio *)user_data;
-    JPBPCAudioVoice *voice;
 
     if (audio == NULL || channel < 0 ||
-        channel >= JPB_PC_AUDIO_VOICE_COUNT) {
-        return;
-    }
-    voice = &audio->voices[channel];
-    if (!voice->active) {
+        channel >= JPB_PC_AUDIO_VOICE_COUNT ||
+        !audio->outputEnabled) {
         return;
     }
     switch (operation) {
     case JPB_SOUND_CHANNEL_PANNING:
-        voice->mixerLeft = value0;
-        voice->mixerRight = value1;
-        pc_audio_set_voice_volume(voice);
+        (void)audio->mixer.Mix_SetPanning(
+            channel, (uint8_t)value0, (uint8_t)value1);
         break;
     case JPB_SOUND_CHANNEL_DISTANCE:
-        voice->mixerDistance = value0;
-        pc_audio_set_voice_volume(voice);
+        (void)audio->mixer.Mix_SetDistance(
+            channel, (uint8_t)value0);
         break;
     case JPB_SOUND_CHANNEL_VOLUME:
-        voice->mixerVolume = value0;
-        pc_audio_set_voice_volume(voice);
+        (void)audio->mixer.Mix_Volume(channel, value0);
         break;
     case JPB_SOUND_CHANNEL_PAUSE:
-        (void)waveOutPause(voice->output);
+        audio->mixer.Mix_Pause(channel);
         break;
     case JPB_SOUND_CHANNEL_RESUME:
-        (void)waveOutRestart(voice->output);
+        audio->mixer.Mix_Resume(channel);
         break;
     }
 }
@@ -1320,43 +921,26 @@ static void pc_audio_control_hook(
     void *user_data)
 {
     JPBPCAudio *audio = (JPBPCAudio *)user_data;
-    size_t index;
 
-    if (audio == NULL) {
+    if (audio == NULL || !audio->outputEnabled) {
         return;
     }
     switch (control) {
     case JPB_SOUND_CONTROL_PAUSE_MUSIC:
-        if (audio->music.active && !audio->musicPaused &&
-            waveOutPause(audio->music.output) == MMSYSERR_NOERROR) {
+        if (audio->mixer.Mix_PlayingMusic() != 0 &&
+            audio->mixer.Mix_PausedMusic() == 0) {
+            audio->mixer.Mix_PauseMusic();
             audio->musicPaused = 1;
         }
         break;
     case JPB_SOUND_CONTROL_HALT_MUSIC:
-        pc_audio_release_voice(&audio->music);
+        (void)audio->mixer.Mix_HaltMusic();
         audio->currentMusicPath[0] = '\0';
         audio->musicPaused = 0;
         break;
     case JPB_SOUND_CONTROL_MUTE_LOOPED:
-        for (index = 0; index < JPB_PC_AUDIO_VOICE_COUNT; ++index) {
-            JPBPCAudioVoice *voice = &audio->voices[index];
-
-            if (voice->active && voice->looping) {
-                (void)waveOutPause(voice->output);
-            }
-        }
-        break;
     case JPB_SOUND_CONTROL_UNMUTE_LOOPED:
-        for (index = 0; index < JPB_PC_AUDIO_VOICE_COUNT; ++index) {
-            JPBPCAudioVoice *voice = &audio->voices[index];
-
-            if (voice->active && voice->looping) {
-                (void)waveOutRestart(voice->output);
-            }
-        }
-        break;
     case JPB_SOUND_CONTROL_UPDATE_LOOPED:
-        pc_audio_reap(audio);
         break;
     }
 }
@@ -1368,59 +952,23 @@ static int pc_audio_prepare_music(
     const char *path,
     int loop)
 {
-    JPBPCAudioVoice *voice = &audio->music;
-    JPBPCAudioWavInfo info;
-    WAVEFORMATEX format;
-    size_t size = 0;
-    MMRESULT result;
-
-    voice->fileBytes = pc_audio_read_file(path, &size);
-    if (voice->fileBytes == NULL ||
-        !jpb_PCAudioInspectWavMemory(
-            voice->fileBytes, size, &info)) {
-        pc_audio_release_voice(voice);
+    audio->music = audio->mixer.Mix_LoadMUS(path);
+    if (audio->music == NULL) {
+        jpb_PCLog(
+            "audio Mix_LoadMUS failed path=%s error=%s",
+            path,
+            audio->mixer.SDL_GetError());
         return 0;
     }
-    memset(&format, 0, sizeof(format));
-    format.wFormatTag = info.formatTag;
-    format.nChannels = info.channels;
-    format.nSamplesPerSec = info.sampleRate;
-    format.nAvgBytesPerSec = info.averageBytesPerSecond;
-    format.nBlockAlign = info.blockAlign;
-    format.wBitsPerSample = info.bitsPerSample;
-    result = waveOutOpen(
-        &voice->output,
-        WAVE_MAPPER,
-        &format,
-        0,
-        0,
-        CALLBACK_NULL);
-    if (result != MMSYSERR_NOERROR) {
-        pc_audio_release_voice(voice);
-        return 0;
-    }
-    memset(&voice->header, 0, sizeof(voice->header));
-    voice->header.lpData =
-        (LPSTR)(voice->fileBytes + info.dataOffset);
-    voice->header.dwBufferLength = info.dataSize;
-    voice->looping = loop != 0;
-    if (voice->looping) {
-        voice->header.dwFlags = WHDR_BEGINLOOP | WHDR_ENDLOOP;
-        voice->header.dwLoops = UINT32_MAX;
-    }
-    result = waveOutPrepareHeader(
-        voice->output, &voice->header, sizeof(voice->header));
-    if (result != MMSYSERR_NOERROR) {
-        pc_audio_release_voice(voice);
-        return 0;
-    }
-    voice->prepared = 1;
-    voice->active = 1;
     pc_audio_set_music_volume(audio);
-    result = waveOutWrite(
-        voice->output, &voice->header, sizeof(voice->header));
-    if (result != MMSYSERR_NOERROR) {
-        pc_audio_release_voice(voice);
+    if (audio->mixer.Mix_PlayMusic(
+            audio->music, loop != 0 ? -1 : 0) < 0) {
+        jpb_PCLog(
+            "audio Mix_PlayMusic failed path=%s error=%s",
+            path,
+            audio->mixer.SDL_GetError());
+        audio->mixer.Mix_FreeMusic(audio->music);
+        audio->music = NULL;
         return 0;
     }
     return 1;
@@ -1428,10 +976,7 @@ static int pc_audio_prepare_music(
 
 static void pc_audio_set_music_volume(JPBPCAudio *audio)
 {
-    unsigned word;
-    DWORD volume;
-
-    if (audio == NULL || audio->music.output == NULL) {
+    if (audio == NULL || !audio->outputEnabled) {
         return;
     }
     if (audio->musicVolume < 0) {
@@ -1439,10 +984,7 @@ static void pc_audio_set_music_volume(JPBPCAudio *audio)
     } else if (audio->musicVolume > 128) {
         audio->musicVolume = 128;
     }
-    word = (unsigned)(
-        (audio->musicVolume * 65535U) / 128U);
-    volume = (DWORD)(word | (word << 16));
-    (void)waveOutSetVolume(audio->music.output, volume);
+    (void)audio->mixer.Mix_VolumeMusic(audio->musicVolume);
 }
 
 static void pc_audio_stream_play_hook(
@@ -1486,15 +1028,19 @@ static void pc_audio_stream_play_hook(
         loop,
         path);
     audio->musicVolume = volume;
-    if (audio->music.active && audio->musicPaused &&
+    if (audio->music != NULL &&
+        audio->mixer.Mix_PlayingMusic() != 0 &&
+        audio->mixer.Mix_PausedMusic() != 0 &&
         _stricmp(path, audio->currentMusicPath) == 0) {
         pc_audio_set_music_volume(audio);
-        if (waveOutRestart(audio->music.output) == MMSYSERR_NOERROR) {
-            audio->musicPaused = 0;
-        }
+        audio->mixer.Mix_ResumeMusic();
+        audio->musicPaused = 0;
         return;
     }
-    pc_audio_release_voice(&audio->music);
+    if (audio->music != NULL) {
+        audio->mixer.Mix_FreeMusic(audio->music);
+        audio->music = NULL;
+    }
     audio->currentMusicPath[0] = '\0';
     audio->musicPaused = 0;
     if (!pc_audio_prepare_music(audio, path, loop)) {
@@ -1510,7 +1056,7 @@ static void pc_audio_stream_play_hook(
         "audio stream started index=%d name=%s active=%d",
         stream_index,
         stream_name,
-        audio->music.active);
+        audio->mixer.Mix_PlayingMusic() != 0);
 }
 
 static int pc_audio_stream_control_hook(
@@ -1519,32 +1065,40 @@ static int pc_audio_stream_control_hook(
     void *user_data)
 {
     JPBPCAudio *audio = (JPBPCAudio *)user_data;
-    size_t index;
 
     if (audio == NULL) {
         return 0;
+    }
+    if (!audio->outputEnabled) {
+        return 1;
     }
     switch (control) {
     case JPB_AUDIO_STREAM_START_UP:
         return 1;
     case JPB_AUDIO_STREAM_SHUT_DOWN:
-        for (index = 0; index < JPB_PC_AUDIO_VOICE_COUNT; ++index) {
-            pc_audio_release_voice(&audio->voices[index]);
-        }
-        pc_audio_release_voice(&audio->music);
+        (void)audio->mixer.Mix_HaltChannel(-1);
+        (void)audio->mixer.Mix_HaltMusic();
         audio->currentMusicPath[0] = '\0';
         audio->musicPaused = 0;
         return 1;
     case JPB_AUDIO_STREAM_PAUSE:
-    case JPB_AUDIO_STREAM_STOP:
-        if (audio->music.active && !audio->musicPaused &&
-            waveOutPause(audio->music.output) == MMSYSERR_NOERROR) {
+        if (audio->mixer.Mix_PlayingMusic() != 0 &&
+            audio->mixer.Mix_PausedMusic() == 0) {
+            audio->mixer.Mix_PauseMusic();
             audio->musicPaused = 1;
         }
         return 1;
+    case JPB_AUDIO_STREAM_STOP:
+        if (audio->mixer.Mix_PlayingMusic() != 0 &&
+            audio->mixer.Mix_PausedMusic() == 0) {
+            (void)audio->mixer.Mix_HaltMusic();
+        }
+        audio->musicPaused = 0;
+        return 1;
     case JPB_AUDIO_STREAM_RESUME:
-        if (audio->music.active && audio->musicPaused &&
-            waveOutRestart(audio->music.output) == MMSYSERR_NOERROR) {
+        if (audio->mixer.Mix_PlayingMusic() != 0 &&
+            audio->mixer.Mix_PausedMusic() != 0) {
+            audio->mixer.Mix_ResumeMusic();
             audio->musicPaused = 0;
         }
         return 1;
@@ -1553,6 +1107,18 @@ static int pc_audio_stream_control_hook(
         pc_audio_set_music_volume(audio);
         return 1;
     case JPB_AUDIO_STREAM_SET_CHANNEL_TYPE:
+        audio->mixer.Mix_CloseAudio();
+        audio->mixerOpened = 0;
+        if (audio->mixer.Mix_OpenAudio(
+                44100, UINT16_C(0x8120), value, 8192) < 0) {
+            jpb_PCLog(
+                "audio stream channel reset failed channels=%d error=%s",
+                value,
+                audio->mixer.SDL_GetError());
+            return 0;
+        }
+        audio->mixerOpened = 1;
+        (void)audio->mixer.Mix_AllocateChannels(32);
         return 1;
     default:
         return 0;
@@ -1631,6 +1197,11 @@ JPBPCAudio *jpb_PCAudioCreate(
     }
     audio->outputEnabled = enable_output != 0;
     audio->musicVolume = 128;
+    if (audio->outputEnabled &&
+        !pc_audio_load_mixer(audio, resource_root)) {
+        free(audio);
+        return NULL;
+    }
     jpb_SoundSetBankHook(pc_audio_bank_hook, audio);
     jpb_SoundSetChunkHooks(
         pc_audio_chunk_load_hook,
@@ -1695,13 +1266,26 @@ void jpb_PCAudioDestroy(JPBPCAudio *audio)
         jpb_SoundSetFadeHook(NULL, NULL);
         jpb_AudioStreamSetPlayHook(NULL, NULL);
         jpb_AudioStreamSetControlHook(NULL, NULL);
+        (void)audio->mixer.Mix_HaltChannel(-1);
+        (void)audio->mixer.Mix_HaltMusic();
     }
-    for (index = 0; index < JPB_PC_AUDIO_VOICE_COUNT; ++index) {
-        pc_audio_release_voice(&audio->voices[index]);
+    if (audio->music != NULL) {
+        audio->mixer.Mix_FreeMusic(audio->music);
+        audio->music = NULL;
     }
-    pc_audio_release_voice(&audio->music);
     for (index = 0; index < audio->sampleCount; ++index) {
+        if (audio->samples[index].chunk != NULL) {
+            audio->mixer.Mix_FreeChunk(
+                audio->samples[index].chunk);
+        }
         free(audio->samples[index].bytes);
     }
+    if (audio->mixerOpened) {
+        audio->mixer.Mix_CloseAudio();
+    }
+    if (audio->outputEnabled && audio->mixer.Mix_Quit != NULL) {
+        audio->mixer.Mix_Quit();
+    }
+    pc_audio_unload_mixer(audio);
     free(audio);
 }

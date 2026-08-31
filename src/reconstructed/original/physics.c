@@ -139,6 +139,13 @@ static int solidhack;
 static FVECTOR4 box[5];
 static int streetsending;
 
+/* Host-only, opt-in observation state; disabled during normal gameplay. */
+static int jpb_collision_diagnostics_object = -1;
+static int jpb_collision_diagnostics_current_object = -1;
+static int jpb_collision_diagnostics_pending;
+static _movement_packet jpb_collision_diagnostics_packet;
+static JPBPhysicsCollisionDiagnostics jpb_collision_diagnostics;
+
 /* Direct PDB global at RVA 0x53A4E0. */
 _collide_info bestinfo;
 _movement_packet mvp;
@@ -156,6 +163,27 @@ static char splasheffects[30] = {
 _solid *jpb_PhysicsGetWhichSolid(void)
 {
     return whichsolid;
+}
+
+void jpb_PhysicsSetCollisionDiagnosticsObject(int object_id)
+{
+    jpb_collision_diagnostics_object = object_id;
+    jpb_collision_diagnostics_current_object = -1;
+    jpb_collision_diagnostics_pending = 0;
+    memset(
+        &jpb_collision_diagnostics,
+        0,
+        sizeof(jpb_collision_diagnostics));
+}
+
+int jpb_PhysicsGetCollisionDiagnostics(
+    JPBPhysicsCollisionDiagnostics *diagnostics)
+{
+    if (diagnostics == NULL || !jpb_collision_diagnostics.valid) {
+        return 0;
+    }
+    *diagnostics = jpb_collision_diagnostics;
+    return 1;
 }
 
 static int32_t physics_trunc_float_to_i32(float value)
@@ -1648,7 +1676,7 @@ static void CharBlocking(
     if (!(testpos1.vy > top0) &&
         !(bottom0 > top1)) {
         flatdist = VectorNormalize3(
-            angle.vx, 0.0f, angle.vz, &newangle);
+            angle.vx, 0.0f, angle.vz, &angle);
         if (flatdist < totalradius) {
             extra = totalradius - flatdist;
             if (extra > 0.0f &&
@@ -1751,68 +1779,17 @@ int jpb_PhysicsCharBlockingState(
     return JPB_PHYSICS_RESULT_OK;
 }
 
-/*
- * Bounded extraction of MovePlayer's character-contact sweep at RVAs
- * 0xDDC64..0xDDF3D, including the exact desert-beast/worm node-contact branch
- * at RVAs 0xDDD43..0xDDEE5. This descriptive facade is not an original PDB
- * symbol.
- */
-int jpb_PhysicsMoveCharacterContacts(physicsObject *p0)
+/* MovePlayer RVAs 0xDDC64..0xDDF3D. */
+static void MoveCharacterContacts(
+    physicsObject *p0,
+    playerObject *player,
+    const FVECTOR *testpos0,
+    const FVECTOR *dir0,
+    float dist0)
 {
-    sceneObject *scene0;
-    playerObject *player;
-    FVECTOR testpos0;
-    FVECTOR dir0 = {0.0f, 0.0f, 0.0f};
-    float dist0;
-    int object_id;
+    int object_id = p0->physicsRoot.objectID;
     int index;
 
-    if (p0 == NULL ||
-        p0->physicsRoot.pParent == NULL) {
-        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
-    }
-    object_id = p0->physicsRoot.objectID;
-    if ((uint32_t)object_id >= JPB_PHYSICS_CAPACITY) {
-        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
-    }
-    scene0 =
-        (sceneObject *)p0->physicsRoot.pParent;
-    player = (playerObject *)scene0->pPlayer;
-    if (player == NULL) {
-        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
-    }
-    if ((player->pFlags &
-         UINT32_C(0x44000000)) != 0) {
-        return JPB_PHYSICS_RESULT_OK;
-    }
-
-    /* Validate authentic component graphs before publishing any pair state. */
-    for (index = object_id + 1;
-         index < JPB_PHYSICS_CAPACITY;
-         ++index) {
-        physicsObject *p1 = &maPhysicsData[index];
-        sceneObject *scene1;
-        playerObject *player1;
-
-        if (p1->physicsRoot.objectID == -1) {
-            continue;
-        }
-        if (p1->physicsRoot.pParent == NULL) {
-            return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
-        }
-        scene1 =
-            (sceneObject *)p1->physicsRoot.pParent;
-        player1 = (playerObject *)scene1->pPlayer;
-        if (scene1->pScene == NULL ||
-            player1 == NULL) {
-            return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
-        }
-    }
-
-    testpos0.vx = p0->pos.vx + p0->mov.vx;
-    testpos0.vy = p0->pos.vy + p0->mov.vy;
-    testpos0.vz = p0->pos.vz + p0->mov.vz;
-    dist0 = VectorNormalize2(&p0->mov, &dir0);
     for (index = object_id + 1;
          index < JPB_PHYSICS_CAPACITY;
          ++index) {
@@ -1897,13 +1874,68 @@ int jpb_PhysicsMoveCharacterContacts(physicsObject *p0)
                     p0,
                     p1,
                     &p0->pos,
-                    &testpos0,
-                    &dir0,
+                    (FVECTOR *)testpos0,
+                    (FVECTOR *)dir0,
                     dist0,
                     &maRange[object_id][index]);
             }
         }
     }
+}
+
+/*
+ * Descriptive test facade for MovePlayer's exact character-contact sweep.
+ * This is not an original PDB symbol; validation remains outside live play.
+ */
+int jpb_PhysicsMoveCharacterContacts(physicsObject *p0)
+{
+    sceneObject *scene0;
+    playerObject *player;
+    FVECTOR testpos0;
+    FVECTOR dir0 = {0.0f, 0.0f, 0.0f};
+    float dist0;
+    int object_id;
+    int index;
+
+    if (p0 == NULL || p0->physicsRoot.pParent == NULL) {
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
+    }
+    object_id = p0->physicsRoot.objectID;
+    if ((uint32_t)object_id >= JPB_PHYSICS_CAPACITY) {
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
+    }
+    scene0 = (sceneObject *)p0->physicsRoot.pParent;
+    player = (playerObject *)scene0->pPlayer;
+    if (player == NULL) {
+        return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
+    }
+    if ((player->pFlags & UINT32_C(0x44000000)) != 0) {
+        return JPB_PHYSICS_RESULT_OK;
+    }
+
+    for (index = object_id + 1;
+         index < JPB_PHYSICS_CAPACITY;
+         ++index) {
+        physicsObject *p1 = &maPhysicsData[index];
+        sceneObject *scene1;
+
+        if (p1->physicsRoot.objectID == -1) {
+            continue;
+        }
+        if (p1->physicsRoot.pParent == NULL) {
+            return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
+        }
+        scene1 = (sceneObject *)p1->physicsRoot.pParent;
+        if (scene1->pScene == NULL || scene1->pPlayer == NULL) {
+            return JPB_PHYSICS_RESULT_INVALID_ARGUMENT;
+        }
+    }
+
+    testpos0.vx = p0->pos.vx + p0->mov.vx;
+    testpos0.vy = p0->pos.vy + p0->mov.vy;
+    testpos0.vz = p0->pos.vz + p0->mov.vz;
+    dist0 = VectorNormalize2(&p0->mov, &dir0);
+    MoveCharacterContacts(p0, player, &testpos0, &dir0, dist0);
     return JPB_PHYSICS_RESULT_OK;
 }
 
@@ -1984,6 +2016,9 @@ static int CheckCubeBlocking(
             to.vz = from.vz + move.vz * vel;
             bestinfo.dist = vel;
             p0->lastpolyhit = NULL;
+            jpb_collision_diagnostics_current_object =
+                p0->physicsRoot.objectID;
+            jpb_collision_diagnostics_pending = 0;
             if (newclosestPoly(
                     &from,
                     &to,
@@ -1995,7 +2030,36 @@ static int CheckCubeBlocking(
                     &cubehit,
                     &entryhit,
                     &polyhit) == 0) {
+                /* Retail stores the candidate endpoint in the final-position
+                 * slots before this sweep (0x1400DC857-0x1400DC8E1). A clear
+                 * sweep therefore survives to finalization at 0x1400DD459. */
+                org = to;
+                jpb_collision_diagnostics_current_object = -1;
                 break;
+            }
+            jpb_collision_diagnostics_current_object = -1;
+
+            if (jpb_collision_diagnostics_pending &&
+                p0->physicsRoot.objectID ==
+                    jpb_collision_diagnostics_object) {
+                ++jpb_collision_diagnostics.sequence;
+                jpb_collision_diagnostics.valid = 1;
+                jpb_collision_diagnostics.objectId =
+                    p0->physicsRoot.objectID;
+                jpb_collision_diagnostics.collisionIndex =
+                    numcollides;
+                jpb_collision_diagnostics.from = from;
+                jpb_collision_diagnostics.to = to;
+                jpb_collision_diagnostics.movement = move;
+                jpb_collision_diagnostics.packet =
+                    jpb_collision_diagnostics_packet;
+                jpb_collision_diagnostics.selectedInfo = bestinfo;
+                jpb_collision_diagnostics.cube =
+                    (uintptr_t)(void *)cubehit;
+                jpb_collision_diagnostics.entry =
+                    (uintptr_t)(void *)entryhit;
+                jpb_collision_diagnostics.poly =
+                    (uintptr_t)(void *)polyhit;
             }
 
             collidetype = bestinfo.type & 3;
@@ -2084,6 +2148,12 @@ static int CheckCubeBlocking(
                 move.vz -= tslide * slidenorm.vz;
             }
             len = VectorNormalize(&move);
+
+            if (jpb_collision_diagnostics.valid &&
+                p0->physicsRoot.objectID ==
+                    jpb_collision_diagnostics_object) {
+                jpb_collision_diagnostics.resolvedMovement = move;
+            }
 
             if ((player->hitNumber == 0 && whichsolid != NULL) ||
                 (entryhit != NULL &&
@@ -2648,11 +2718,7 @@ void MovePlayer(physicsObject *p0)
         testpos0.vz = p0->pos.vz + p0->mov.vz;
         dist0 = VectorNormalize2(&p0->mov, &dir0);
 
-        /*
-         * Exact RVAs 0xDDC64..0xDDF3D. The public facade shares this
-         * instruction-reviewed sweep and adds validation only.
-         */
-        (void)jpb_PhysicsMoveCharacterContacts(p0);
+        MoveCharacterContacts(p0, player, &testpos0, &dir0, dist0);
         if ((p0->flags & UINT32_C(0x00000080)) == 0 &&
             WorldBlocking(
                 player,
@@ -3149,7 +3215,10 @@ static int WorldBlocking(
     }
 
     if ((player->pFlags & (uint32_t)JPB_PLAYER_FLAG_AIRBORNE) != 0) {
-        if (p0->mov.vy < 0.0f) {
+        /* Retail RVA 0xDECF3 reads physicsObject+0x10C (airmov.vy).
+         * CheckCubeBlocking rewrites mov to the collision-adjusted displacement,
+         * which can be zero when a descending player also touches a wall. */
+        if (p0->airmov.vy < 0.0f) {
             sceneObject *scene =
                 (sceneObject *)player->playerRoot.pParent;
             modelObject *model = (modelObject *)scene->pModel;
@@ -3177,11 +3246,14 @@ static int WorldBlocking(
             }
 
             if (pos != NULL &&
-                (float)pos->vy + p0->mov.vy <= ground) {
+                (float)pos->vy + p0->airmov.vy <= ground) {
                 int landing_motion =
                     player->playerID == 0x4b ? -1 : 3;
 
-                if (player->currentMotion != landing_motion) {
+                /* Retail RVA 0xDEDCA repeats the +0x10C descent check after
+                 * the node-center lookup, which may update actor physics. */
+                if (player->currentMotion != landing_motion &&
+                    p0->airmov.vy < 0.0f) {
                     if (p0->movemode == MOVE_BLOWN) {
                         p0->movemode = MOVE_NORMAL;
                         p0->airTime = 0;
@@ -5072,6 +5144,11 @@ static int polycollidecheck(void)
             return 0;
         }
         bestinfo = mvp.info;
+        if (jpb_collision_diagnostics_current_object ==
+            jpb_collision_diagnostics_object) {
+            jpb_collision_diagnostics_packet = mvp;
+            jpb_collision_diagnostics_pending = 1;
+        }
         return 1;
     }
 
@@ -5088,6 +5165,11 @@ static int polycollidecheck(void)
                 mvp.info.facenormal.vy;
             if (match != 0) {
                 bestinfo = mvp.info;
+                if (jpb_collision_diagnostics_current_object ==
+                    jpb_collision_diagnostics_object) {
+                    jpb_collision_diagnostics_packet = mvp;
+                    jpb_collision_diagnostics_pending = 1;
+                }
             }
             if (match == 0) {
                 return 0;
@@ -5101,6 +5183,11 @@ static int polycollidecheck(void)
     }
 
     bestinfo = mvp.info;
+    if (jpb_collision_diagnostics_current_object ==
+        jpb_collision_diagnostics_object) {
+        jpb_collision_diagnostics_packet = mvp;
+        jpb_collision_diagnostics_pending = 1;
+    }
     match = 1;
     if (mvp.info.type != 2) {
         return match;

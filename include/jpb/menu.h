@@ -481,6 +481,11 @@ typedef void (*JPBMenuP2CharacterSelectDrawHook)(
     uint32_t player_two_pad,
     int is_versus,
     void *user_data);
+typedef void (*JPBMenuSpecialMessageHook)(
+    uint8_t *message,
+    uint16_t message_menu,
+    uint16_t response_menu,
+    void *user_data);
 
 typedef struct JPBMenuPlatformHooks {
     void (*initInput)(void *user_data);
@@ -515,6 +520,9 @@ void jpb_MenuSetP1CharacterSelectDrawHook(
     void *user_data);
 void jpb_MenuSetP2CharacterSelectDrawHook(
     JPBMenuP2CharacterSelectDrawHook hook,
+    void *user_data);
+void jpb_MenuSetSpecialMessageHook(
+    JPBMenuSpecialMessageHook hook,
     void *user_data);
 void jpb_MenuSetPlatformHooks(
     const JPBMenuPlatformHooks *hooks,

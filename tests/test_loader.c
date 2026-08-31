@@ -135,6 +135,33 @@ static int test_level_load_specials(void)
     return 0;
 }
 
+static int test_enemy_model_special_flag_field(void)
+{
+    playerObject player;
+    Motion motions[128];
+
+    memset(&player, 0, sizeof(player));
+    memset(motions, 0, sizeof(motions));
+    player.pFlags = UINT32_C(0x40);
+    player.forceFlags = UINT32_C(0x80);
+
+    jpb_LoaderApplyEnemyModelSpecialsForTest(&player, motions, 9);
+    CHECK(player.pFlags == UINT32_C(0x40));
+    CHECK(player.forceFlags == UINT32_C(0x280));
+    CHECK(motions[86].FunctPtr == 0x18);
+
+    player.forceFlags = UINT32_C(0x80);
+    jpb_LoaderApplyEnemyModelSpecialsForTest(&player, motions, 0x2b);
+    CHECK(player.pFlags == UINT32_C(0x40));
+    CHECK(player.forceFlags == UINT32_C(0x280));
+
+    player.forceFlags = UINT32_C(0x80);
+    jpb_LoaderApplyEnemyModelSpecialsForTest(&player, motions, 1);
+    CHECK(player.pFlags == UINT32_C(0x40));
+    CHECK(player.forceFlags == UINT32_C(0x80));
+    return 0;
+}
+
 static int test_jarjar_weapon_override(void)
 {
     enum {
@@ -264,6 +291,7 @@ int main(void)
     result |= test_node_name_search();
     result |= test_data_array_initialization();
     result |= test_level_load_specials();
+    result |= test_enemy_model_special_flag_field();
     result |= test_jarjar_weapon_override();
     if (result == 0) {
         puts("loader tests passed");

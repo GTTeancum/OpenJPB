@@ -10,6 +10,7 @@ extern "C" {
 #endif
 
 typedef struct geomData geomData;
+typedef struct Motion Motion;
 typedef struct ufbx_scene ufbx_scene;
 
 enum {
@@ -64,6 +65,8 @@ void jpb_LoaderSetEnemyCreateTestHook(
     void *user_data);
 void jpb_LoaderApplyLevelLoadSpecialsForTest(int level);
 int jpb_LoaderFinalizeEnemyForTest(wsl_ENEMY *enemy);
+void jpb_LoaderApplyEnemyModelSpecialsForTest(
+    playerObject *player, Motion *motions, int model_id);
 #endif
 
 #ifdef __cplusplus

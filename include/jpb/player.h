@@ -340,6 +340,12 @@ JPB_PLAYER_STATIC_ASSERT(
     offsetof(playerObject, hitLocation) == 248,
     "playerObject.hitLocation x64 offset changed");
 JPB_PLAYER_STATIC_ASSERT(
+    offsetof(playerObject, pFlags) == 320,
+    "playerObject.pFlags x64 offset changed");
+JPB_PLAYER_STATIC_ASSERT(
+    offsetof(playerObject, forceFlags) == 324,
+    "playerObject.forceFlags x64 offset changed");
+JPB_PLAYER_STATIC_ASSERT(
     offsetof(playerObject, paNodesSizes) == 424,
     "playerObject.paNodesSizes x64 offset changed");
 JPB_PLAYER_STATIC_ASSERT(

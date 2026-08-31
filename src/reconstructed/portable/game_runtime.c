@@ -85,7 +85,7 @@ static void game_runtime_record_duration(
 enum {
     JPB_GAME_RUNTIME_PATH_CAPACITY = 1024,
     JPB_GAME_RUNTIME_MODEL_TEXTURE_CAPACITY =
-        JPB_BMD_NODE_CAPACITY,
+        JPB_TEXTURE_MATERIAL_CAPACITY,
     JPB_GAME_RUNTIME_ENEMY_CLASS_CAPACITY =
         JPB_ACTOR_NAME_COUNT
 };
@@ -2427,12 +2427,94 @@ static int game_runtime_path_is_absolute(const char *path)
            (path[2] == '/' || path[2] == '\\');
 }
 
+static JPBGameRuntimeImageInspectHook game_runtime_image_inspect_hook;
+static JPBGameRuntimeImageLoadHook game_runtime_image_load_hook;
+
+void jpb_GameRuntimeSetImageHooks(
+    JPBGameRuntimeImageInspectHook inspect_hook,
+    JPBGameRuntimeImageLoadHook load_hook)
+{
+    game_runtime_image_inspect_hook = inspect_hook;
+    game_runtime_image_load_hook = load_hook;
+}
+
+static int game_runtime_path_with_extension(
+    const char *source,
+    const char *extension,
+    char *destination,
+    size_t capacity)
+{
+    const char *slash;
+    const char *backslash;
+    const char *base;
+    const char *dot;
+    size_t stem_bytes;
+    size_t extension_bytes;
+
+    if (source == NULL || extension == NULL || destination == NULL ||
+        capacity == 0) {
+        return 0;
+    }
+    slash = strrchr(source, '/');
+    backslash = strrchr(source, '\\');
+    base = source;
+    if (slash != NULL) base = slash + 1;
+    if (backslash != NULL && backslash + 1 > base) {
+        base = backslash + 1;
+    }
+    dot = strrchr(base, '.');
+    stem_bytes = dot != NULL
+        ? (size_t)(dot - source)
+        : strlen(source);
+    extension_bytes = strlen(extension);
+    if (stem_bytes + extension_bytes + 1 > capacity) {
+        return 0;
+    }
+    memcpy(destination, source, stem_bytes);
+    memcpy(destination + stem_bytes, extension, extension_bytes + 1);
+    return 1;
+}
+
+static int game_runtime_load_platform_image(
+    JPBGameRuntimeTexture *entry,
+    const char *path,
+    int *width,
+    int *height)
+{
+    size_t pixel_count;
+
+    if (entry == NULL || path == NULL || width == NULL || height == NULL ||
+        game_runtime_image_inspect_hook == NULL ||
+        game_runtime_image_load_hook == NULL ||
+        !game_runtime_image_inspect_hook(path, width, height) ||
+        *width <= 0 || *height <= 0 ||
+        (size_t)*width > SIZE_MAX / (size_t)*height ||
+        (size_t)*width * (size_t)*height >
+            SIZE_MAX / sizeof(uint32_t)) {
+        return 0;
+    }
+    pixel_count = (size_t)*width * (size_t)*height;
+    entry->pixels =
+        (uint32_t *)malloc(pixel_count * sizeof(uint32_t));
+    if (entry->pixels == NULL ||
+        !game_runtime_image_load_hook(
+            path, *width, *height, entry->pixels, *width)) {
+        free(entry->pixels);
+        entry->pixels = NULL;
+        *width = 0;
+        *height = 0;
+        return 0;
+    }
+    return 1;
+}
+
 static int game_runtime_load_texture(
     JPBGameRuntimeTextureCache *cache,
     JPBGameRuntimeTexture *entry,
     const char *texture_name)
 {
     char path[JPB_GAME_RUNTIME_PATH_CAPACITY];
+    char png_path[JPB_GAME_RUNTIME_PATH_CAPACITY];
     char local_path[JPB_GAME_RUNTIME_PATH_CAPACITY];
     char resource_name[JPB_RESOURCE_PATH_CAPACITY];
     JPBFileHandle file = 0;
@@ -2444,15 +2526,28 @@ static int game_runtime_load_texture(
     size_t path_index;
     size_t name_bytes = strlen(texture_name);
     int exact_path = game_runtime_path_is_absolute(texture_name);
+    int decoded_width = 0;
+    int decoded_height = 0;
 
     if (name_bytes >= sizeof(entry->name)) {
         return 0;
     }
     memcpy(entry->name, texture_name, name_bytes + 1);
     texture_name = entry->name;
-    if (exact_path && name_bytes < sizeof(path)) {
-        memcpy(path, texture_name, name_bytes + 1);
+    if (exact_path) {
+        if (!game_runtime_path_with_extension(
+                texture_name, ".tga", path, sizeof(path))) {
+            return 0;
+        }
         (void)file_OPEN(path, &file);
+        if (file == 0 &&
+            game_runtime_path_with_extension(
+                texture_name, ".png", path, sizeof(path))) {
+            if (game_runtime_load_platform_image(
+                    entry, path, &decoded_width, &decoded_height)) {
+                goto image_ready;
+            }
+        }
     }
     if (file == 0) {
         if (!game_runtime_texture_path(
@@ -2585,6 +2680,16 @@ static int game_runtime_load_texture(
             memcpy(path, resource_path, strlen(resource_path) + 1);
         }
         if (file == 0 && !file_OPEN(path, &file)) {
+            if (game_runtime_path_with_extension(
+                    path, ".png", png_path, sizeof(png_path)) &&
+                game_runtime_load_platform_image(
+                    entry,
+                    png_path,
+                    &decoded_width,
+                    &decoded_height)) {
+                memcpy(path, png_path, strlen(png_path) + 1);
+                goto image_ready;
+            }
             fprintf(
                 stderr,
                 "texture_load_failed=(name=%s,local=%s,"
@@ -2596,7 +2701,7 @@ static int game_runtime_load_texture(
     file_size = file_GETSIZE(&file);
     if (file_size == 0 || file_size > INT32_MAX) {
         (void)file_CLOSE(&file);
-        return 0;
+        goto try_png;
     }
     entry->fileData = (uint8_t *)malloc((size_t)file_size);
     if (entry->fileData == NULL) {
@@ -2611,7 +2716,7 @@ static int game_runtime_load_texture(
         (void)file_CLOSE(&file);
         free(entry->fileData);
         entry->fileData = NULL;
-        return 0;
+        goto try_png;
     }
     (void)file_CLOSE(&file);
     if (jpb_TgaInspect(
@@ -2620,13 +2725,13 @@ static int game_runtime_load_texture(
             &tga) != JPB_TGA_OK) {
         free(entry->fileData);
         entry->fileData = NULL;
-        return 0;
+        goto try_png;
     }
     pixel_count = (size_t)tga.width * (size_t)tga.height;
     if (pixel_count > SIZE_MAX / sizeof(uint32_t)) {
         free(entry->fileData);
         entry->fileData = NULL;
-        return 0;
+        goto try_png;
     }
     entry->pixels =
         (uint32_t *)malloc(pixel_count * sizeof(uint32_t));
@@ -2640,12 +2745,29 @@ static int game_runtime_load_texture(
         free(entry->fileData);
         entry->pixels = NULL;
         entry->fileData = NULL;
+        goto try_png;
+    }
+    decoded_width = (int)tga.width;
+    decoded_height = (int)tga.height;
+    goto image_ready;
+
+try_png:
+    if (!game_runtime_path_with_extension(
+            path, ".png", png_path, sizeof(png_path)) ||
+        !game_runtime_load_platform_image(
+            entry,
+            png_path,
+            &decoded_width,
+            &decoded_height)) {
         return 0;
     }
+    memcpy(path, png_path, strlen(png_path) + 1);
+
+image_ready:
     entry->texture.pixels = entry->pixels;
-    entry->texture.width = tga.width;
-    entry->texture.height = tga.height;
-    entry->texture.stridePixels = tga.width;
+    entry->texture.width = (size_t)decoded_width;
+    entry->texture.height = (size_t)decoded_height;
+    entry->texture.stridePixels = (size_t)decoded_width;
     memset(&material, 0, sizeof(material));
     material.samplerType = TEXTURESAMPLER_LINEARCLAMP;
     material.colorOverride = -1;
@@ -2694,8 +2816,13 @@ static int game_runtime_resolve_texture(
             return 1;
         }
     }
-    if (cache->textureCount >=
-        cache->textureCapacity) {
+    if (cache->textureCount >= cache->textureCapacity) {
+        fprintf(
+            stderr,
+            "texture_cache_full=(name=%s,count=%zu,capacity=%zu)\n",
+            texture_name,
+            cache->textureCount,
+            cache->textureCapacity);
         return 0;
     }
     entry = &cache->textures[cache->textureCount++];
@@ -3613,9 +3740,11 @@ int jpb_GameRuntimeInitWithPlayerAssets(
     }
     memset(&runtime->environment, 0, sizeof(runtime->environment));
     scene_gInitRoot();
+    /* Resident sprites fill 50 slots; _LoadTexture(NULL) later requests the
+     * shared white material through this same retail-style cache. */
     runtime->uiTextureCache =
         game_runtime_create_texture_cache(
-            JPB_RESIDENT_SPRITE_COUNT,
+            JPB_RESIDENT_SPRITE_COUNT + 1,
             level_index);
     resident_sprite_path = resource_getPath(
         "a_credit.tga",
@@ -4285,6 +4414,100 @@ int jpb_GameRuntimeEnemyClassWasRendered(
     return 0;
 }
 
+int jpb_GameRuntimeGetEnemyPlacementState(
+    const JPBGameRuntime *runtime,
+    int placement_index,
+    JPBGameRuntimeEnemyPlacementState *state)
+{
+    const wsl_BAP_PLACEMENT *placement;
+    size_t index;
+
+    if (runtime == NULL || state == NULL || runtime->world == NULL ||
+        runtime->world->apEnemy == NULL || runtime->enemyState == NULL ||
+        placement_index < 0 || placement_index >= runtime->world->nEnemy) {
+        return 0;
+    }
+    placement = runtime->world->apEnemy[placement_index];
+    if (placement == NULL) {
+        return 0;
+    }
+    for (index = 0;
+         index < JPB_GAME_RUNTIME_ENEMY_CAPACITY;
+         ++index) {
+        const JPBGameRuntimeEnemyActor *actor =
+            &runtime->enemyState->actors[index];
+        const wsl_ENEMY *enemy = actor->enemy;
+
+        if (enemy == NULL || enemy->pPlace != placement) {
+            continue;
+        }
+        memset(state, 0, sizeof(*state));
+        state->placementIndex = placement_index;
+        state->objectId = actor->actorRoot.objectID;
+        state->enemyId = enemy->enemyID;
+        state->enemyNum = enemy->enemyNum;
+        state->modelId = actor->player != NULL
+            ? actor->player->playerID
+            : -1;
+        state->active = enemy->active;
+        state->energy = state->objectId >= 0
+            ? game_gGetEnergy(state->objectId)
+            : 0;
+        state->maxEnergy = state->objectId >= 0
+            ? game_gGetMaxEnergy(state->objectId)
+            : 0;
+        state->currentAiMode = enemy->currAIMode;
+        state->aiLocation = enemy->aiLocation;
+        state->aiNodeIndex = -1;
+        if (enemy->pAI != NULL && enemy->pAINode != NULL &&
+            enemy->pAINode >= enemy->pAI->aiNodes &&
+            enemy->pAINode < enemy->pAI->aiNodes + enemy->pAI->numNodes) {
+            state->aiNodeIndex =
+                (int)(enemy->pAINode - enemy->pAI->aiNodes);
+        }
+        state->lastWaypoint = enemy->lastWayPoint;
+        state->movementMode = enemy->movementMode;
+        state->movementSpeed = enemy->movementSpeed;
+        state->destinationX = enemy->destination.vx;
+        state->destinationY = enemy->destination.vy;
+        state->destinationZ = enemy->destination.vz;
+        if (actor->player != NULL) {
+            state->playerFlags = actor->player->pFlags;
+            state->currentMotion = actor->player->currentMotion;
+            state->targetObjectId = actor->player->target != NULL
+                ? actor->player->target->playerRoot.objectID
+                : -1;
+            if (actor->player->paMotions != NULL &&
+                actor->player->currentMotion >= 0 &&
+                actor->player->currentMotion < actor->player->maxMotions) {
+                state->motionVelocity =
+                    actor->player->paMotions[
+                        actor->player->currentMotion].vel;
+            }
+        }
+        if (actor->physics != NULL) {
+            state->physicsFlags = actor->physics->flags;
+            state->facing = actor->physics->angle.vy;
+            state->positionX = actor->physics->pos.vx;
+            state->positionY = actor->physics->pos.vy;
+            state->positionZ = actor->physics->pos.vz;
+            state->movementX = actor->physics->mov.vx;
+            state->movementY = actor->physics->mov.vy;
+            state->movementZ = actor->physics->mov.vz;
+            state->currentMovementX = actor->physics->currentmov.vx;
+            state->currentMovementY = actor->physics->currentmov.vy;
+            state->currentMovementZ = actor->physics->currentmov.vz;
+            state->constantMovementX = actor->physics->constmov.vx;
+            state->constantMovementY = actor->physics->constmov.vy;
+            state->constantMovementZ = actor->physics->constmov.vz;
+        }
+        state->renderedTriangles = actor->renderedTriangles;
+        state->renderedPixels = actor->renderedPixels;
+        return 1;
+    }
+    return 0;
+}
+
 static JPBGameRuntimeEnemyActor *
 game_runtime_primary_enemy_actor(
     JPBGameRuntime *runtime)
@@ -4501,12 +4724,18 @@ static void game_runtime_observe_player_process(
         if (attached != runtime->playerAuthoredAiObserved) {
             if (attached) {
                 ++runtime->playerAuthoredAiAttachCount;
+                runtime->playerAuthoredAiAttachFrame =
+                    (uint32_t)totalframes;
                 runtime->lastPlayerAuthoredAiEnemyId =
                     (int16_t)player->pEnemy->enemyID;
                 runtime->lastPlayerAuthoredAiOwnerType =
                     (int16_t)player->pEnemy->ownerType;
+                runtime->lastPlayerAuthoredAiNumber =
+                    (int16_t)player->pEnemy->aiNum;
             } else {
                 ++runtime->playerAuthoredAiReleaseCount;
+                runtime->playerAuthoredAiReleaseFrame =
+                    (uint32_t)totalframes;
             }
             runtime->playerAuthoredAiObserved = attached;
         }
@@ -7174,14 +7403,9 @@ int jpb_GameRuntimeFrame(
     }
     ++runtime->profileFrameCount;
     game_runtime_observe_player_lifecycle(runtime);
-    /*
-     * game_OneGameLoop draws an already-active in-game menu before
-     * game_runStage consumes this frame's status bits. A newly triggered
-     * game-over menu therefore first appears on the following frame.
-     */
-    if (GameStruct.inMenuFlag != 0) {
-        menu_mainLoop();
-    }
+    /* game_OneGameLoop calls this unconditionally at retail RVA 0xA8C56.
+     * Its non-menu branch owns pause/abort dispatch; active menus draw here. */
+    menu_mainLoop();
     game_runStage();
     view = scene_GetSceneMatrix();
     runtime->camera = gCamera;

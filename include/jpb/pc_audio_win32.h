@@ -27,9 +27,9 @@ typedef struct JPBPCAudioStats {
 } JPBPCAudioStats;
 
 /*
- * Win32-only host adapter for the platform-neutral sound callbacks. This is
- * a substituted PC implementation, not an original PDB symbol. The caller
- * may disable output and still use exact bank/path and WAV inspection.
+ * Win32 runtime binding for the shipped SDL_mixer sound calls. The adapter
+ * itself is reconstruction infrastructure, not an original PDB symbol. The
+ * caller may disable output and still use exact bank/path and WAV inspection.
  */
 JPBPCAudio *jpb_PCAudioCreate(
     const char *world_path,

@@ -34,6 +34,19 @@ enum JPBGameRuntimeResult {
 const char *jpb_GameRuntimeLastFailureStage(void);
 const char *jpb_GameRuntimeLastFailureDetail(void);
 
+typedef int (*JPBGameRuntimeImageInspectHook)(
+    const char *path, int *width, int *height);
+typedef int (*JPBGameRuntimeImageLoadHook)(
+    const char *path,
+    int width,
+    int height,
+    uint32_t *pixels,
+    int stride_pixels);
+
+void jpb_GameRuntimeSetImageHooks(
+    JPBGameRuntimeImageInspectHook inspect_hook,
+    JPBGameRuntimeImageLoadHook load_hook);
+
 enum {
     JPB_GAME_RUNTIME_ENEMY_CAPACITY =
         JPB_PLAYER_CAPACITY - 2,
@@ -53,6 +66,46 @@ typedef struct JPBGameRuntimeTextureCache
     JPBGameRuntimeTextureCache;
 typedef struct JPBGameRuntimeEnemyState
     JPBGameRuntimeEnemyState;
+
+typedef struct JPBGameRuntimeEnemyPlacementState {
+    int placementIndex;
+    int objectId;
+    int enemyId;
+    int enemyNum;
+    int modelId;
+    int active;
+    int energy;
+    int maxEnergy;
+    int currentAiMode;
+    int aiLocation;
+    int aiNodeIndex;
+    int lastWaypoint;
+    int movementMode;
+    int movementSpeed;
+    int destinationX;
+    int destinationY;
+    int destinationZ;
+    uint32_t playerFlags;
+    int currentMotion;
+    int motionVelocity;
+    int targetObjectId;
+    uint32_t physicsFlags;
+    int facing;
+    float positionX;
+    float positionY;
+    float positionZ;
+    float movementX;
+    float movementY;
+    float movementZ;
+    float currentMovementX;
+    float currentMovementY;
+    float currentMovementZ;
+    float constantMovementX;
+    float constantMovementY;
+    float constantMovementZ;
+    size_t renderedTriangles;
+    size_t renderedPixels;
+} JPBGameRuntimeEnemyPlacementState;
 
 typedef int (*JPBGameRuntimeLevelRenderHook)(
     void *user_data,
@@ -448,8 +501,11 @@ typedef struct JPBGameRuntime {
     uint32_t levelExitStateFrame;
     uint32_t playerAuthoredAiAttachCount;
     uint32_t playerAuthoredAiReleaseCount;
+    uint32_t playerAuthoredAiAttachFrame;
+    uint32_t playerAuthoredAiReleaseFrame;
     int16_t lastPlayerAuthoredAiEnemyId;
     int16_t lastPlayerAuthoredAiOwnerType;
+    int16_t lastPlayerAuthoredAiNumber;
     int playerAuthoredAiObserved;
     uint32_t controlPressedFrameCount[2];
     uint32_t controlHeldFrameCount[2];
@@ -573,6 +629,10 @@ int jpb_GameRuntimeEnemyClassWasActive(
 int jpb_GameRuntimeEnemyClassWasRendered(
     const JPBGameRuntime *runtime,
     int actor_num);
+int jpb_GameRuntimeGetEnemyPlacementState(
+    const JPBGameRuntime *runtime,
+    int placement_index,
+    JPBGameRuntimeEnemyPlacementState *state);
 int jpb_GameRuntimeAddPlayerComboData(
     JPBGameRuntime *runtime,
     const char *cmb_path);

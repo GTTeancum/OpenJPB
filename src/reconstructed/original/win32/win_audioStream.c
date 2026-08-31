@@ -11,7 +11,8 @@
  *   decompiled - stream lookup at matched RVA 0x12BC00 and all 103 table
  *                entries at matched RVA 0x4D45D0.
  *   boundary   - mixer loading/playback/control is delegated to jpb_
- *                callbacks; the PC host binds them to WinMM.
+ *                callbacks; the PC host binds them to the shipped
+ *                SDL2_mixer.dll at runtime.
  *
  * PDB module: 0101
  * Object: W:\SWJediPowerBattles\winver\obj\x64\Steam_Release\win_audioStream.obj

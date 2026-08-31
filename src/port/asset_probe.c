@@ -39,6 +39,7 @@ int main(int argc, char **argv)
     int print_ai = -1;
     int find_opcode = -1;
     int print_opcode_summary = 0;
+    int print_player_controls = 0;
     int argument;
     int result;
 
@@ -46,7 +47,7 @@ int main(int argc, char **argv)
         fprintf(
             stderr,
             "usage: %s <level.j3d> [--placements] [--ai <index>] "
-            "[--opcode <value>] [--opcode-summary]\n",
+            "[--opcode <value>] [--opcode-summary] [--player-controls]\n",
             argv[0]);
         return 2;
     }
@@ -91,12 +92,16 @@ int main(int argc, char **argv)
                        argv[argument],
                        "--opcode-summary") == 0) {
             print_opcode_summary = 1;
+        } else if (strcmp(
+                       argv[argument],
+                       "--player-controls") == 0) {
+            print_player_controls = 1;
         } else {
             fprintf(
                 stderr,
                 "usage: %s <level.j3d> [--placements] "
                 "[--ai <index>] [--opcode <value>] "
-                "[--opcode-summary]\n",
+                "[--opcode-summary] [--player-controls]\n",
                 argv[0]);
             return 2;
         }
@@ -456,6 +461,159 @@ int main(int argc, char **argv)
             }
         }
         free(counts);
+    }
+    if (print_player_controls) {
+        uint8_t *incoming =
+            (uint8_t *)calloc(
+                (size_t)world.nEnemy, sizeof(*incoming));
+        int control_placements = 0;
+        int external_toggle_edges = 0;
+        int self_release_edges = 0;
+        int unreferenced_placements = 0;
+        int invalid_edges = 0;
+        int source_index;
+
+        if (incoming == NULL) {
+            fputs(
+                "could not allocate player-control inventory\n",
+                stderr);
+            pointerRegistry_Reset();
+            return 7;
+        }
+        for (source_index = 0;
+             source_index < world.nEnemy;
+             ++source_index) {
+            const wsl_BAP_PLACEMENT *source =
+                world.apEnemy[source_index];
+            BAP_AI *ai;
+            UDATA *variables;
+            int variable_count;
+            int node_count;
+            int node;
+
+            if (source == NULL || source->aiNum < 0 ||
+                source->aiNum >= world.nAI) {
+                continue;
+            }
+            ai = world.apAI[source->aiNum];
+            if (ai == NULL) {
+                continue;
+            }
+            node_count = ai->numNodes - ai->numAvailable;
+            if (node_count < 0 || node_count > ai->numNodes) {
+                continue;
+            }
+            variable_count =
+                (ai->bSize -
+                 (int)offsetof(BAP_AI, aiNodes) -
+                 node_count * (int)sizeof(BAP_AINODE)) /
+                (int)sizeof(UDATA);
+            variables = (UDATA *)getPtr(
+                (int)ai->pVars, JPB_POINTER_ARRAY_AI);
+            for (node = 0; node < node_count; ++node) {
+                const BAP_AINODE *entry = &ai->aiNodes[node];
+                uint16_t encoded = (uint16_t)entry->opcode;
+                uint16_t opcode =
+                    (encoded & UINT16_C(0x4000)) != 0
+                        ? encoded & UINT16_C(0x0fff)
+                        : encoded;
+                const UDATA *args;
+                int extension;
+                int target_index;
+                int new_ai;
+                const wsl_BAP_PLACEMENT *target;
+                const char *action;
+
+                if (opcode != UINT16_C(0x060f) ||
+                    (encoded & UINT16_C(0x4000)) != 0 ||
+                    variables == NULL ||
+                    entry->vx.ui > (uint32_t)variable_count ||
+                    variable_count - (int)entry->vx.ui < 2) {
+                    continue;
+                }
+                args = &variables[entry->vx.ui];
+                extension = args[0].si;
+                new_ai = args[1].si;
+                if (extension < 0 || extension >= 12) {
+                    ++invalid_edges;
+                    printf(
+                        "player_control_invalid source=%d ai=%d node=%d "
+                        "extension=%d new_ai=%d reason=extension\n",
+                        source_index, source->aiNum, node,
+                        extension, new_ai);
+                    continue;
+                }
+                target_index = source->aiDf.enemyExt[extension];
+                if (target_index < 0 || target_index >= world.nEnemy ||
+                    new_ai < 0 || new_ai >= world.nAI) {
+                    ++invalid_edges;
+                    printf(
+                        "player_control_invalid source=%d ai=%d node=%d "
+                        "extension=%d target=%d new_ai=%d reason=range\n",
+                        source_index, source->aiNum, node,
+                        extension, target_index, new_ai);
+                    continue;
+                }
+                target = world.apEnemy[target_index];
+                if (target == NULL ||
+                    (target->aiDf.ownerType != 4 &&
+                     target->aiDf.ownerType != 5)) {
+                    continue;
+                }
+                incoming[target_index] = 1;
+                if (source->aiDf.ownerType == 4 ||
+                    source->aiDf.ownerType == 5) {
+                    action = "self-release";
+                    ++self_release_edges;
+                } else {
+                    action = "external-toggle";
+                    ++external_toggle_edges;
+                }
+                printf(
+                    "player_control_edge action=%s source=%d owner=%d "
+                    "ai=%d node=%d extension=%d target=%d owner=%d "
+                    "new_ai=%d\n",
+                    action,
+                    source_index,
+                    source->aiDf.ownerType,
+                    source->aiNum,
+                    node,
+                    extension,
+                    target_index,
+                    target->aiDf.ownerType,
+                    new_ai);
+            }
+        }
+        for (source_index = 0;
+             source_index < world.nEnemy;
+             ++source_index) {
+            const wsl_BAP_PLACEMENT *placement =
+                world.apEnemy[source_index];
+
+            if (placement == NULL ||
+                (placement->aiDf.ownerType != 4 &&
+                 placement->aiDf.ownerType != 5)) {
+                continue;
+            }
+            ++control_placements;
+            if (incoming[source_index] == 0) {
+                ++unreferenced_placements;
+                printf(
+                    "player_control_unreferenced placement=%d owner=%d ai=%d\n",
+                    source_index,
+                    placement->aiDf.ownerType,
+                    placement->aiNum);
+            }
+        }
+        printf(
+            "player_control_summary placements=%d external_toggle=%d "
+            "self_release=%d unreferenced=%d invalid=%d\n",
+            control_placements,
+            external_toggle_edges,
+            self_release_edges,
+            unreferenced_placements,
+            invalid_edges);
+        free(incoming);
     }
     pointerRegistry_Reset();
     return 0;

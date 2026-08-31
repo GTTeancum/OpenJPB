@@ -1,0 +1,3 @@
+#define IDI_JPB_PC_GAME 101
+
+IDI_JPB_PC_GAME ICON "jpb_pc_game.ico"
