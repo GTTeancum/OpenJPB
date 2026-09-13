@@ -3257,6 +3257,36 @@ static int test_level_hangar(void)
           UINT32_C(0x60));
     CHECK(gCheckPoint == 0);
     CHECK(reStartScore[0] == 0);
+
+    /* The timer-expiry path owns the same two terminal branches even when
+     * no pilot death has completed the objective. */
+    memset(abGlobalBits, 0, sizeof(abGlobalBits));
+    GameStruct.GameState = 0;
+    GameStruct.Counter = 6;
+    gGlobalTimer = 100;
+    zerobss_levelReset = 505;
+    level_Hangar();
+    level_Hangar();
+    gGlobalTimer = 100 + 400 * UINT32_C(0x3c00);
+    level_Hangar();
+    CHECK((abGlobalBits[0] & UINT8_C(2)) != 0);
+
+    memset(abGlobalBits, 0, sizeof(abGlobalBits));
+    GameStruct.GameState = 0;
+    GameStruct.Counter = 4;
+    gCheckPoint = 7;
+    reStartScore[0] = 4321;
+    gGlobalTimer = 200;
+    zerobss_levelReset = 606;
+    level_Hangar();
+    level_Hangar();
+    gGlobalTimer = 200 + 400 * UINT32_C(0x3c00);
+    level_Hangar();
+    CHECK((abGlobalBits[3] & UINT8_C(1)) != 0);
+    CHECK((GameStruct.GameState & UINT32_C(0x60)) ==
+          UINT32_C(0x60));
+    CHECK(gCheckPoint == 0);
+    CHECK(reStartScore[0] == 0);
     jpb_TextSetDrawHook(NULL, NULL);
     return 0;
 }

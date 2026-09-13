@@ -1,3 +1,4 @@
+#include "jpb/mods.h"
 /*
  * Runtime-loaded SDL_mixer host for the reconstructed sound scheduler.
  *
@@ -95,6 +96,13 @@ struct JPBPCAudio {
     JPBSdlMixerApi mixer;
     Mix_Music *music;
     char currentMusicPath[JPB_PC_AUDIO_PATH_CAPACITY];
+    char deferredMusicPath[JPB_PC_AUDIO_PATH_CAPACITY];
+    char deferredMusicName[JPB_PC_AUDIO_PATH_CAPACITY];
+    int deferredMusicIndex;
+    int deferredMusicVolume;
+    int deferredMusicLoop;
+    int deferredMusicValid;
+    int moviePlaybackActive;
     int musicPaused;
     int musicVolume;
     JPBPCAudioStats stats;
@@ -307,7 +315,9 @@ static int pc_audio_join(
     written = separator != '\0'
         ? snprintf(destination, capacity, "%s%c%s", left, separator, right)
         : snprintf(destination, capacity, "%s%s", left, right);
-    return written >= 0 && (size_t)written < capacity;
+    if (written < 0 || (size_t)written >= capacity) return 0;
+    (void)jpb_ModsResolvePath(destination, destination, capacity);
+    return 1;
 }
 
 static int pc_audio_load_proc(
@@ -432,6 +442,14 @@ static int pc_audio_bank_from_cad(
 
     if (path == NULL || bank == NULL) {
         return 0;
+    }
+    {
+        size_t i;
+        for (i = 0; i < jpb_ModsCount(); ++i) {
+            const JPBModCharacter *mod = jpb_ModCharacterAt(i);
+            if (_stricmp(path, mod->cad) == 0) return pc_audio_copy_string(
+                bank, capacity, mod->soundBank, strlen(mod->soundBank));
+        }
     }
     name = path;
     for (cursor = path; *cursor != '\0'; ++cursor) {
@@ -758,8 +776,15 @@ static uint16_t pc_audio_play_hook(
     (void)position;
     (void)flag;
     (void)bank_id;
-    if (audio == NULL || !audio->outputEnabled || name == NULL ||
-        sample == NULL || sample->chunk == NULL) {
+    if (audio == NULL || name == NULL || sample == NULL ||
+        sample->chunk == NULL) {
+        return UINT16_MAX;
+    }
+    if (audio->moviePlaybackActive) {
+        ++audio->stats.movieSfxSuppressed;
+        return UINT16_MAX;
+    }
+    if (!audio->outputEnabled) {
         return UINT16_MAX;
     }
     channel = audio->mixer.Mix_PlayChannel(
@@ -772,6 +797,10 @@ static uint16_t pc_audio_play_hook(
         return UINT16_MAX;
     }
     ++audio->stats.sfxStarted;
+    if (getenv("JPB_TRACE_SFX") != NULL) {
+        jpb_PCLog("sfx started name=%s bank=%d channel=%d path=%s",
+                  name, bank_id, channel, sample->path);
+    }
     return (uint16_t)channel;
 }
 
@@ -897,14 +926,23 @@ static void pc_audio_channel_hook(
     }
     switch (operation) {
     case JPB_SOUND_CHANNEL_PANNING:
+        if (getenv("JPB_TRACE_SFX") != NULL) {
+            jpb_PCLog("sfx channel=%d pan=%d/%d", channel, value0, value1);
+        }
         (void)audio->mixer.Mix_SetPanning(
             channel, (uint8_t)value0, (uint8_t)value1);
         break;
     case JPB_SOUND_CHANNEL_DISTANCE:
+        if (getenv("JPB_TRACE_SFX") != NULL) {
+            jpb_PCLog("sfx channel=%d distance=%d", channel, value0);
+        }
         (void)audio->mixer.Mix_SetDistance(
             channel, (uint8_t)value0);
         break;
     case JPB_SOUND_CHANNEL_VOLUME:
+        if (getenv("JPB_TRACE_SFX") != NULL) {
+            jpb_PCLog("sfx channel=%d volume=%d", channel, value0);
+        }
         (void)audio->mixer.Mix_Volume(channel, value0);
         break;
     case JPB_SOUND_CHANNEL_PAUSE:
@@ -987,6 +1025,58 @@ static void pc_audio_set_music_volume(JPBPCAudio *audio)
     (void)audio->mixer.Mix_VolumeMusic(audio->musicVolume);
 }
 
+static int pc_audio_start_resolved_music(
+    JPBPCAudio *audio,
+    int stream_index,
+    const char *stream_name,
+    const char *path,
+    int volume,
+    int loop)
+{
+    if (audio == NULL || path == NULL) {
+        return 0;
+    }
+    if (!audio->outputEnabled) {
+        return 1;
+    }
+    /* Retail playXA (0x12BC00) ignores its legacy volume argument.
+     * setMusicVol owns the mixer gain, including across track changes and
+     * requests deferred during movies. */
+    (void)volume;
+    if (audio->music != NULL &&
+        audio->mixer.Mix_PlayingMusic() != 0 &&
+        audio->mixer.Mix_PausedMusic() != 0 &&
+        _stricmp(path, audio->currentMusicPath) == 0) {
+        pc_audio_set_music_volume(audio);
+        audio->mixer.Mix_ResumeMusic();
+        audio->musicPaused = 0;
+        return 1;
+    }
+    if (audio->music != NULL) {
+        (void)audio->mixer.Mix_HaltMusic();
+        audio->mixer.Mix_FreeMusic(audio->music);
+        audio->music = NULL;
+    }
+    audio->currentMusicPath[0] = '\0';
+    audio->musicPaused = 0;
+    if (!pc_audio_prepare_music(audio, path, loop)) {
+        return 0;
+    }
+    (void)pc_audio_copy_string(
+        audio->currentMusicPath,
+        sizeof(audio->currentMusicPath),
+        path,
+        strlen(path));
+    ++audio->stats.musicStarted;
+    jpb_PCLog(
+        "audio stream started index=%d name=%s active=%d mixer_volume=%d",
+        stream_index,
+        stream_name != NULL ? stream_name : "<null>",
+        audio->mixer.Mix_PlayingMusic() != 0,
+        audio->musicVolume);
+    return 1;
+}
+
 static void pc_audio_stream_play_hook(
     int stream_index,
     const char *stream_name,
@@ -1005,13 +1095,7 @@ static void pc_audio_stream_play_hook(
             stream_name != NULL ? stream_name : "<null>");
         return;
     }
-    if (!audio->outputEnabled) {
-        jpb_PCLog(
-            "audio stream ignored index=%d name=%s reason=output-disabled",
-            stream_index,
-            stream_name != NULL ? stream_name : "<null>");
-        return;
-    }
+    ++audio->stats.musicRequested;
     if (!jpb_PCAudioResolveStream(
             audio, stream_name, path, sizeof(path))) {
         jpb_PCLog(
@@ -1020,6 +1104,7 @@ static void pc_audio_stream_play_hook(
             stream_name != NULL ? stream_name : "<null>");
         return;
     }
+    ++audio->stats.musicResolved;
     jpb_PCLog(
         "audio stream request index=%d name=%s volume=%d loop=%d path=%s",
         stream_index,
@@ -1027,36 +1112,33 @@ static void pc_audio_stream_play_hook(
         volume,
         loop,
         path);
-    audio->musicVolume = volume;
-    if (audio->music != NULL &&
-        audio->mixer.Mix_PlayingMusic() != 0 &&
-        audio->mixer.Mix_PausedMusic() != 0 &&
-        _stricmp(path, audio->currentMusicPath) == 0) {
-        pc_audio_set_music_volume(audio);
-        audio->mixer.Mix_ResumeMusic();
-        audio->musicPaused = 0;
+    if (audio->moviePlaybackActive) {
+        (void)pc_audio_copy_string(
+            audio->deferredMusicPath,
+            sizeof(audio->deferredMusicPath),
+            path,
+            strlen(path));
+        (void)pc_audio_copy_string(
+            audio->deferredMusicName,
+            sizeof(audio->deferredMusicName),
+            stream_name,
+            strlen(stream_name));
+        audio->deferredMusicIndex = stream_index;
+        audio->deferredMusicVolume = volume;
+        audio->deferredMusicLoop = loop;
+        audio->deferredMusicValid = 1;
+        ++audio->stats.musicDeferred;
+        jpb_PCLog(
+            "audio stream deferred for movie index=%d name=%s",
+            stream_index,
+            stream_name);
         return;
     }
-    if (audio->music != NULL) {
-        audio->mixer.Mix_FreeMusic(audio->music);
-        audio->music = NULL;
-    }
-    audio->currentMusicPath[0] = '\0';
-    audio->musicPaused = 0;
-    if (!pc_audio_prepare_music(audio, path, loop)) {
+    if (!audio->outputEnabled) {
         return;
     }
-    (void)pc_audio_copy_string(
-        audio->currentMusicPath,
-        sizeof(audio->currentMusicPath),
-        path,
-        strlen(path));
-    ++audio->stats.musicStarted;
-    jpb_PCLog(
-        "audio stream started index=%d name=%s active=%d",
-        stream_index,
-        stream_name,
-        audio->mixer.Mix_PlayingMusic() != 0);
+    (void)pc_audio_start_resolved_music(
+        audio, stream_index, stream_name, path, volume, loop);
 }
 
 static int pc_audio_stream_control_hook(
@@ -1068,6 +1150,22 @@ static int pc_audio_stream_control_hook(
 
     if (audio == NULL) {
         return 0;
+    }
+    if (control == JPB_AUDIO_STREAM_PAUSE) {
+        ++audio->stats.musicPauseRequests;
+    } else if (control == JPB_AUDIO_STREAM_RESUME) {
+        ++audio->stats.musicResumeRequests;
+    } else if (control == JPB_AUDIO_STREAM_STOP) {
+        ++audio->stats.musicStopRequests;
+    }
+    if (control == JPB_AUDIO_STREAM_SHUT_DOWN ||
+        control == JPB_AUDIO_STREAM_STOP) {
+        audio->deferredMusicValid = 0;
+    } else if (control == JPB_AUDIO_STREAM_SET_VOLUME) {
+        audio->musicVolume = value;
+        if (audio->deferredMusicValid) {
+            audio->deferredMusicVolume = value;
+        }
     }
     if (!audio->outputEnabled) {
         return 1;
@@ -1089,10 +1187,8 @@ static int pc_audio_stream_control_hook(
         }
         return 1;
     case JPB_AUDIO_STREAM_STOP:
-        if (audio->mixer.Mix_PlayingMusic() != 0 &&
-            audio->mixer.Mix_PausedMusic() == 0) {
-            (void)audio->mixer.Mix_HaltMusic();
-        }
+        (void)audio->mixer.Mix_HaltMusic();
+        audio->currentMusicPath[0] = '\0';
         audio->musicPaused = 0;
         return 1;
     case JPB_AUDIO_STREAM_RESUME:
@@ -1103,7 +1199,6 @@ static int pc_audio_stream_control_hook(
         }
         return 1;
     case JPB_AUDIO_STREAM_SET_VOLUME:
-        audio->musicVolume = value;
         pc_audio_set_music_volume(audio);
         return 1;
     case JPB_AUDIO_STREAM_SET_CHANNEL_TYPE:
@@ -1125,6 +1220,55 @@ static int pc_audio_stream_control_hook(
     }
 }
 
+void jpb_PCAudioSetMoviePlayback(JPBPCAudio *audio, int active)
+{
+    if (audio == NULL) {
+        return;
+    }
+    active = active != 0;
+    if (audio->moviePlaybackActive == active) {
+        return;
+    }
+    audio->moviePlaybackActive = active;
+    if (active) {
+        ++audio->stats.movieGateBegins;
+        audio->deferredMusicValid = 0;
+        if (audio->outputEnabled) {
+            (void)audio->mixer.Mix_HaltChannel(-1);
+            (void)audio->mixer.Mix_HaltMusic();
+            if (audio->music != NULL) {
+                audio->mixer.Mix_FreeMusic(audio->music);
+                audio->music = NULL;
+            }
+        }
+        audio->currentMusicPath[0] = '\0';
+        audio->musicPaused = 0;
+        jpb_PCLog("audio movie gate begin");
+        return;
+    }
+
+    ++audio->stats.movieGateEnds;
+    jpb_PCLog(
+        "audio movie gate end deferred=%d index=%d name=%s",
+        audio->deferredMusicValid,
+        audio->deferredMusicIndex,
+        audio->deferredMusicValid
+            ? audio->deferredMusicName : "<none>");
+    if (audio->deferredMusicValid) {
+        ++audio->stats.musicDeferredReleased;
+        (void)pc_audio_start_resolved_music(
+            audio,
+            audio->deferredMusicIndex,
+            audio->deferredMusicName,
+            audio->deferredMusicPath,
+            audio->deferredMusicVolume,
+            audio->deferredMusicLoop);
+    }
+    audio->deferredMusicValid = 0;
+    audio->deferredMusicPath[0] = '\0';
+    audio->deferredMusicName[0] = '\0';
+}
+
 JPBPCAudio *jpb_PCAudioCreate(
     const char *world_path,
     const char *player_one_cad_path,
@@ -1134,8 +1278,10 @@ JPBPCAudio *jpb_PCAudioCreate(
 {
     JPBPCAudio *audio;
     char resource_root[JPB_PC_AUDIO_PATH_CAPACITY];
+    char installed_world[JPB_MOD_PATH];
     int index;
 
+    if (jpb_ModsBasePath(world_path, installed_world, sizeof(installed_world))) world_path = installed_world;
     if (world_path == NULL ||
         !pc_audio_copy_string(
             resource_root,
@@ -1196,12 +1342,15 @@ JPBPCAudio *jpb_PCAudioCreate(
         return NULL;
     }
     audio->outputEnabled = enable_output != 0;
-    audio->musicVolume = 128;
+    /* The retail game entry loads options, then calls setMusicVol before
+     * entering gameplay. Seed recreated portable audio owners likewise. */
+    audio->musicVolume = OptionStruct.Music ? OptionStruct.musicVolume : 0;
     if (audio->outputEnabled &&
         !pc_audio_load_mixer(audio, resource_root)) {
         free(audio);
         return NULL;
     }
+    pc_audio_set_music_volume(audio);
     jpb_SoundSetBankHook(pc_audio_bank_hook, audio);
     jpb_SoundSetChunkHooks(
         pc_audio_chunk_load_hook,
@@ -1214,11 +1363,11 @@ JPBPCAudio *jpb_PCAudioCreate(
         jpb_SoundSetPlaySfxHook(pc_audio_play_hook, audio);
         jpb_SoundSetStopHook(pc_audio_stop_hook, audio);
         jpb_SoundSetFadeHook(pc_audio_fade_hook, audio);
-        jpb_AudioStreamSetPlayHook(
-            pc_audio_stream_play_hook, audio);
-        jpb_AudioStreamSetControlHook(
-            pc_audio_stream_control_hook, audio);
     }
+    jpb_AudioStreamSetPlayHook(
+        pc_audio_stream_play_hook, audio);
+    jpb_AudioStreamSetControlHook(
+        pc_audio_stream_control_hook, audio);
     sound_Init();
     if (audio->outputEnabled && audio->bankPaths[0] == NULL) {
         jpb_PCAudioDestroy(audio);
@@ -1264,11 +1413,11 @@ void jpb_PCAudioDestroy(JPBPCAudio *audio)
         jpb_SoundSetPlaySfxHook(NULL, NULL);
         jpb_SoundSetStopHook(NULL, NULL);
         jpb_SoundSetFadeHook(NULL, NULL);
-        jpb_AudioStreamSetPlayHook(NULL, NULL);
-        jpb_AudioStreamSetControlHook(NULL, NULL);
         (void)audio->mixer.Mix_HaltChannel(-1);
         (void)audio->mixer.Mix_HaltMusic();
     }
+    jpb_AudioStreamSetPlayHook(NULL, NULL);
+    jpb_AudioStreamSetControlHook(NULL, NULL);
     if (audio->music != NULL) {
         audio->mixer.Mix_FreeMusic(audio->music);
         audio->music = NULL;

@@ -362,17 +362,12 @@ static int32_t physics_sign_extend_10(uint32_t value)
 static void physics_decode_map_normal(
     int32_t *mapbase, uint32_t normal_index, FVECTOR *normal)
 {
-    uint32_t packed = (uint32_t)mapbase[normal_index + 1U];
+    _svector unpacked = {0, 0, 0, 0};
 
-    normal->vx =
-        (float)(physics_sign_extend_10(packed) * 8) *
-        (1.0f / 4096.0f);
-    normal->vy =
-        (float)(physics_sign_extend_10(packed >> 10) * 8) *
-        (1.0f / 4096.0f);
-    normal->vz =
-        (float)(physics_sign_extend_10(packed >> 20) * 8) *
-        (1.0f / 4096.0f);
+    unpack10bitnormal(mapbase[normal_index + 1U], &unpacked);
+    normal->vx = (float)unpacked.vx * (1.0f / 4096.0f);
+    normal->vy = (float)unpacked.vy * (1.0f / 4096.0f);
+    normal->vz = (float)unpacked.vz * (1.0f / 4096.0f);
 }
 
 /*
@@ -1271,9 +1266,10 @@ static void CalcMovement(physicsObject *physics)
             } else {
                 physics->mov.vx -= physics->airmov.vx;
                 physics->mov.vz -= physics->airmov.vz;
+                /* MovePlayer records timer ticks here, not totalframes. */
                 if ((uint32_t)physics->reversoi +
                         UINT32_C(0x0f00) <
-                    (uint32_t)totalframes) {
+                    (uint32_t)gGlobalTimer) {
                     physics->reversoi = 0;
                 }
             }
@@ -1972,6 +1968,7 @@ static int CheckCubeBlocking(
     int32_t *polyhit = NULL;
     float vel = VectorNormalize(&move);
     float yoffset;
+    float shifted_from_y;
     int bigblock = 0;
     int numcollides = 0;
     int nonmoves = 0;
@@ -1987,6 +1984,7 @@ static int CheckCubeBlocking(
         (((player->pFlags & UINT32_C(1)) != 0) ? 0.25f : 0.5f);
     org.vy += yoffset;
     from.vy += yoffset;
+    shifted_from_y = from.vy;
     {
         int tground = intersec_FindWalkHeightFV(
             &org, NULL, &player->playerRoot, 0);
@@ -2068,7 +2066,7 @@ static int CheckCubeBlocking(
             }
             p0->lastpolyhit = polyhit;
             if (bestinfo.dist <= 4.0f &&
-                (bestinfo.flags & 4) == 0) {
+                (bestinfo.type & 4) == 0) {
                 ++nonmoves;
             }
             if (entryhit != NULL &&
@@ -2081,7 +2079,7 @@ static int CheckCubeBlocking(
             }
             ++numcollides;
 
-            if ((bestinfo.flags & 4) == 0) {
+            if ((bestinfo.type & 4) == 0) {
                 FVECTOR tmp = move;
 
                 tmpdist = bestinfo.dist - 1.0f;
@@ -2119,23 +2117,26 @@ static int CheckCubeBlocking(
             if ((player->pFlags & UINT32_C(1)) == 0 &&
                 (p0->flags & UINT32_C(0x2000)) == 0 &&
                 p0->movemode != MOVE_HOVER) {
-                tmpnorm.vx = dirNormal->vx;
+                tmpnorm.vx = slidenorm.vx;
                 tmpnorm.vy = 0.0f;
-                tmpnorm.vz = dirNormal->vz;
-                VectorNormalize(&slidenorm);
+                tmpnorm.vz = slidenorm.vz;
+                tmpmove.vx = dirNormal->vx;
+                tmpmove.vy = 0.0f;
+                tmpmove.vz = dirNormal->vz;
                 VectorNormalize(&tmpnorm);
+                VectorNormalize(&tmpmove);
                 tslide =
-                    tmpnorm.vx * slidenorm.vx +
-                    tmpnorm.vy * slidenorm.vy +
-                    tmpnorm.vz * slidenorm.vz -
+                    tmpmove.vx * tmpnorm.vx +
+                    tmpmove.vy * tmpnorm.vy +
+                    tmpmove.vz * tmpnorm.vz -
                     0.002f;
                 slide1 =
-                    move.vx * slidenorm.vx +
-                    move.vy * slidenorm.vy +
-                    move.vz * slidenorm.vz;
-                move.vx = tmpnorm.vx - tslide * slidenorm.vx;
-                move.vy = tmpnorm.vy - tslide * slidenorm.vy;
-                move.vz = tmpnorm.vz - tslide * slidenorm.vz;
+                    move.vx * tmpnorm.vx +
+                    move.vy * tmpnorm.vy +
+                    move.vz * tmpnorm.vz;
+                move.vx = tmpmove.vx - tslide * tmpnorm.vx;
+                move.vy = tmpmove.vy - tslide * tmpnorm.vy;
+                move.vz = tmpmove.vz - tslide * tmpnorm.vz;
             } else {
                 VectorNormalize(&slidenorm);
                 slide1 =
@@ -2160,7 +2161,7 @@ static int CheckCubeBlocking(
                  polyhit != NULL &&
                  p0->hangcheck == 0 &&
                  collidetype == 2 &&
-                 p0->mov.vy < 0.0f &&
+                 p0->airmov.vy < 0.0f &&
                  (p0->flags & UINT32_C(0x100080)) == 0 &&
                  bestinfo.facenormal.vy > 0.732421875f &&
                  (physics_map_flags(polyhit) &
@@ -2185,10 +2186,11 @@ static int CheckCubeBlocking(
                     ledgeoff.vz =
                         -tmpmove.vx * bestinfo.facenormal.vy;
                     p0->flags |= UINT32_C(0x100000);
+                    /* The shipped float at RVA 0x33B85C is 100.0f. */
                     p0->ledgeangle =
                         (ratan2(
-                             (int32_t)(ledgeoff.vx * 4096.0f),
-                             (int32_t)(ledgeoff.vz * 4096.0f)) -
+                             (int32_t)(ledgeoff.vx * 100.0f),
+                             (int32_t)(ledgeoff.vz * 100.0f)) -
                          0x800) &
                         0x0fff;
                     p0->ledgepoint = bestinfo.kisspoint;
@@ -2234,23 +2236,27 @@ static int CheckCubeBlocking(
                 bigblock = 1;
                 break;
             }
-            vel = (vel - bestinfo.dist) * len;
-            if (vel <= 0.0f) {
-                break;
-            }
-            if ((bestinfo.flags & 4) == 0 && nonmoves == 2) {
-                if ((player->pFlags & UINT32_C(1)) == 0) {
+            if ((bestinfo.type & 4) == 0) {
+                vel = (vel - bestinfo.dist) * len;
+                if (vel <= 0.0f) {
                     break;
                 }
-                if (p0->mov.vy < 0.0f && p0->airstick < 0x7f) {
-                    p0->airstick =
-                        (uint8_t)(p0->airstick + 2);
+                if (nonmoves == 2) {
+                    if ((player->pFlags & UINT32_C(1)) == 0) {
+                        break;
+                    }
+                    if (p0->airmov.vy < 0.0f && p0->airstick < 0x7f) {
+                        p0->airstick = (uint8_t)(p0->airstick + 2);
+                    }
                 }
-            } else if (
-                (bestinfo.flags & 4) != 0 &&
-                p0->mov.vy < 0.0f &&
-                p0->airstick < 0x7f) {
-                p0->airstick = (uint8_t)(p0->airstick + 2);
+            } else {
+                if (p0->airmov.vy < 0.0f && p0->airstick < 0x7f) {
+                    p0->airstick = (uint8_t)(p0->airstick + 2);
+                }
+                vel = (vel - bestinfo.dist) * len;
+                if (vel <= 0.0f) {
+                    break;
+                }
             }
         } while (numcollides < 4);
     }
@@ -2278,14 +2284,15 @@ static int CheckCubeBlocking(
         if (ledger != NULL) {
             float ledgediff = ledger->vy - org.vy;
             int angle =
-                (p0->face.vy - p0->ledgeangle) *
+                (p0->angle.vy - p0->ledgeangle) *
                 0x100000 >> 20;
 
             if (ledgediff > 8.0f &&
                 fabs((double)ledgediff) <
                     (double)fGlobalFrameRate * 128.0 &&
                 (angle < 0 ? -angle : angle) < 0x21d) {
-                p0->face.vy = p0->ledgeangle;
+                /* Retail uses +0x4C: actual yaw, not face.y. */
+                p0->angle.vy = p0->ledgeangle;
                 player->pFlags |= UINT32_C(0x04000000);
                 p0->flags &= ~UINT32_C(0x100000);
                 p0->hangcheck = 0;
@@ -2295,7 +2302,7 @@ static int CheckCubeBlocking(
                 }
                 p0->airGround = ledger->vy;
                 if (p0->movemode == MOVE_NORMAL) {
-                    p0->mov.vy = 0.0f;
+                    p0->airmov.vy = 0.0f;
                 }
                 return 1;
             }
@@ -2313,7 +2320,7 @@ static int CheckCubeBlocking(
         p0->anycollidetime = 0;
     } else {
         dir->vx = org.vx - initial_from.vx;
-        dir->vy = org.vy - initial_from.vy;
+        dir->vy = org.vy - (shifted_from_y - yoffset);
         dir->vz = org.vz - initial_from.vz;
         p0->noncollideframes = 0;
         if (bigblock == 0) {
@@ -2676,7 +2683,7 @@ static int physics_move_start_fall(
         if (model != NULL &&
             (model->flags & UINT32_C(0x20)) != 0) {
             pelvis =
-                coll_GetNodeCenter(player->playerID, 0);
+                coll_GetNodeCenter(player->playernum, 0);
             if (pelvis != NULL) {
                 p->pos.vy = (float)pelvis->vy;
             }
@@ -3565,16 +3572,19 @@ static int generalCollide(
         mvp.points[1].vx = (float)verts[index[1]].vx;
         mvp.points[1].vy = (float)verts[index[1]].vy;
         mvp.points[1].vz = (float)verts[index[1]].vz;
-        mvp.points[2].vx = (float)verts[index[2]].vx;
-        mvp.points[2].vy = (float)verts[index[2]].vy;
-        mvp.points[2].vz = (float)verts[index[2]].vz;
-
         if (p3 == INT16_MAX) {
+            mvp.points[2].vx = (float)verts[index[2]].vx;
+            mvp.points[2].vy = (float)verts[index[2]].vy;
+            mvp.points[2].vz = (float)verts[index[2]].vz;
             mvp.numsides = 3;
         } else {
-            mvp.points[3].vx = (float)verts[p3].vx;
-            mvp.points[3].vy = (float)verts[p3].vy;
-            mvp.points[3].vz = (float)verts[p3].vz;
+            /* Stored quads are triangle strips; collision needs perimeter order. */
+            mvp.points[2].vx = (float)verts[p3].vx;
+            mvp.points[2].vy = (float)verts[p3].vy;
+            mvp.points[2].vz = (float)verts[p3].vz;
+            mvp.points[3].vx = (float)verts[index[2]].vx;
+            mvp.points[3].vy = (float)verts[index[2]].vy;
+            mvp.points[3].vz = (float)verts[index[2]].vz;
             mvp.numsides = 4;
         }
 
@@ -5212,6 +5222,19 @@ int jpb_PhysicsPolyCollideCheck(void)
     return polycollidecheck();
 }
 
+void jpb_PhysicsSetSelectedEdge(
+    const FVECTOR *start, const FVECTOR *end)
+{
+    edge_start = *start;
+    edge_end = *end;
+}
+
+void jpb_PhysicsGetSelectedEdge(FVECTOR *start, FVECTOR *end)
+{
+    *start = edge_start;
+    *end = edge_end;
+}
+
 /* 0xE22B0, 4699 bytes, local, 31 named locals
  * sphereAndPoly
  * PDB type: int (<no type>)
@@ -5348,8 +5371,7 @@ static int sphereAndPoly(void)
         for (i = 0; i < mvp.numsides; ++i) {
             float edgeDistance;
 
-            En = cvars.edgenormal[i];
-            VectorNormalize(&En);
+            VectorNormalize2(&cvars.edgenormal[i], &En);
             L.vx = pl.vx - cvars.P0[i]->vx;
             L.vy = pl.vy - cvars.P0[i]->vy;
             L.vz = pl.vz - cvars.P0[i]->vz;

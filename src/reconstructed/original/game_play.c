@@ -87,23 +87,7 @@ static void game_reset_stage(void)
 
 static void game_run_active_mode(void)
 {
-    if (GameStruct.inMenuFlag == 0 &&
-        nextLevel != 0 && GameStruct.gameMode == 6) {
-        (void)platform_completeLevel(LevelSelect);
-        stop_all_looped_sounds();
-        GameStruct.gameMode = 5;
-        if (LevelSelect == 6) {
-            corusPoints[0] = GameStruct.aCharacterData[0].Score;
-            corusPoints[1] = GameStruct.aCharacterData[1].Score;
-            LevelSelect = 15;
-        } else {
-            LevelSelect = LevelSelect == 15 ? 7 : (char)(LevelSelect + 1);
-            if (OptionStruct.Music != 0) {
-                playXA(4, (int)OptionStruct.musicVolume * 2, 0);
-            }
-        }
-    }
-    nextLevel = 0;
+    jpb_GameRunActiveModePrelude();
 
     ClearWindow();
     game_OneGameLoop();

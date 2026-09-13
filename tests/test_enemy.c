@@ -122,6 +122,8 @@ static void init_enemy(
     fixture->enemy.ownerType = owner_type;
     fixture->player.playerRoot.pParent =
         &fixture->scene.sceneRoot;
+    fixture->player.playerRoot.objectID = object_id;
+    fixture->player.playernum = object_id;
     fixture->scene.pPhysics =
         &fixture->physics.physicsRoot;
     fixture->physics.physicsRoot.objectID =
@@ -724,6 +726,8 @@ static void test_enemy_pointer_index(void)
     GameStruct.CurrentLevel = 13;
     CHECK(enemy_getPointerIndex(0) == 20);
     GameStruct.CurrentLevel = 3;
+    GameStruct.Mode = 6;
+    LevelSelect = 1;
     CHECK(enemy_getPointerIndex(0) == 20);
 
     GameStruct.CurrentLevel = 0;
@@ -1054,6 +1058,27 @@ static void test_authored_opcode_traversal_boundary(void)
           JPB_ENEMY_OPCODE_PARSE_COMPLETE);
     CHECK(enemy.lastWayPoint == 2);
 
+    variables[0].si = 2;
+    variables[1].si = 30;
+    enemy.currAIMode = 0;
+    enemy.hitPoints = 30;
+    enemy.range = 5000;
+    enemy.lastWayPoint = 0;
+    enemy.enemyID = 0;
+    LevelSelect = 0;
+    nodes[3].opcode = 0x10a;
+    nodes[3].vx.ui = 0;
+    nodes[3].iChild = 4;
+    nodes[3].iSibling = 5;
+    nodes[4].opcode = 0x4410;
+    nodes[4].vx.si = 3;
+    nodes[4].iSibling = 5;
+    CHECK(jpb_enemy_ParseOpcodes(
+              &enemy, &unsupported) ==
+          JPB_ENEMY_OPCODE_PARSE_COMPLETE);
+    CHECK(enemy.lastWayPoint == 3);
+    CHECK(enemy.range == 5000);
+
     variables[0].si = 0;
     variables[1].si = 0;
     enemy.currAIMode = 0;
@@ -1070,6 +1095,21 @@ static void test_authored_opcode_traversal_boundary(void)
           JPB_ENEMY_OPCODE_PARSE_COMPLETE);
     CHECK(enemy.exit_flag == 1);
     CHECK(moveTaxi == 1);
+
+    variables[0].si = 2;
+    variables[1].si = 25;
+    enemy.currAIMode = 0;
+    enemy.exit_flag = 0;
+    enemy.hitPoints = 200;
+    enemy.range = 5000;
+    enemy.enemyID = 0;
+    LevelSelect = 0;
+    CHECK(jpb_enemy_ParseOpcodes(
+              &enemy, &unsupported) ==
+          JPB_ENEMY_OPCODE_PARSE_COMPLETE);
+    CHECK(enemy.exit_flag == 0);
+    CHECK(enemy.hitPoints == 175);
+    CHECK(enemy.range == 5000);
 
     variables[0].si = 99;
     variables[1].si = 1;
@@ -1349,13 +1389,14 @@ static void test_authored_opcode_traversal_boundary(void)
     CHECK(jpb_enemy_ParseOpcodes(
               &enemy, &unsupported) ==
           JPB_ENEMY_OPCODE_PARSE_COMPLETE);
-    CHECK((player.pFlags & 0x10U) != 0);
+    CHECK((player.forceFlags & 0x10U) != 0);
+    CHECK((player.pFlags & 0x10U) == 0);
     variables[1].si = 0;
     enemy.currAIMode = 0;
     CHECK(jpb_enemy_ParseOpcodes(
               &enemy, &unsupported) ==
           JPB_ENEMY_OPCODE_PARSE_COMPLETE);
-    CHECK((player.pFlags & 0x10U) == 0);
+    CHECK((player.forceFlags & 0x10U) == 0);
 
     variables[0].si = 3;
     variables[1].si = 12;
@@ -1996,9 +2037,11 @@ static void test_enemy_post_frame_and_activation(void)
     memset(&GameStruct, 0, sizeof(GameStruct));
     init_enemy(&fixture, 5, 1, 111, -222, 333);
     fixture.player.playernum = 2;
+    GameStruct.aCharacterData[2].Energy = 91;
     fixture.enemy.hitPoints = 37;
     bapenemy_postFrame(&fixture.enemy);
-    CHECK(game_gGetEnergy(2) == 37);
+    CHECK(game_gGetEnergy(5) == 37);
+    CHECK(game_gGetEnergy(2) == 91);
     CHECK(fixture.enemy.location.vx == 111);
     CHECK(fixture.enemy.location.vy == -222);
     CHECK(fixture.enemy.location.vz == 333);
@@ -2008,7 +2051,8 @@ static void test_enemy_post_frame_and_activation(void)
     fixture.enemy.location.vy = 8;
     fixture.enemy.location.vz = 9;
     bapenemy_postFrame(&fixture.enemy);
-    CHECK(game_gGetEnergy(2) == 22);
+    CHECK(game_gGetEnergy(5) == 22);
+    CHECK(game_gGetEnergy(2) == 91);
     CHECK(fixture.enemy.location.vx == 7);
     CHECK(fixture.enemy.location.vy == 8);
     CHECK(fixture.enemy.location.vz == 9);
@@ -2192,6 +2236,18 @@ static void test_active_enemy_frame_globals(void)
     CHECK(game_gGetScore(1) == 270);
     CHECK(abGlobalBits[0] == 0);
     CHECK(nextLevel == 1);
+    GameStruct.inMenuFlag = 1;
+    GameStruct.gameMode = 6;
+    LevelSelect = 1;
+    jpb_GameRunActiveModePrelude();
+    CHECK(nextLevel == 1);
+    CHECK(GameStruct.gameMode == 6);
+    CHECK(LevelSelect == 1);
+    GameStruct.inMenuFlag = 0;
+    jpb_GameRunActiveModePrelude();
+    CHECK(nextLevel == 0);
+    CHECK(GameStruct.gameMode == 5);
+    CHECK(LevelSelect == 2);
     CHECK(tankID == -1);
     CHECK(gShowAI == 1);
     CHECK(nEnemy == 0);
@@ -2218,6 +2274,7 @@ static void test_active_enemy_frame_globals(void)
     pDebugEnemy = NULL;
     jpb_PlatformSetAchievementHooks(NULL, NULL);
     nextLevel = 0;
+    LevelSelect = 0;
     gpWorld = NULL;
 }
 
@@ -2856,6 +2913,81 @@ static void test_physics_nearest_enemy(void)
               3) == 0x1fffe);
 }
 
+static void test_fed_door_trigger_gate(void)
+{
+    WorldData world;
+    WorldData *old_world = gpWorld;
+    EnemyFixture trigger;
+    EnemyFixture player;
+    sceneObject hostile_scene;
+    playerObject hostile_player;
+    wsl_ENEMY hostile_enemy;
+    wsl_BAP_PLACEMENT trigger_placement;
+    wsl_BAP_PLACEMENT hostile_placement;
+    UDATA player_proximity[] = {{.si = 1}, {.si = 5}, {.f = 3.0f}};
+    UDATA hostile_clear[] = {{.si = 2}, {.si = 4}, {.f = 6.0f}};
+    int index;
+
+    memset(&world, 0, sizeof(world));
+    memset(&hostile_scene, 0, sizeof(hostile_scene));
+    memset(&hostile_player, 0, sizeof(hostile_player));
+    memset(&hostile_enemy, 0, sizeof(hostile_enemy));
+    memset(&trigger_placement, 0, sizeof(trigger_placement));
+    memset(&hostile_placement, 0, sizeof(hostile_placement));
+    memset(maRange, 0, sizeof(maRange));
+    init_enemy(&trigger, 0, 3, 12544, 3328, -10752);
+    init_enemy(&player, 1, 4, 12544, 3328, -11519);
+    trigger.player.playerRoot.objectID = 0;
+    player.player.playerRoot.objectID = 1;
+    trigger.enemy.pPlace = &trigger_placement;
+    trigger.scene.pPlayer = &trigger.player.playerRoot;
+    trigger.scene.pScene = &trigger.scene.sceneRoot;
+    player.scene.pPlayer = &player.player.playerRoot;
+    player.scene.pScene = &player.scene.sceneRoot;
+    world.player0 = &player.player;
+    world.player1 = &player.player;
+    gpWorld = &world;
+    maRange[0][1] = 767.0f;
+    maRange[1][0] = 767.0f;
+
+    /* FED AI 39 uses a strict player distance below 3.0 * 256. */
+    CHECK(aisub_handleRangeFunction(
+              &trigger.enemy, player_proximity) == 1);
+    maRange[0][1] = 768.0f;
+    maRange[1][0] = 768.0f;
+    CHECK(aisub_handleRangeFunction(
+              &trigger.enemy, player_proximity) == 0);
+
+    for (index = 0; index < JPB_PHYSICS_CAPACITY; ++index) {
+        memset(&maPhysicsData[index], 0, sizeof(maPhysicsData[index]));
+        maPhysicsData[index].physicsRoot.objectID = -1;
+    }
+    maPhysicsData[2].physicsRoot.objectID = 2;
+    maPhysicsData[2].physicsRoot.pParent = &hostile_scene.sceneRoot;
+    hostile_scene.pPlayer = &hostile_player.playerRoot;
+    hostile_player.playerRoot.objectID = 2;
+    hostile_player.playerRoot.pParent = &hostile_scene.sceneRoot;
+    hostile_player.pEnemy = &hostile_enemy;
+    hostile_enemy.pPlace = &hostile_placement;
+    hostile_placement.aiDf.ownerType = 2;
+
+    /* The same authored helper waits while an owner-2 actor is within
+     * 6.0 * 256, and proceeds only after that actor is outside the range or
+     * has left the physics pool. */
+    maRange[0][2] = 1536.0f;
+    maRange[2][0] = 1536.0f;
+    CHECK(aisub_handleRangeFunction(
+              &trigger.enemy, hostile_clear) == 0);
+    maRange[0][2] = 1537.0f;
+    maRange[2][0] = 1537.0f;
+    CHECK(aisub_handleRangeFunction(
+              &trigger.enemy, hostile_clear) == 1);
+    maPhysicsData[2].physicsRoot.objectID = -1;
+    CHECK(aisub_handleRangeFunction(
+              &trigger.enemy, hostile_clear) == 1);
+    gpWorld = old_world;
+}
+
 static void test_enemy_radar(void)
 {
     WorldData world;
@@ -3023,6 +3155,7 @@ int main(void)
     test_ai_waypoint_bounds();
     test_ai_bap_evaluators();
     test_physics_nearest_enemy();
+    test_fed_door_trigger_gate();
     test_enemy_radar();
     CHECK(test_ai_defend_and_preframe() == 0);
 
@@ -3045,6 +3178,14 @@ int main(void)
     CHECK(near_enemy.enemy.exit_flag == 1);
     CHECK(far_enemy.enemy.exit_flag == 0);
     CHECK(player_owned.enemy.exit_flag == 0);
+
+    /* The diagnostic seam must leave the active scheduler untouched. */
+    jpb_EnemySetAiSuspended(1);
+    enemy_HandleEnemies();
+    CHECK(mCurEnemyList == 0);
+    CHECK(enemyList[0].head == &near_enemy.enemy.node);
+    CHECK(jpb_enemy_LastFrameResult(NULL) == JPB_ENEMY_OPCODE_PARSE_COMPLETE);
+    jpb_EnemySetAiSuspended(0);
 
     if (failures != 0) {
         fprintf(

@@ -1,10 +1,10 @@
-﻿# Boss Smoke Audit
+# Boss Smoke Audit
 
-Generated: 2026-08-15 04:16:01 -04:00
+Generated: 2026-09-02 10:20:59 -04:00
 
 Executable: `C:\Games\Star Wars Jedi Power Battles\jpb_pc_game.exe`
 
-Mode: `Hardware`; frames: `180`; framebuffer: `960x540`; result: `7 passed / 0 failed`.
+Mode: `Hardware`; frames: `180`; framebuffer: `960x540`; result: `8 passed / 0 failed`.
 
 Contact sheet: `C:\Programming\GitHub\Jedi Power Battles recomp\out\boss-smoke-hardware\contact-sheet.png`.
 
@@ -15,12 +15,13 @@ Contact sheet entries follow the smoke matrix order, and contact-sheet generatio
 | Boss | Level | Status | Placement | Spawn | Runtime proof | Capture |
 | --- | --- | --- | --- | --- | --- | --- |
 | FED droid fighter | fed | PASS | id=128, actor=5 `drdfitr.baf`, ai=16, confirmed actor | -22656/5376/-9856 | frames=180, energy=100, visible=180, enemyActors=6/10/11, placementStatus=1, runtimePlacement=128 | `fed-droid-fighter.ppm` (1555215 bytes, pruned after contact sheet) |
-| Marsh MTT | marsh | PASS | id=78, actor=8 `mtt.baf`, ai=3, confirmed actor | 21287/4416/-12416 | frames=180, energy=100, visible=180, enemyActors=4/5/5, placementStatus=1, runtimePlacement=78 | `marsh-mtt.ppm` (1555215 bytes, pruned after contact sheet) |
+| Marsh MTT | marsh | PASS | id=78, actor=8 `mtt.baf`, ai=3, confirmed actor | 21287/4416/-12416 | frames=180, energy=100, visible=101, enemyActors=4/5/5, placementStatus=1, runtimePlacement=78 | `marsh-mtt.ppm` (1555215 bytes, pruned after contact sheet) |
 | Theed tank | theed | PASS | id=53, actor=1 `tank.baf`, ai=34, confirmed actor | -3200/3328/-20007 | frames=180, energy=100, visible=180, enemyActors=3/3/3, placementStatus=1, runtimePlacement=53 | `theed-tank.ppm` (1555215 bytes, pruned after contact sheet) |
-| Tatooine Darth Maul | tato | PASS | id=92, actor=10 `sithjedi.baf`, ai=45, confirmed actor | -20467/9984/12173 | frames=180, energy=100, visible=180, enemyActors=6/6/6, placementStatus=1, runtimePlacement=92 | `tato-maul.ppm` (1555215 bytes, pruned after contact sheet) |
-| Coruscant thug | corus1 | PASS | id=153, actor=12 `corhum4.baf`, ai=15, confirmed retail boss stream/actor | -29952/10342/-18432 | frames=180, energy=100, visible=180, enemyActors=6/6/6, placementStatus=1, runtimePlacement=153 | `corus1-thug.ppm` (1555215 bytes, pruned after contact sheet) |
+| Tatooine Darth Maul | tato | PASS | id=92, actor=10 `sithjedi.baf`, ai=45, confirmed actor | -20467/9984/12173 | frames=180, energy=100, visible=180, enemyActors=7/7/7, placementStatus=1, runtimePlacement=92 | `tato-maul.ppm` (1555215 bytes, pruned after contact sheet) |
+| Core Darth Maul | core | PASS | id=11, actor=4 `corguard.baf`, ai=33, confirmed executable actor/model mapping and authored finale controller | 31284/2560/-17242 | frames=180, energy=100, visible=180, enemyActors=4/4/4, placementStatus=1, runtimePlacement=11 | `core-maul.ppm` (1555215 bytes, pruned after contact sheet) |
+| Coruscant thug | corus1 | PASS | id=153, actor=12 `corhum4.baf`, ai=15, confirmed retail boss stream/actor | -29056/10752/-19968 | frames=180, energy=100, visible=53, enemyActors=5/5/5, placementStatus=1, runtimePlacement=153 | `corus1-thug.ppm` (1555215 bytes, pruned after contact sheet) |
 | Mini2 Kadu | mini2 | PASS | id=0, actor=6 `horns.baf`, ai=0, confirmed actor/camera | 21504/4608/24320 | frames=180, energy=100, visible=180, enemyActors=2/2/2, placementStatus=1, runtimePlacement=0 | `mini2-kadu.ppm` (1555215 bytes, pruned after contact sheet) |
-| Mini3 Boss Nass | mini3 | PASS | id=4, actor=1 `bossnass.baf`, ai=4, confirmed actor | 12800/13824/-14093 | frames=180, energy=100, visible=180, enemyActors=8/9/9, placementStatus=1, runtimePlacement=4 | `mini3-boss-nass.ppm` (1555215 bytes, pruned after contact sheet) |
+| Mini3 Boss Nass | mini3 | PASS | id=4, actor=1 `bossnass.baf`, ai=4, confirmed actor | 12800/13824/-14093 | frames=180, energy=100, visible=180, enemyActors=10/10/11, placementStatus=1, runtimePlacement=4 | `mini3-boss-nass.ppm` (1555215 bytes, pruned after contact sheet) |
 
 ## Notes
 
@@ -28,7 +29,8 @@ Contact sheet entries follow the smoke matrix order, and contact-sheet generatio
 - Marsh MTT: MTT actor with authored path down the Marsh boss corridor; spawn uses a later path point where the authored camera keeps the player visible. Console: `C:\Programming\GitHub\Jedi Power Battles recomp\out\boss-smoke-hardware\marsh-mtt.console.txt`. Raw frame path during run: `C:\Programming\GitHub\Jedi Power Battles recomp\out\boss-smoke-hardware\marsh-mtt.ppm`; file pruned after contact-sheet generation.
 - Theed tank: High-hp tank placement tied to the Theed vehicle encounter cluster; spawn uses a grounded authored waypoint from the tank path. Console: `C:\Programming\GitHub\Jedi Power Battles recomp\out\boss-smoke-hardware\theed-tank.console.txt`. Raw frame path during run: `C:\Programming\GitHub\Jedi Power Battles recomp\out\boss-smoke-hardware\theed-tank.ppm`; file pruned after contact-sheet generation.
 - Tatooine Darth Maul: Explicit Sith Jedi actor with 200 HP in the Tatooine arena. Console: `C:\Programming\GitHub\Jedi Power Battles recomp\out\boss-smoke-hardware\tato-maul.console.txt`. Raw frame path during run: `C:\Programming\GitHub\Jedi Power Battles recomp\out\boss-smoke-hardware\tato-maul.ppm`; file pruned after contact-sheet generation.
-- Coruscant thug: Late Coruscant high-hp human placement matching the thug-boss asset family; retail assets include 06_CorThugBoss.wav and diagnostics place id 153 in the authored camera-director enemy set with mode 5. Console: `C:\Programming\GitHub\Jedi Power Battles recomp\out\boss-smoke-hardware\corus1-thug.console.txt`. Raw frame path during run: `C:\Programming\GitHub\Jedi Power Battles recomp\out\boss-smoke-hardware\corus1-thug.ppm`; file pruned after contact-sheet generation.
+- Core Darth Maul: The J3D actor label is intentionally indirect: loader_loadEnemies maps corguard.baf through sObiNames[43] to sModelNames[43], maul_d. Placement 11 is the 250-HP AI 33 arena fighter/controller linked to placements 64/65 and 31..34. Console: `C:\Programming\GitHub\Jedi Power Battles recomp\out\boss-smoke-hardware\core-maul.console.txt`. Raw frame path during run: `C:\Programming\GitHub\Jedi Power Battles recomp\out\boss-smoke-hardware\core-maul.ppm`; file pruned after contact-sheet generation.
+- Coruscant thug: Late Coruscant high-hp human placement matching the thug-boss asset family; retail assets include 06_CorThugBoss.wav. The player spawn is placement 138 waypoint 0, an authored camera-66 anchor beside placement 153; the old untracked coordinate caused a fall/death before the proof frame. Console: `C:\Programming\GitHub\Jedi Power Battles recomp\out\boss-smoke-hardware\corus1-thug.console.txt`. Raw frame path during run: `C:\Programming\GitHub\Jedi Power Battles recomp\out\boss-smoke-hardware\corus1-thug.ppm`; file pruned after contact-sheet generation.
 - Mini2 Kadu: Bonus Kadu encounter starts on active horns.baf placements in the authored camera-director enemy set; placement 0 reports 255 HP at the quickload spawn. Console: `C:\Programming\GitHub\Jedi Power Battles recomp\out\boss-smoke-hardware\mini2-kadu.console.txt`. Raw frame path during run: `C:\Programming\GitHub\Jedi Power Battles recomp\out\boss-smoke-hardware\mini2-kadu.ppm`; file pruned after contact-sheet generation.
 - Mini3 Boss Nass: Explicit Boss Nass actor at the Gungan bonus encounter. Console: `C:\Programming\GitHub\Jedi Power Battles recomp\out\boss-smoke-hardware\mini3-boss-nass.console.txt`. Raw frame path during run: `C:\Programming\GitHub\Jedi Power Battles recomp\out\boss-smoke-hardware\mini3-boss-nass.ppm`; file pruned after contact-sheet generation.
 

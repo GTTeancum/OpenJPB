@@ -1,3 +1,4 @@
+#include "jpb/mods.h"
 /*
  * COMPLETE REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\Work\jedi.c.
@@ -362,7 +363,9 @@ int CVECTOR_Equals(CVECTOR lhs, CVECTOR rhs)
  */
 void jedi_CalcBonusLevels(int jedi_id, int *attack_bonus, int *defend_bonus)
 {
-    int flags = jediUpgrades[jedi_id].forcePowers;
+    int flags;
+    flags = game_getUpgrades(jedi_id)->forcePowers;
+    jedi_id = jpb_ModDonor(jedi_id);
 
     if (jedi_id >= 5) {
         *attack_bonus = 0;
@@ -381,19 +384,23 @@ void jedi_CalcSkillLevels(
     int upgrade_total = 0;
     int level;
 
+    int package_id = jedi_id;
+    const JPBModCharacter *mod = jpb_ModCharacterById(package_id);
+    jedi_id = jpb_ModDonor(jedi_id);
     if (jedi_id >= 5) {
         *highest_level = 10;
         *skill_percent = 100;
     }
     for (level = 1; level <= 10; ++level) {
-        if (GameStruct.jediLevelPlayed[jedi_id][level] != 0) {
+        if (mod != NULL ? jpb_ModLevelPlayed(package_id, level) :
+            GameStruct.jediLevelPlayed[jedi_id][level] != 0) {
             high = level;
         }
     }
     *highest_level = high;
     if (jedi_id < 10) {
         for (level = 1; level <= 10; ++level) {
-            int upgrade = jediUpgrades[jedi_id].awardData[level];
+            int upgrade = game_getUpgrades(package_id)->awardData[level];
 
             if (upgrade > 3) {
                 upgrade = 3;
@@ -402,6 +409,11 @@ void jedi_CalcSkillLevels(
         }
     }
     *skill_percent = (upgrade_total * 100) / 30;
+    /* The legacy proxy stored aggregate unlocks, not per-level awards/scores. */
+    if (mod != NULL) {
+        if (*highest_level < mod->legacyHighestLevel) *highest_level = mod->legacyHighestLevel;
+        if (*skill_percent < mod->legacySkillPercent) *skill_percent = mod->legacySkillPercent;
+    }
 }
 
 /* 0xB1330, 29 bytes, global, 1 named locals
@@ -411,6 +423,8 @@ void jedi_CalcSkillLevels(
  */
 int jedi_CanToggleSaber(model_id cnum)
 {
+    const JPBModCharacter *mod = jpb_ModCharacterById((int)cnum);
+    if (mod != NULL) return mod->isJedi;
     return cnum == mace_model ||
            cnum == adi_model ||
            cnum == plo_model ||
@@ -433,11 +447,9 @@ int jedi_CheckValidLevel(int level, int *upgrade_level)
         return level < 15;
     }
     if (level < 11) {
-        upgrade = jediUpgrades[
-            GameStruct.ModelSelect[0]].awardData[level];
+        upgrade = game_getUpgrades(jpb_ModPlayerModel(0, GameStruct.ModelSelect[0]))->awardData[level];
         if (GameStruct.NumPlayers == 2) {
-            int player_two_upgrade = jediUpgrades[
-                GameStruct.ModelSelect[1]].awardData[level];
+            int player_two_upgrade = game_getUpgrades(jpb_ModPlayerModel(1, GameStruct.ModelSelect[1]))->awardData[level];
 
             if (upgrade <= player_two_upgrade) {
                 upgrade = player_two_upgrade;
@@ -472,6 +484,8 @@ int jedi_CheckValidLevel(int level, int *upgrade_level)
  */
 int jedi_CheckValidPlayer(int jediID)
 {
+    const JPBModCharacter *mod = jpb_ModCharacterById(jediID);
+    if (mod != NULL) return !mod->hidden;
     if (jediID <= plo_model) {
         return 1;
     }
@@ -556,6 +570,8 @@ int jedi_CheckValidPlayerWTabs(int selectType, int jediID)
  */
 int jedi_CheckValidVersus(int jediID)
 {
+    const JPBModCharacter *mod = jpb_ModCharacterById(jediID);
+    if (mod != NULL) return !mod->hidden;
     int high = 0;
     int player;
     int level;
@@ -692,6 +708,8 @@ int jedi_GetAwardFlags(int player_number, int points)
 {
     playerObject *player = &gaPlayerData[player_number];
     int player_id = player->playerID;
+    int progression_id = jpb_ModPlayerModel(player_number, player_id);
+    const JPBModCharacter *mod = jpb_ModCharacterById(progression_id);
     int player_count = GameStruct.NumPlayers;
     int current_level = GameStruct.CurrentLevel;
     int flags = 0;
@@ -703,7 +721,9 @@ int jedi_GetAwardFlags(int player_number, int points)
     if ((unsigned)(current_level - 16) < 7U) {
         uint32_t level_bit = UINT32_C(1) << current_level;
 
-        GameStruct.jediLevelPlayed[player_id][current_level] = 1;
+        if (!jpb_ModRecordLevel(progression_id, current_level,
+                (uint32_t)(points > 0 ? points : 0)))
+            GameStruct.jediLevelPlayed[player_id][current_level] = 1;
         secretBits |= level_bit;
         if ((secretBits & UINT32_C(0x007f0200)) ==
             UINT32_C(0x007f0000)) {
@@ -712,8 +732,10 @@ int jedi_GetAwardFlags(int player_number, int points)
         return 0;
     }
     if (player_id >= 5 && player_id != 8) {
-        GameStruct.jediLevelPlayed[player_id][current_level] = 1;
-        game_checkCompleteAchievements();
+        if (!jpb_ModRecordLevel(progression_id, current_level,
+                (uint32_t)(points > 0 ? points : 0)))
+            GameStruct.jediLevelPlayed[player_id][current_level] = 1;
+        if (mod == NULL) game_checkCompleteAchievements();
         return 0;
     }
     if (current_level == 14) {
@@ -733,8 +755,10 @@ int jedi_GetAwardFlags(int player_number, int points)
     }
 
     score_index = player_id * JPB_GAME_LEVEL_CAPACITY + current_level;
-    GameStruct.jediLevelPlayed[player_id][current_level] = 1;
-    game_checkCompleteAchievements();
+    if (!jpb_ModRecordLevel(progression_id, current_level,
+                (uint32_t)(points > 0 ? points : 0)))
+            GameStruct.jediLevelPlayed[player_id][current_level] = 1;
+    if (mod == NULL) game_checkCompleteAchievements();
     if (GameStruct.jediLevelPlayed[0][1] == 1 &&
         GameStruct.jediLevelPlayed[1][1] == 1 &&
         GameStruct.jediLevelPlayed[2][1] == 1 &&
@@ -750,7 +774,7 @@ int jedi_GetAwardFlags(int player_number, int points)
             award_level = tier + 1;
         }
     }
-    if ((uint32_t)points >
+    if (mod == NULL && (uint32_t)points >
         ((uint32_t *)GameStruct.jediScorePerLevel)[score_index]) {
         ((uint32_t *)GameStruct.jediScorePerLevel)[score_index] =
             (uint32_t)points;
@@ -784,19 +808,19 @@ int jedi_GetAwardFlags(int player_number, int points)
         return 0;
     }
 
-    previous_award = jediUpgrades[player_id].awardData[current_level];
+    previous_award = game_getUpgrades(progression_id)->awardData[current_level];
     if (award_level <= previous_award) {
         return 0;
     }
-    jediUpgrades[player_id].awardData[current_level] =
+    game_getUpgrades(progression_id)->awardData[current_level] =
         (int8_t)award_level;
     for (tier = previous_award + 1; tier <= award_level; ++tier) {
         flags |= award[current_level][tier - 1];
     }
-    if (jediUpgrades[player_id].healthUpgrades >= 5) {
+    if (game_getUpgrades(progression_id)->healthUpgrades >= 5) {
         flags &= ~1;
     }
-    if (jediUpgrades[player_id].forceUpgrades >= 5) {
+    if (game_getUpgrades(progression_id)->forceUpgrades >= 5) {
         flags &= ~2;
     }
     {
@@ -804,7 +828,7 @@ int jedi_GetAwardFlags(int player_number, int points)
 
         for (tier = 0; tier < player->maxCombos; ++tier) {
             if (game_getCombo(
-                    (uint32_t)GameStruct.ModelSelect[player->playernum],
+                    (uint32_t)jpb_ModPlayerModel(player->playernum, GameStruct.ModelSelect[player->playernum]),
                     (uint32_t)tier) == 0) {
                 ++missing_combo;
             }
@@ -813,22 +837,22 @@ int jedi_GetAwardFlags(int player_number, int points)
             flags &= ~4;
         }
     }
-    jediUpgrades[player_id].forcePowers = (int16_t)(
-        jediUpgrades[player_id].forcePowers | flags);
+    game_getUpgrades(progression_id)->forcePowers = (int16_t)(
+        game_getUpgrades(progression_id)->forcePowers | flags);
     if (player_id < 5) {
         int attack =
-            ((jediUpgrades[player_id].forcePowers >> 5) & 1) +
-            ((jediUpgrades[player_id].forcePowers >> 8) & 1) +
-            ((jediUpgrades[player_id].forcePowers >> 10) & 1);
+            ((game_getUpgrades(progression_id)->forcePowers >> 5) & 1) +
+            ((game_getUpgrades(progression_id)->forcePowers >> 8) & 1) +
+            ((game_getUpgrades(progression_id)->forcePowers >> 10) & 1);
         int defend =
-            ((jediUpgrades[player_id].forcePowers >> 4) & 1) +
-            ((jediUpgrades[player_id].forcePowers >> 7) & 1) +
-            ((jediUpgrades[player_id].forcePowers >> 9) & 1);
+            ((game_getUpgrades(progression_id)->forcePowers >> 4) & 1) +
+            ((game_getUpgrades(progression_id)->forcePowers >> 7) & 1) +
+            ((game_getUpgrades(progression_id)->forcePowers >> 9) & 1);
 
-        jediUpgrades[player_id].attackDefendUpgrades =
+        game_getUpgrades(progression_id)->attackDefendUpgrades =
             (int8_t)((defend << 4) | attack);
     } else {
-        jediUpgrades[player_id].attackDefendUpgrades = 0;
+        game_getUpgrades(progression_id)->attackDefendUpgrades = 0;
     }
     if ((flags & 0x40) != 0) {
         ++GameStruct.mNumContinues;
@@ -837,9 +861,9 @@ int jedi_GetAwardFlags(int player_number, int points)
         } else if (GameStruct.mNumContinues > 9) {
             GameStruct.mNumContinues = 9;
         }
-        ++jediUpgrades[player_id].lifeUpgrades;
-        if (jediUpgrades[player_id].lifeUpgrades > 3) {
-            jediUpgrades[player_id].lifeUpgrades = 3;
+        ++game_getUpgrades(progression_id)->lifeUpgrades;
+        if (game_getUpgrades(progression_id)->lifeUpgrades > 3) {
+            game_getUpgrades(progression_id)->lifeUpgrades = 3;
             flags &= ~0x40;
         }
     }
@@ -853,6 +877,8 @@ int jedi_GetAwardFlags(int player_number, int points)
  */
 int jedi_GetColorSprite(uint64_t player_id)
 {
+    const JPBModCharacter *mod = jpb_ModCharacterById((int)player_id);
+    if (mod != NULL) return mod->isJedi ? (int)mod->icons[2] : -1;
     if (player_id >= JPB_JEDI_COLOUR_COUNT) {
         return -1;
     }
@@ -1005,6 +1031,9 @@ CVECTOR jedi_GetColour(uint64_t playerID)
  */
 uint32_t jedi_GetColour32(uint64_t playerID)
 {
+    const JPBModCharacter *mod = playerID <= JPB_MOD_LAST_ID
+        ? jpb_ModCharacterById((int)playerID) : NULL;
+    if (mod != NULL) return mod->colors[2];
     if (playerID < JPB_JEDI_COLOUR_COUNT) {
         const CVECTOR colour = gJediColour[playerID];
 
@@ -1045,11 +1074,11 @@ int jedi_GetHighestLevel(void)
  */
 int jedi_GetLives(void)
 {
-    int lives = jediUpgrades[GameStruct.ModelSelect[0]].lifeUpgrades;
+    int lives = game_getUpgrades(jpb_ModPlayerModel(0, GameStruct.ModelSelect[0]))->lifeUpgrades;
 
     if (GameStruct.NumPlayers == 2) {
         int player_two_lives =
-            jediUpgrades[GameStruct.ModelSelect[1]].lifeUpgrades;
+            game_getUpgrades(jpb_ModPlayerModel(1, GameStruct.ModelSelect[1]))->lifeUpgrades;
 
         if (lives <= player_two_lives) {
             lives = player_two_lives;
@@ -1424,6 +1453,13 @@ int jedi_HandleSabre(
         return 0;
     }
     color = jedi_sabre_color(player->playerID);
+    {
+        const JPBModCharacter *mod = jpb_ModPlayer(player->playernum);
+        if (mod != NULL) {
+            if (!mod->isJedi) return 0;
+            color = mod->colors[2] & UINT32_C(0x00ffffff);
+        }
+    }
     ++jedi_sabre_counter;
     if ((jedi_sabre_counter & UINT8_C(0x1f)) == 0 &&
         rand() % 100 < 0x19 &&
@@ -1451,6 +1487,8 @@ int jedi_HandleSabre(
         &tip_id,
         &second_base_id,
         &second_tip_id);
+    (void)jpb_ModSaberNodes(player->playernum, &base_id, &tip_id,
+                          &second_base_id, &second_tip_id);
     if (!long_saber) {
         base = coll_GetNode(player->playernum, base_id);
         tip = coll_GetNode(player->playernum, tip_id);
@@ -1564,11 +1602,11 @@ int jedi_HasProgression(model_id cnum)
 void jedi_InitLives(void)
 {
     int life_upgrades =
-        jediUpgrades[GameStruct.ModelSelect[0]].lifeUpgrades;
+        game_getUpgrades(jpb_ModPlayerModel(0, GameStruct.ModelSelect[0]))->lifeUpgrades;
 
     if (GameStruct.NumPlayers == 2) {
         int player_two_lives =
-            jediUpgrades[GameStruct.ModelSelect[1]].lifeUpgrades;
+            game_getUpgrades(jpb_ModPlayerModel(1, GameStruct.ModelSelect[1]))->lifeUpgrades;
 
         if (life_upgrades <= player_two_lives) {
             life_upgrades = player_two_lives;
@@ -1656,7 +1694,10 @@ int jedi_InitPlayer(playerObject *player)
     player->paNodesSizes = node_sizes;
     player->numCollisionNodes = node_count;
     if (player->playerID == 5) {
-        jediUpgrades[5].forcePowers = (int16_t)UINT16_C(0xf800);
+        if (jpb_ModPlayerModel(player->playernum, player->playerID) == 5)
+            jediUpgrades[5].forcePowers = (int16_t)UINT16_C(0xf800);
+        else
+            (void)game_getUpgrades(jpb_ModPlayerModel(player->playernum, player->playerID));
     }
     player->pMainCallBack = jedi_Main;
     jedi_apply_player_settings(player);
@@ -1865,7 +1906,7 @@ static void jedi_draw_combo_column(
         size_t command_length;
 
         if (game_getCombo(
-                (uint32_t)(int32_t)GameStruct.ModelSelect[player_column],
+                (uint32_t)jpb_ModPlayerModel(player_column, GameStruct.ModelSelect[player_column]),
                 (uint32_t)combo_index) == 0 &&
             GameStruct.CurrentLevel != 25 &&
             player->playerID <= 8) {
@@ -1992,6 +2033,7 @@ void jedi_ShowSecrets(void)
 void jedi_ToggleSaberColor(model_id cnum)
 {
     uint64_t index = (uint32_t)cnum;
+    if (jpb_ModToggleColor((int)cnum)) return;
     CVECTOR current;
     CVECTOR legacy;
 

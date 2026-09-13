@@ -5,6 +5,7 @@
  */
 
 #include "jpb/savegame.h"
+#include "jpb/mods.h"
 
 #include "jpb/extracharacters.h"
 
@@ -72,6 +73,8 @@ static JPBSaveResult jpb_save_read_payload(
 JPBSaveResult jpb_SaveGameWriteFile(const char *path)
 {
     size_t index;
+    int models[2] = {jpb_ModPlayerModel(0, GameStruct.ModelSelect[0]),
+                     jpb_ModPlayerModel(1, GameStruct.ModelSelect[1])};
 
     UpdateSaveGameStruct();
     SaveGameStruct.saveFileVer = 0;
@@ -79,9 +82,9 @@ JPBSaveResult jpb_SaveGameWriteFile(const char *path)
     SaveGameStruct.lastlevel = GameStruct.CurrentLevel;
     SaveGameStruct.secretBits = secretBits;
     SaveGameStruct.players[0] =
-        (uint8_t)GameStruct.ModelSelect[0];
+        (uint8_t)jpb_ModDonor(GameStruct.ModelSelect[0]);
     SaveGameStruct.players[1] =
-        (uint8_t)GameStruct.ModelSelect[1];
+        (uint8_t)jpb_ModDonor(GameStruct.ModelSelect[1]);
     SaveGameStruct.unlockedExtraCharacters = 0;
     for (index = 0; index < ExtraCharactersSize; ++index) {
         if (ExtraCharacters[index].Unlocked != 0) {
@@ -89,13 +92,15 @@ JPBSaveResult jpb_SaveGameWriteFile(const char *path)
                 (uint16_t)(UINT16_C(1) << index);
         }
     }
-    return jpb_save_write_payload(
-        path, &SaveGameStruct, sizeof(SaveGameStruct));
+    if (path == NULL || path[0] == '\0') return JPB_SAVE_BAD_ARGUMENT;
+    return jpb_ModSaveCommit(path, &SaveGameStruct, sizeof(SaveGameStruct), models)
+        ? JPB_SAVE_OK : JPB_SAVE_IO_ERROR;
 }
 
 JPBSaveResult jpb_SaveGameReadFile(const char *path)
 {
     saveGameStruct loaded;
+    int models[2], metadata, player;
     JPBSaveResult result = jpb_save_read_payload(
         path, &loaded, sizeof(loaded));
 
@@ -106,11 +111,22 @@ JPBSaveResult jpb_SaveGameReadFile(const char *path)
         (loaded.validFlag == 0 && loaded.continueAble == 0)) {
         return JPB_SAVE_INVALID_DATA;
     }
+    models[0] = loaded.players[0];
+    models[1] = loaded.players[1];
+    metadata = jpb_ModSaveRestore(path, &loaded, sizeof(loaded), models);
+    if (metadata == -2) return JPB_SAVE_MOD_UNAVAILABLE;
+    if (metadata < 0) return JPB_SAVE_INVALID_DATA;
+    for (player = 0; player < 2; ++player) {
+        if (models[player] >= JPB_MOD_FIRST_ID && jpb_ModCharacterById(models[player]) == NULL)
+            return JPB_SAVE_MOD_UNAVAILABLE;
+    }
     SaveGameStruct = loaded;
     ApplySaveGameData();
     secretBits = SaveGameStruct.secretBits;
-    GameStruct.ModelSelect[0] = SaveGameStruct.players[0];
-    GameStruct.ModelSelect[1] = SaveGameStruct.players[1];
+    for (player = 0; player < 2; ++player) {
+        jpb_ModSetPlayer(player, models[player]);
+        GameStruct.ModelSelect[player] = (int16_t)jpb_ModDonor(models[player]);
+    }
     return JPB_SAVE_OK;
 }
 

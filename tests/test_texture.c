@@ -164,14 +164,22 @@ static int test_retail_cache_and_failure_policy(void)
     CHECK(_LoadTexture(failed_path, TT_LEVEL, 0) == NULL);
     CHECK(g_material[4].type == TT_FREE);
     stale = _LoadTexture(failed_path, TT_LEVEL, 0);
-    CHECK(stale == &g_material[4]);
-    CHECK(stale->texture == NULL);
-    CHECK(load_count == 7);
+    /* A failed material is not a usable cache hit. Retry the loader and
+     * preserve the null failure result until the resource becomes available. */
+    CHECK(stale == NULL);
+    CHECK(g_material[4].type == TT_FREE);
+    CHECK(load_count == 9);
 
     fail_all_loads = 0;
     failed_filename = NULL;
+    material = _LoadTexture(failed_path, TT_LEVEL, 0);
+    CHECK(material == &g_material[4]);
+    CHECK(material->texture == &texture_token);
+    CHECK(load_count == 10);
+    CHECK(_LoadTexture(failed_path, TT_LEVEL, 0) == material);
+    CHECK(load_count == 10);
     texture_Flush((unsigned)TT_ANY);
-    CHECK(unload_count == 4);
+    CHECK(unload_count == 5);
     jpb_TextureSetPlatformHooks(NULL, NULL, NULL);
     return 0;
 }

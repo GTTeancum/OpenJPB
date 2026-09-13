@@ -21,6 +21,7 @@
  */
 
 #include "jpb/game.h"
+#include "jpb/mods.h"
 #include "jpb/achievement.h"
 #include "jpb/ai.h"
 #include "jpb/alltext.h"
@@ -1640,9 +1641,50 @@ void game_clearLetterBox(void)
  * PDB type: void (unsigned, unsigned)
  * Source: W:\SWJediPowerBattles\Work\game.c
  */
+Upgrades *game_getUpgrades(int model)
+{
+    Upgrades *mod = jpb_ModUpgrades(model);
+    if (mod != NULL) return mod;
+    return &jediUpgrades[(unsigned)model < JPB_GAME_JEDI_MODEL_CAPACITY ? model : 0];
+}
+
+int game_getProgressCapacity(int model, int force)
+{
+    Upgrades *mod = jpb_ModUpgrades(model);
+    if (mod != NULL) return 100 + 20 * (force ? mod->forceUpgrades : mod->healthUpgrades);
+    if ((unsigned)model >= JPB_GAME_JEDI_MODEL_CAPACITY) return 100;
+    return force ? GameStruct.maxForceLevels[model] : GameStruct.maxEnergyLevels[model];
+}
+
+int game_getProgressLineLength(int model, int force)
+{
+    Upgrades *mod = jpb_ModUpgrades(model);
+    if (mod != NULL) return 25 + 5 * (force ? mod->forceUpgrades : mod->healthUpgrades);
+    if ((unsigned)model >= 9) return 25;
+    return force ? GameStruct.maxForceLineLength[model] : GameStruct.maxEnergyLineLength[model];
+}
+
+static uint8_t *game_combo_mask(uint32_t jedi)
+{
+    const JPBModCharacter *mod = jpb_ModCharacterById((int)jedi);
+    if (mod != NULL) {
+        uint8_t initial[6] = {0};
+        if (mod->animationDonor < 9) {
+            const int8_t *combo = initialJediCombos[mod->animationDonor];
+            while (*combo != -1) {unsigned n = (uint8_t)*combo++;if(n < 48) initial[n >> 3] |= (uint8_t)(1u << (n & 7));}
+        } else {
+            memset(initial, 0xff, sizeof(initial));
+        }
+        return jpb_ModComboMask((int)jedi, initial);
+    }
+    return jedi < JPB_GAME_JEDI_MODEL_CAPACITY ? GameStruct.jediComboMask[jedi].m : NULL;
+}
+
 void game_disableCombo(uint32_t jedi, uint32_t combo)
 {
-    GameStruct.jediComboMask[jedi].m[combo >> 3] &=
+    uint8_t *mask = game_combo_mask(jedi);
+    if (mask == NULL || combo >= 48) return;
+    mask[combo >> 3] &=
         (uint8_t)~(uint8_t)(1U << (combo & 7U));
 }
 
@@ -1653,7 +1695,9 @@ void game_disableCombo(uint32_t jedi, uint32_t combo)
  */
 void game_enableCombo(uint32_t jedi, uint32_t combo)
 {
-    GameStruct.jediComboMask[jedi].m[combo >> 3] |=
+    uint8_t *mask = game_combo_mask(jedi);
+    if (mask == NULL || combo >= 48) return;
+    mask[combo >> 3] |=
         (uint8_t)(1U << (combo & 7U));
 }
 
@@ -1944,12 +1988,8 @@ int game_gSetEnergy(int player, int level)
 
     character->MaxEnergy = (int16_t)level;
     if (player < 2) {
-        if (GameStruct.ModelSelect[player] < 9) {
-            LifeLineLength = GameStruct.maxEnergyLineLength[
-                GameStruct.ModelSelect[player]];
-        } else {
-            LifeLineLength = 25;
-        }
+        LifeLineLength = game_getProgressLineLength(
+            jpb_ModPlayerModel(player, GameStruct.ModelSelect[player]), 0);
     } else if (level >= 50) {
         LifeLineLength = 25;
     } else {
@@ -2020,12 +2060,8 @@ void game_gSetMaxEnergy(int player, int level)
 
     character->MaxEnergy = (int16_t)level;
     if (player < 2) {
-        if (GameStruct.ModelSelect[player] < 9) {
-            line_length = GameStruct.maxEnergyLineLength[
-                GameStruct.ModelSelect[player]];
-        } else {
-            line_length = 25;
-        }
+        line_length = game_getProgressLineLength(
+            jpb_ModPlayerModel(player, GameStruct.ModelSelect[player]), 0);
     } else if (level > 49) {
         line_length = 25;
     } else {
@@ -2048,10 +2084,9 @@ void game_gSetMaxForce(int player, int level)
     uint32_t line_length;
 
     character->MaxForce = (int16_t)level;
-    if (player < 2 &&
-        GameStruct.ModelSelect[player] < 9) {
-        line_length = GameStruct.maxForceLineLength[
-            GameStruct.ModelSelect[player]];
+    if (player < 2) {
+        line_length = game_getProgressLineLength(
+            jpb_ModPlayerModel(player, GameStruct.ModelSelect[player]), 1);
     } else {
         line_length = 25;
     }
@@ -2128,8 +2163,9 @@ uint32_t game_gToggleGameFlags(uint32_t flag)
  */
 uint32_t game_getCombo(uint32_t jedi, uint32_t combo)
 {
-    return (uint32_t)GameStruct.jediComboMask[jedi]
-               .m[combo >> 3] &
+    uint8_t *mask = game_combo_mask(jedi);
+    if (mask == NULL || combo >= 48) return 0;
+    return (uint32_t)mask[combo >> 3] &
            (UINT32_C(1) << (combo & 7));
 }
 
@@ -2190,6 +2226,7 @@ void game_initPlayerStartCombos(uint32_t player)
         JPB_GAME_JEDI_MODEL_CAPACITY) {
         jedi = (uint32_t)player_object->playerID;
     }
+    jedi = (uint32_t)jpb_ModPlayerModel((int)player, (int)jedi);
     for (combo = 0;
          combo < (uint32_t)player_object->maxCombos;
          ++combo) {
@@ -2199,10 +2236,7 @@ void game_initPlayerStartCombos(uint32_t player)
         if (combo_data->String[0] != '\0' &&
             (combo_data->comboFlags &
              UINT32_C(0x00200000)) != 0) {
-            GameStruct.jediComboMask[jedi]
-                .m[combo >> 3] |=
-                (uint8_t)(UINT32_C(1) <<
-                          (combo & 7));
+            game_enableCombo(jedi, combo);
         }
     }
 }

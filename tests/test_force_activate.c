@@ -104,6 +104,7 @@ static void reset_state(ActivateFixture *fixture)
     for (index = 0; index < TEST_MOTION_COUNT; ++index) {
         fixture->motions[index].Seq =
             (uint16_t)index;
+        fixture->motions[index].globalID = (uint16_t)index;
         fixture->motions[index].Speed = -1;
         fixture->templates[index].Lframe = 10;
     }

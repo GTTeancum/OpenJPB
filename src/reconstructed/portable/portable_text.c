@@ -131,20 +131,35 @@ static int portable_text_copy_game_root(
     char *root,
     size_t root_size)
 {
-    const char *marker;
+    const char *marker = NULL;
+    const char *cursor;
     size_t length;
 
     if (font_path == NULL || root == NULL || root_size == 0) {
         return 0;
     }
-    marker = strstr(font_path, "\\res\\font\\");
-    if (marker == NULL) {
-        marker = strstr(font_path, "/res/font/");
+    for (cursor = font_path; *cursor != '\0'; ++cursor) {
+        if ((cursor == font_path || cursor[-1] == '\\' ||
+             cursor[-1] == '/') &&
+            cursor[0] == 'r' && cursor[1] == 'e' &&
+            cursor[2] == 's' &&
+            (cursor[3] == '\\' || cursor[3] == '/') &&
+            cursor[4] == 'f' && cursor[5] == 'o' &&
+            cursor[6] == 'n' && cursor[7] == 't' &&
+            (cursor[8] == '\\' || cursor[8] == '/')) {
+            marker = cursor;
+            break;
+        }
     }
     if (marker == NULL) {
         return 0;
     }
     length = (size_t)(marker - font_path);
+    while (length != 0 &&
+           (font_path[length - 1] == '\\' ||
+            font_path[length - 1] == '/')) {
+        --length;
+    }
     if (length == 0 || length >= root_size) {
         return 0;
     }

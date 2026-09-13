@@ -549,6 +549,56 @@ static int test_paused_playback_gate(void)
     return 0;
 }
 
+static int test_pickup_gain_matches_executable(void)
+{
+    char *sounds[] = {"xsecret", "xsaberup"};
+    const int offsets[] = {512, 1536, 2048, 2560};
+    const int distances[] = {0, 57, 114, 171};
+    const int volumes[] = {0, 30, 75};
+    SoundControlTrace control;
+    SoundTrace play;
+    int sound_index, stereo, distance_index, volume_index;
+
+    CHECK(sound_LoadBank("resident", 0) == 0);
+    cameraLocation = (_svector){100, 200, 300, 0};
+    cameraFacing = (_svector){0, 0, 4096, 0};
+    sound_Paused = 0;
+    jpb_SoundSetChannelHook(trace_channel, &control);
+    /* EXE 0x12B744..0x12B7DB: positional x* cues use SFXVolume * 1.0,
+       not the 2D 0.92 factor or the quiet/voice-prefix branches. */
+    for (sound_index = 0; sound_index < 2; ++sound_index) {
+        for (stereo = 0; stereo < 2; ++stereo) {
+            OptionStruct.Stereo = (uint8_t)stereo;
+            for (distance_index = 0; distance_index < 4; ++distance_index) {
+                VECTOR position = {
+                    100, 30000, 300 + offsets[distance_index], 0
+                };
+                for (volume_index = 0; volume_index < 3; ++volume_index) {
+                    OptionStruct.SFXVolume = (uint8_t)volumes[volume_index];
+                    memset(&control, 0, sizeof(control));
+                    reset_trace(&play, &position, sounds[sound_index], 0);
+                    play.results[0] = 17;
+                    CHECK(sound_Play(&position, 0, sounds[sound_index], 0) == 17);
+                    CHECK(play.calls == 1 && play.arguments_match);
+                    CHECK(play.banks[0] == 0);
+                    CHECK(control.channel_calls == 3);
+                    CHECK(control.channel_operations[0] == JPB_SOUND_CHANNEL_PANNING);
+                    CHECK(control.channel_value0[0] == (stereo ? 127 : 255));
+                    CHECK(control.channel_value1[0] == (stereo ? 127 : 255));
+                    CHECK(control.channel_operations[1] == JPB_SOUND_CHANNEL_DISTANCE);
+                    CHECK(control.channel_value0[1] == distances[distance_index]);
+                    CHECK(control.channel_operations[2] == JPB_SOUND_CHANNEL_VOLUME);
+                    CHECK(control.channel_value0[2] == volumes[volume_index]);
+                }
+            }
+        }
+    }
+    jpb_SoundSetChannelHook(NULL, NULL);
+    jpb_SoundSetPlaySfxHook(NULL, NULL);
+    sound_FreeBank(0);
+    return 0;
+}
+
 int main(void)
 {
     CHECK(test_helpers_and_default_options() == 0);
@@ -558,6 +608,7 @@ int main(void)
     CHECK(test_volume_and_retail_stubs() == 0);
     CHECK(test_sound_control_and_loop_lifecycle() == 0);
     CHECK(test_paused_playback_gate() == 0);
+    CHECK(test_pickup_gain_matches_executable() == 0);
     jpb_SoundSetSetupHook(NULL, NULL);
     puts("sound tests passed");
     return 0;

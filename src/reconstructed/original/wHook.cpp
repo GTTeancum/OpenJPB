@@ -4716,12 +4716,14 @@ void _EndPoly(void)
 /* Reference RVA 0x125F50; the platform destructor is isolated by texture.c. */
 void _FreeTexture(_Material *texture)
 {
-    if (texture == nullptr || texture->texture == nullptr) {
+    if (texture == nullptr) {
         return;
     }
     jpb_texture_cache.erase(texture->filename);
-    jpb_TextureUnloadPlatformResource(texture->texture);
-    texture->texture = nullptr;
+    if (texture->texture != nullptr) {
+        jpb_TextureUnloadPlatformResource(texture->texture);
+        texture->texture = nullptr;
+    }
 }
 
 /* 0x1262D0, 15 bytes, global, 1 named locals
@@ -4771,7 +4773,14 @@ _Material *_LoadTexture(
     if (resolvedFilename != nullptr) {
         cached = jpb_texture_cache.find(resolvedFilename);
         if (cached != jpb_texture_cache.end()) {
-            return cached->second;
+            _Material *cachedMaterial = cached->second;
+
+            if (cachedMaterial != nullptr &&
+                cachedMaterial->type != TT_FREE &&
+                cachedMaterial->texture != nullptr) {
+                return cachedMaterial;
+            }
+            jpb_texture_cache.erase(cached);
         }
     }
 

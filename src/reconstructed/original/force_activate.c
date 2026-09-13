@@ -11,6 +11,7 @@
 #include "jpb/force.h"
 #include "jpb/game.h"
 #include "jpb/input.h"
+#include "jpb/mods.h"
 
 #include <stdint.h>
 
@@ -51,6 +52,37 @@ int force_gActivate(
         player->playerID < 9
             ? &mapData[player->playerID]
             : &mapData[7];
+    ForceMap package_map;
+    const JPBModCharacter *mod = jpb_ModPlayer(player->playernum);
+
+    if (mod != NULL && mod->animationDonor == player->playerID) {
+        int donor = mod->forceDonor == 9 ? 5 : mod->forceDonor;
+        if (!mod->isJedi) return 0;
+        package_map = mapData[donor < 9 ? donor : 7];
+        /* Legacy Maul packages use the donor's effect recipe, but their
+         * shorter CAD cannot address mirrored Jedi motions. Preserve one
+         * chain entry where needed: Plo's spin installs its effect there.
+         * Work on a copy so another player never observes a changed map. */
+        if (mod->animationDonor == 9) {
+            int slot, entry;
+            for (slot = 0; slot < 4; ++slot) {
+                int invalid = 0;
+                ForceSlot *recipe = &package_map.slot[slot];
+                for (entry = 0; entry < 4; ++entry) {
+                    int motion = recipe->map[entry];
+                    if (motion < 0) motion = 59 - motion;
+                    if (motion >= player->maxMotions) invalid = 1;
+                }
+                if (invalid) {
+                    int chained = recipe->map[1] || recipe->map[2] || recipe->map[3];
+                    recipe->map[0] = 67;
+                    recipe->map[1] = chained ? 67 : 0;
+                    recipe->map[2] = recipe->map[3] = 0;
+                }
+            }
+        }
+        map = &package_map;
+    }
 
     if (player->pForceCallBack != NULL) {
         return 0;
@@ -73,14 +105,14 @@ int force_gActivate(
         feedback_startEffect(player->playernum, 13);
     }
     if (((uint32_t)cpad[0] & UINT32_C(0x20)) != 0 &&
-        ((jediUpgrades[player->playerID].forcePowers &
+        ((game_getUpgrades(jpb_ModPlayerModel(player->playernum, player->playerID))->forcePowers &
           INT16_C(0x2000)) != 0 ||
          GameStruct.ForceLevel > 8)) {
         i = force_PlaySeq(&map->slot[2], player);
         feedback_startEffect(player->playernum, 13);
     }
     if (((uint32_t)cpad[0] & UINT32_C(0x40)) != 0 &&
-        ((jediUpgrades[player->playerID].forcePowers &
+        ((game_getUpgrades(jpb_ModPlayerModel(player->playernum, player->playerID))->forcePowers &
           INT16_C(0x4000)) != 0 ||
          GameStruct.ForceLevel > 8)) {
         i = force_PlaySeq(&map->slot[3], player);

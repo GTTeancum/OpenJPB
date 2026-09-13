@@ -159,6 +159,16 @@ static int test_enemy_model_special_flag_field(void)
     jpb_LoaderApplyEnemyModelSpecialsForTest(&player, motions, 1);
     CHECK(player.pFlags == UINT32_C(0x40));
     CHECK(player.forceFlags == UINT32_C(0x80));
+
+    player.forceFlags = UINT32_C(0x80);
+    jpb_LoaderApplyEnemyModelSpecialsForTest(&player, motions, 30);
+    CHECK(player.pFlags == UINT32_C(0x40));
+    CHECK(player.forceFlags == UINT32_C(0x280));
+
+    player.forceFlags = UINT32_C(0x80);
+    jpb_LoaderApplyEnemyModelSpecialsForTest(&player, motions, 47);
+    CHECK(player.pFlags == UINT32_C(0x40));
+    CHECK(player.forceFlags == UINT32_C(0x280));
     return 0;
 }
 

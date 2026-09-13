@@ -1,3 +1,4 @@
+#include "jpb/mods.h"
 /* Windows-only realization of original frontend PNG assets. */
 #define COBJMACROS
 #include <windows.h>
@@ -12,6 +13,8 @@ static int pc_utf8_to_wide(
     const char *path, wchar_t *wide_path, int capacity)
 {
     int result;
+    char resolved[JPB_MOD_PATH];
+    if (jpb_ModsResolvePath(path, resolved, sizeof(resolved))) path = resolved;
 
     result = MultiByteToWideChar(
         CP_UTF8, MB_ERR_INVALID_CHARS,

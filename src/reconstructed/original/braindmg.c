@@ -1,3 +1,4 @@
+#include "jpb/mods.h"
 /*
  * REVIEWED RECONSTRUCTION.
  * PDB module: 0009
@@ -254,8 +255,7 @@ int braindmg_Blocking(
 
             if (player->playerID < 6) {
                 blockmod =
-                    (jediUpgrades[player->playerID]
-                         .attackDefendUpgrades >>
+                    (game_getUpgrades(jpb_ModPlayerModel(player->playernum, player->playerID))->attackDefendUpgrades >>
                      4) *
                     5;
             }
@@ -416,8 +416,7 @@ int braindmg_DamageControl(void *player_data)
             if (attacker->playerID < 6 &&
                 mProjectileAttack == 0) {
                 damagemod = (uint8_t)(
-                    (jediUpgrades[attacker->playerID]
-                         .attackDefendUpgrades &
+                    (game_getUpgrades(jpb_ModPlayerModel(attacker->playernum, attacker->playerID))->attackDefendUpgrades &
                      0x0f) *
                     2);
             }

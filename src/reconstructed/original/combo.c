@@ -18,6 +18,7 @@
  */
 
 #include "jpb/combo.h"
+#include "jpb/mods.h"
 #include "jpb/anim.h"
 #include "jpb/animctrl.h"
 #include "jpb/animutil.h"
@@ -46,8 +47,8 @@ static int combo_is_available(
         return 1;
     }
     return game_getCombo(
-               (uint32_t)GameStruct.ModelSelect[
-                   player->playernum],
+               (uint32_t)jpb_ModPlayerModel(player->playernum,
+                   GameStruct.ModelSelect[player->playernum]),
                (uint32_t)x) != 0;
 }
 
@@ -399,7 +400,7 @@ void combo_InitComboData(playerObject *player)
         }
         combo->numHits = (int16_t)num_hits;
         if (game_getCombo(
-                (uint32_t)player->playerID,
+                (uint32_t)jpb_ModPlayerModel(player->playernum, player->playerID),
                 (uint32_t)x) != 0) {
             ++hit_counts[num_hits];
         }

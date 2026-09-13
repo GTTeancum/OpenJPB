@@ -39,6 +39,8 @@
     } while (0)
 
 static int sound_calls;
+static int fighter_sound_calls;
+static int fighter_sound_bank;
 static VECTOR *sound_position;
 static int sound_bank;
 static char sound_name[9];
@@ -69,6 +71,10 @@ static uint16_t capture_sound(
     (void)flag;
     (void)user_data;
     ++sound_calls;
+    if (strcmp(sound, "dfrblstr") == 0) {
+        ++fighter_sound_calls;
+        fighter_sound_bank = bank_id;
+    }
     sound_position = position;
     sound_bank = bank_id;
     memcpy(sound_name, sound, sizeof(sound_name));
@@ -628,6 +634,68 @@ static int test_shoot_projectile(void)
     return 0;
 }
 
+static int test_projectile_lifecycle_soak(void)
+{
+    ProjType *types = (ProjType *)(void *)maProjTypes;
+    playerObject player;
+    playerObject target;
+    Motion motion;
+    Motion *motion_ptr = &motion;
+    _Material material;
+    VECTOR start = {100, 200, 300, 0};
+    VECTOR end = {100, 200, 1300, 0};
+    MATRIX matrix;
+    JPBBulletDiagnostics diagnostics = {0};
+    int iteration;
+
+    meminit();
+    sprite_gInitSprites();
+    clear_physics_player_pool();
+    memset(maProjTypes, 0, sizeof(maProjTypes));
+    memset(&player, 0, sizeof(player));
+    memset(&target, 0, sizeof(target));
+    memset(&motion, 0, sizeof(motion));
+    memset(&material, 0, sizeof(material));
+    vec_IdentMatrix(&matrix);
+    GameStruct.GameState &= ~UINT32_C(0x02000000);
+    fGlobalFrameRate = 0.f;
+    gGlobalFrameRate = 2048;
+    OptionStruct.FunFactor &= UINT8_C(0xfe);
+    player.playernum = 2;
+    player.target = &target;
+    player.pMotion = &motion_ptr;
+    effects1Handle[3] = &material;
+    types[2].range = 1;
+    types[2].length = 16;
+    types[2].width = 2;
+    types[2].muzzelEffect = -1;
+    types[2].rangeEffect = -1;
+    types[2].hitEffect = -1;
+    types[2].bulletSprite = 3;
+    types[2].speed = 32;
+    bullet_InitProjectilePool();
+    jpb_BulletResetDiagnostics();
+
+    for (iteration = 0; iteration < 2048; ++iteration) {
+        Projectile *proj = bullet_AllocProjectile(2);
+
+        CHECK(proj != NULL);
+        bullet_ShootProjectile(proj, &player, &start, &end, NULL);
+        CHECK(proj->pj_Parent != NULL);
+        CHECK(proj->pj_Child != NULL);
+        sprite_SpriteWork(&matrix);
+        sprite_SpriteWork(&matrix);
+    }
+
+    jpb_BulletGetDiagnostics(&diagnostics);
+    CHECK(diagnostics.allocationAttempts == 2048);
+    CHECK(diagnostics.allocationFailures == 0);
+    CHECK(diagnostics.successfulLaunches == 2048);
+    CHECK(diagnostics.freeCount == 2048);
+    CHECK(memalloc(0xffe8u) != NULL);
+    return 0;
+}
+
 static int test_starfighter_twin_shot(void)
 {
     ProjType *types = (ProjType *)(void *)maProjTypes;
@@ -704,6 +772,20 @@ static int test_starfighter_twin_shot(void)
     boss_StarFighterBlaster(&player, 0);
     CHECK(sound_calls == 4);
     CHECK(strcmp(sound_name, "tankfire") == 0);
+
+    /* The fighter's paired volley owns one dfrblstr call in the FED bank,
+     * including repeated volleys. Projectile sounds are separate. */
+    sound_FreeBank(0);
+    sound_FreeBank(3);
+    CHECK(sound_LoadBank("resident", 0) == 0);
+    CHECK(sound_LoadBank("fed", 3) == 0);
+    fighter_sound_calls = 0;
+    for (int volley = 0; volley < 3; ++volley) {
+        bullet_InitProjectilePool();
+        boss_StarFighterBlaster(&player, 0);
+    }
+    CHECK(fighter_sound_calls == 3);
+    CHECK(fighter_sound_bank == 3);
 
     jpb_SoundSetPlaySfxHook(NULL, NULL);
     sound_FreeBank(0);
@@ -1191,6 +1273,22 @@ static int test_ai_fire_weapon_callback(void)
     CHECK(sound_position == &muzzle.v3RotCenter);
     CHECK(strcmp(sound_name, "explomed") == 0);
 
+    /* Authored fighter phase-two event shots use a silent projectile type.
+     * They must emit the phase-one fighter cue, and only on firing events. */
+    sound_FreeBank(3);
+    CHECK(sound_LoadBank("fed", 3) == 0);
+    player.playerID = 47;
+    motion.fx2 = 20;
+    configure_callback_projectile_type(&types[20], 3, "");
+    model.flags = 0;
+    model.eventMask = 1;
+    fighter_sound_calls = 0;
+    for (int volley = 0; volley < 3; ++volley) {
+        CHECK(ai_FireWeapon(NULL, &player) == 0);
+    }
+    CHECK(fighter_sound_calls == 3);
+    CHECK(fighter_sound_bank == 3);
+
     model.flags = 0;
     model.eventMask = 0;
     sound_calls = 0;
@@ -1213,6 +1311,7 @@ int main(void)
     if (test_clear_projectiles() != 0) return 1;
     if (test_sprite_backed_projectile() != 0) return 1;
     if (test_shoot_projectile() != 0) return 1;
+    if (test_projectile_lifecycle_soak() != 0) return 1;
     if (test_callback_character_collision() != 0) return 1;
     if (test_callback_world_bounce() != 0) return 1;
     if (test_callback_ballistic_and_homing() != 0) return 1;

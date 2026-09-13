@@ -77,6 +77,11 @@ typedef struct Upgrades {
     int8_t awardData[12];
 } Upgrades;
 
+/* Resolve a stock model or an explicit native package identity. */
+Upgrades *game_getUpgrades(int model);
+int game_getProgressCapacity(int model, int force);
+int game_getProgressLineLength(int model, int force);
+
 /* Exact matched-PC PDB type 0x6CE8. This is the raw PC save payload. */
 typedef struct saveGameStruct {
     int32_t saveFileVer;
@@ -218,6 +223,7 @@ extern uint16_t charStuff[10];
 void game_CLR_GLOBALBIT(unsigned bit);
 void game_checkCompleteAchievements(void);
 void game_checkNextLevel(void);
+void jpb_GameRunActiveModePrelude(void);
 int game_GET_GLOBALBIT(unsigned bit);
 void game_SET_GLOBALBIT(unsigned bit);
 void game_InitGameSystems(void);

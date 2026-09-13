@@ -50,13 +50,46 @@ static JPBBmdResult validate_node_geometry(
 }
 
 static void print_node_hierarchy(
-    const Mnode *node, int parent_id, int depth)
+    const JPBBmdView *view,
+    const Mnode *node,
+    int parent_id,
+    int depth)
 {
+    JPBBmdGeometryView geometry;
+    FVECTOR decoded;
+    int min_x = 0;
+    int min_y = 0;
+    int min_z = 0;
+    int max_x = 0;
+    int max_y = 0;
+    int max_z = 0;
+    size_t vertex;
     int child;
+
+    memset(&geometry, 0, sizeof(geometry));
+    if (node->pGeomData != NULL &&
+        jpb_BmdGetGeometry(view, node->pGeomData, &geometry) == JPB_BMD_OK &&
+        geometry.local_vertex_count != 0) {
+        jpb_BmdDecodePackedVertex(geometry.packed_vertices[0], &decoded);
+        min_x = max_x = decoded.vx;
+        min_y = max_y = decoded.vy;
+        min_z = max_z = decoded.vz;
+        for (vertex = 1; vertex < geometry.local_vertex_count; ++vertex) {
+            jpb_BmdDecodePackedVertex(
+                geometry.packed_vertices[vertex], &decoded);
+            if (decoded.vx < min_x) min_x = decoded.vx;
+            if (decoded.vy < min_y) min_y = decoded.vy;
+            if (decoded.vz < min_z) min_z = decoded.vz;
+            if (decoded.vx > max_x) max_x = decoded.vx;
+            if (decoded.vy > max_y) max_y = decoded.vy;
+            if (decoded.vz > max_z) max_z = decoded.vz;
+        }
+    }
 
     printf(
         "node depth=%d name=%.32s id=0x%x index=%u "
-        "parent=%d translation=(%d,%d,%d) children=%d\n",
+        "parent=%d translation=(%d,%d,%d) children=%d "
+        "faces=%d vertices=%zu bounds=(%d/%d,%d/%d,%d/%d)\n",
         depth,
         node->pGeomData != NULL
             ? node->pGeomData->name
@@ -67,9 +100,18 @@ static void print_node_hierarchy(
         (int)node->v3Translation.vx,
         (int)node->v3Translation.vy,
         (int)node->v3Translation.vz,
-        (int)node->numChildNodes);
+        (int)node->numChildNodes,
+        node->pGeomData != NULL ? node->pGeomData->numFaces : 0,
+        geometry.local_vertex_count,
+        min_x,
+        max_x,
+        min_y,
+        max_y,
+        min_z,
+        max_z);
     for (child = 0; child < node->numChildNodes; ++child) {
         print_node_hierarchy(
+            view,
             &node->aChildNode[child],
             (int)((unsigned)node->id & NODE_INDEX_MASK),
             depth + 1);
@@ -186,7 +228,7 @@ int main(int argc, char **argv)
             return 1;
         }
         if (print_nodes && result == JPB_BMD_OK) {
-            print_node_hierarchy(model.pRootNode, -1, 0);
+            print_node_hierarchy(&view, model.pRootNode, -1, 0);
         }
     }
     printf(

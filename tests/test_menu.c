@@ -152,6 +152,9 @@ typedef struct MenuInputTrace {
 typedef struct MenuRumbleTrace {
     int calls;
     int controllerIndices[8];
+    uint16_t lowFrequency[8];
+    uint16_t highFrequency[8];
+    uint32_t durationMs[8];
 } MenuRumbleTrace;
 
 static void trace_menu_rumble(
@@ -163,12 +166,12 @@ static void trace_menu_rumble(
 {
     MenuRumbleTrace *trace = (MenuRumbleTrace *)user_data;
 
-    (void)low_frequency;
-    (void)high_frequency;
-    (void)duration_ms;
     if (trace->calls < 8) {
         trace->controllerIndices[trace->calls] =
             controller_index;
+        trace->lowFrequency[trace->calls] = low_frequency;
+        trace->highFrequency[trace->calls] = high_frequency;
+        trace->durationMs[trace->calls] = duration_ms;
     }
     ++trace->calls;
 }
@@ -858,8 +861,18 @@ static int test_pre_fmv_transition_has_no_rumble(void)
     jpb_InputSetRumbleProvider(trace_menu_rumble, &trace);
     menu_pushMenu(0x41);
     CHECK(trace.calls == 1);
-    menu_pushMenu(0x66);
-    CHECK(trace.calls == 1);
+    CHECK(trace.lowFrequency[0] != 0 || trace.highFrequency[0] != 0);
+    GameStruct.ModelSelect[0] = 0;
+    GameStruct.ModelSelect[1] = 1;
+    GameStruct.NumPlayers = 1;
+    LevelSelect = 1;
+    secretBits = 0;
+    CHECK(menu_handleMenuTriggers(0x3d) == 0);
+    CHECK(trace.calls == 2);
+    CHECK(trace.controllerIndices[1] == 0);
+    CHECK(trace.lowFrequency[1] == 0);
+    CHECK(trace.highFrequency[1] == 0);
+    CHECK(trace.durationMs[1] == 0);
     CHECK(menuVars.menuMode[menuVars.menuModeSP] == 0x66);
     jpb_InputSetRumbleProvider(NULL, NULL);
     OptionStruct.ShockFlag[0] = 0;
@@ -1055,6 +1068,12 @@ static int test_recovered_menu_texture_bank(void)
     CHECK(menuTextures[0] != NULL);
     CHECK(menuTextures[80] != NULL);
     CHECK(menuTextures[94] != NULL);
+    CHECK(menuTextures[96] != NULL);
+    CHECK(menuTextures[118] != NULL);
+    CHECK(fontSpec[426].clut == 96);
+    CHECK(fontSpec[448].clut == 118);
+    CHECK(fontSpec[426].w == menuTextures[96]->iw / 4);
+    CHECK(fontSpec[426].h == menuTextures[96]->ih / 4);
     CHECK(menuTextures[119] != NULL);
     CHECK(menuTextures[183] != NULL);
     CHECK(menuTextures[201] != NULL);
@@ -1089,8 +1108,8 @@ static int test_recovered_menu_texture_bank(void)
     CHECK(getControllerTextures(1, selected) == 1);
     CHECK(selected[0] == controlTextures[0]);
     CHECK(fontSpec[1].clut == 0);
-    CHECK(fontSpec[1].w == 320);
-    CHECK(fontSpec[1].h == 180);
+    CHECK(fontSpec[1].w == 15);
+    CHECK(fontSpec[1].h == 18);
     CHECK(fontSpec[352].clut == 248);
     CHECK(fontSpec[352].w == 320);
     CHECK(fontSpec[0xe8].clut == 3);
@@ -1113,10 +1132,10 @@ static int test_recovered_menu_texture_bank(void)
     CHECK(fontSpec[0x119].y == 24);
     CHECK(fontSpec[0x119].w == 8);
     CHECK(fontSpec[0x119].h == 2);
-    CHECK(fontSpec[411].clut == 80);
-    CHECK(fontSpec[411].w == 80);
-    CHECK(fontSpec[411].h == 45);
-    CHECK(fontSpec[425].clut == 94);
+    CHECK(fontSpec[410].clut == 80);
+    CHECK(fontSpec[410].w == 80);
+    CHECK(fontSpec[410].h == 45);
+    CHECK(fontSpec[424].clut == 94);
     CHECK(fontSpec[449].clut == 119);
     CHECK(fontSpec[449].h == 180);
 
@@ -1191,15 +1210,22 @@ static int test_character_select_arrows(void)
 static int test_audio_menu_sliders(void)
 {
     MenuTextureDrawTrace trace;
+    MenuDrawTrace text_trace;
     MenuAudioControlTrace audio_trace;
+    PlatformTrace platform_trace;
+    JPBMenuPlatformHooks hooks;
     _Material gradient;
     _Material mask;
     _Material background;
+    uint64_t audio_hash = UINT64_C(14695981039346656037);
     int first_slider;
 
     reset_menu_state();
     memset(&trace, 0, sizeof(trace));
+    memset(&text_trace, 0, sizeof(text_trace));
     memset(&audio_trace, 0, sizeof(audio_trace));
+    memset(&platform_trace, 0, sizeof(platform_trace));
+    memset(&hooks, 0, sizeof(hooks));
     memset(&gradient, 0, sizeof(gradient));
     memset(&mask, 0, sizeof(mask));
     memset(&background, 0, sizeof(background));
@@ -1207,6 +1233,7 @@ static int test_audio_menu_sliders(void)
     OptionStruct.ScreenHeight = 540;
     OptionStruct.ResolutionChanged = 0;
     OptionStruct.Music = 1;
+    OptionStruct.Stereo = 1;
     OptionStruct.musicVolume = 30;
     OptionStruct.SFXVolume = 45;
     scaleAdjustmentMM = 0.5f;
@@ -1214,10 +1241,17 @@ static int test_audio_menu_sliders(void)
     menuTextures[166] = &gradient;
     menuTextures[167] = &mask;
     menuTextures[168] = &background;
+    hooks.saveSettingsData = trace_save_settings;
+    jpb_MenuSetPlatformHooks(&hooks, &platform_trace);
     jpb_WHookSetDrawTextureHook(
         capture_menu_texture_draw, &trace);
+    jpb_TextSetDrawHook(capture_menu_text, &text_trace);
     jpb_AudioStreamSetControlHook(
         capture_menu_audio_control, &audio_trace);
+
+    audio_hash = hash_menu_words(audio_hash, audioMdef, 44);
+    audio_hash = hash_menu_words(audio_hash, audioMdef_Game, 44);
+    CHECK(audio_hash == UINT64_C(0xBF65602D703A31D1));
 
     menu_slideco(0.45f, 0.25f, 850, 710, 30.0f, 75.0f);
     CHECK(trace.calls == 3);
@@ -1252,6 +1286,7 @@ static int test_audio_menu_sliders(void)
     menu_mainLoop();
     CHECK(trace.calls >= 6);
     first_slider = trace.calls - 6;
+    CHECK(first_slider > 0 && trace.layers[first_slider - 1] == 0.99f);
     CHECK(trace.materials[first_slider] == &gradient);
     CHECK(trace.materials[first_slider + 1] == &background);
     CHECK(trace.materials[first_slider + 2] == &mask);
@@ -1266,9 +1301,107 @@ static int test_audio_menu_sliders(void)
     CHECK(audio_trace.calls == 1);
     CHECK(audio_trace.lastControl == JPB_AUDIO_STREAM_SET_VOLUME);
     CHECK(audio_trace.lastValue == 30);
+    CHECK(text_trace.calls >= 6);
+    CHECK(text_trace.x[0] == 230);
+    CHECK(text_trace.y[0] == 290);
+    CHECK(text_trace.scale[0] == 2.25f);
+    CHECK(utf16_matches_utf8(text_trace.text[0], "> Music: ON <"));
+    CHECK(text_trace.x[1] == 230);
+    CHECK(text_trace.y[1] == 320);
+    CHECK(utf16_matches_utf8(
+        text_trace.text[1], "Music Mode: STEREO"));
+    CHECK(text_trace.y[2] == 350);
+    CHECK(utf16_matches_utf8(text_trace.text[2], "Music Volume: "));
+    CHECK(text_trace.y[3] == 380);
+    CHECK(utf16_matches_utf8(text_trace.text[3], "SFX Volume: "));
+    CHECK(text_trace.y[4] == 410);
+    CHECK(utf16_matches_utf8(
+        text_trace.text[4], "Set Default Options"));
+    CHECK(text_trace.x[5] == 480);
+    CHECK(text_trace.y[5] == 230);
+    CHECK(utf16_matches_utf8(text_trace.text[5], "Audio"));
+
+    memset(&trace, 0, sizeof(trace));
+    memset(&text_trace, 0, sizeof(text_trace));
+    GameStruct.gameMode = 6;
+    menu_mainLoop();
+    CHECK(trace.calls >= 6);
+    first_slider = trace.calls - 6;
+    CHECK(first_slider > 0 && trace.layers[first_slider - 1] == 0.99f);
+    CHECK(trace.destinations[first_slider].left == 425);
+    CHECK(trace.destinations[first_slider].top == 230);
+    CHECK(trace.destinations[first_slider + 3].left == 425);
+    CHECK(trace.destinations[first_slider + 3].top == 260);
+    CHECK(text_trace.calls >= 6);
+    CHECK(text_trace.x[0] == 230);
+    CHECK(text_trace.y[0] == 165);
+    CHECK(utf16_matches_utf8(text_trace.text[0], "> Music: ON <"));
+    CHECK(text_trace.y[1] == 195);
+    CHECK(utf16_matches_utf8(
+        text_trace.text[1], "Music Mode: STEREO"));
+    CHECK(text_trace.y[2] == 225);
+    CHECK(utf16_matches_utf8(text_trace.text[2], "Music Volume: "));
+    CHECK(text_trace.y[3] == 255);
+    CHECK(utf16_matches_utf8(text_trace.text[3], "SFX Volume: "));
+    CHECK(text_trace.y[4] == 285);
+    CHECK(utf16_matches_utf8(
+        text_trace.text[4], "Set Default Options"));
+    CHECK(text_trace.x[5] == 480);
+    CHECK(text_trace.y[5] == 125);
+    CHECK(utf16_matches_utf8(text_trace.text[5], "Audio"));
+
+    menuVars.mmSelect1[0] = 2;
+    memset(&text_trace, 0, sizeof(text_trace));
+    mmDraw(audioMdef_Game);
+    CHECK(utf16_matches_utf8(text_trace.text[2], "> Music Volume: "));
+    menuVars.mmSelect1[0] = 3;
+    memset(&text_trace, 0, sizeof(text_trace));
+    mmDraw(audioMdef_Game);
+    CHECK(utf16_matches_utf8(text_trace.text[3], "> SFX Volume: "));
+    menuVars.mmSelect1[0] = 2;
+    menuVars.pad[0] = JPB_PAD_RIGHT;
+    menu_mainMenu(audioMdef_Game);
+    CHECK(OptionStruct.musicVolume == 27);
+    menuVars.pad[0] = JPB_PAD_LEFT;
+    menu_mainMenu(audioMdef_Game);
+    CHECK(OptionStruct.musicVolume == 30);
+
+    menuVars.mmSelect1[0] = 3;
+    menuVars.pad[0] = JPB_PAD_RIGHT;
+    menu_mainMenu(audioMdef_Game);
+    CHECK(OptionStruct.SFXVolume == 42);
+    menuVars.pad[0] = JPB_PAD_LEFT;
+    menu_mainMenu(audioMdef_Game);
+    CHECK(OptionStruct.SFXVolume == 45);
+
+    OptionStruct.musicVolume = 0;
+    menuVars.mmSelect1[0] = 2;
+    menuVars.pad[0] = JPB_PAD_RIGHT;
+    menu_mainMenu(audioMdef_Game);
+    CHECK(OptionStruct.musicVolume == 0);
+    OptionStruct.musicVolume = 75;
+    menuVars.pad[0] = JPB_PAD_LEFT;
+    menu_mainMenu(audioMdef_Game);
+    CHECK(OptionStruct.musicVolume == 75);
+
+    OptionStruct.musicVolume = 30;
+    OptionStruct.SFXVolume = 45;
+    menuVars.menuModeSP = 1;
+    menuVars.menuMode[0] = 0x14;
+    menuVars.menuMode[1] = 0x10;
+    menuVars.mmSelect1[1] = 0;
+    menuVars.pad[0] = JPB_PAD_JUMP;
+    GameStruct.gameMode = 6;
+    menu_mainMenu(audioMdef_Game);
+    CHECK(menuVars.menuModeSP == 0);
+    CHECK(platform_trace.settingsSaveCalls == 1);
+    CHECK(platform_trace.savedSettings.musicVolume == 30);
+    CHECK(platform_trace.savedSettings.SFXVolume == 45);
 
     jpb_AudioStreamSetControlHook(NULL, NULL);
+    jpb_TextSetDrawHook(NULL, NULL);
     jpb_WHookSetDrawTextureHook(NULL, NULL);
+    jpb_MenuSetPlatformHooks(NULL, NULL);
     memset(menuTextures, 0, sizeof(menuTextures));
     return 0;
 }
@@ -2000,7 +2133,6 @@ static int test_level_selection_owner(void)
     menuVars.menuModeSP = 0;
     menuVars.menuMode[0] = 0x0e;
     LevelSelect = 9;
-    fontSpec[411].clut = 80;
     menu_pushMenu(0x1a);
     CHECK(menuVars.menuModeSP == 1);
     CHECK(menuVars.menuMode[1] == 0x1a);
@@ -2097,6 +2229,22 @@ static int test_level_selection_owner(void)
     CHECK(utf16_matches_utf8(text_trace.text[1], allText[239]));
     CHECK(utf16_matches_utf8(text_trace.text[2], allText[241]));
 
+    /* Exercise the loaded bank without patching its mapping in the fixture.
+     * The retail draw and loader share fontSpec[409 + level]. */
+    for (int preview_level = 1; preview_level <= 14; ++preview_level) {
+        LevelSelect = (char)preview_level;
+        memset(&texture_trace, 0, sizeof(texture_trace));
+        memset(&text_trace, 0, sizeof(text_trace));
+        menu_drawLevelSelectScreen(0);
+        CHECK(texture_trace.materials[4] == menuTextures[79 + preview_level]);
+        CHECK(texture_trace.destinations[4].left == 116);
+        CHECK(texture_trace.destinations[4].top == 92);
+        CHECK(texture_trace.destinations[4].right == 960);
+        CHECK(texture_trace.destinations[4].bottom == 725);
+        CHECK(texture_trace.layers[4] == 0.5f);
+        CHECK(utf16_matches_utf8(text_trace.text[3], allText[305 + preview_level]));
+    }
+    LevelSelect = 1;
     secretBits = 0;
     GameStruct.NumPlayers = 1;
     menuVars.pad[0] = JPB_PAD_DOWN;
@@ -2475,8 +2623,149 @@ static int test_title_command_interpreter(void)
     CHECK(menuVars.menuMode[1] == 3);
     menuVars.menuModeSP = 0;
     CHECK(menu_handleMenuTriggers(0x9d) == 0);
-    CHECK(menuVars.menuMode[1] == 0x9c);
+    CHECK(tempPlayersVs == 2);
+    CHECK(GameStruct.NumPlayers == 1);
+    CHECK(menuVars.menuMode[1] == 0x0d);
 
+    jpb_TextSetDrawHook(NULL, NULL);
+    jpb_WHookSetDrawTextureHook(NULL, NULL);
+    jpb_MenuSetPlatformHooks(NULL, NULL);
+    return 0;
+}
+
+static int test_pause_ultimate_visibility(void)
+{
+    MenuDrawTrace trace;
+    unsigned unlocked;
+
+    reset_menu_state();
+    OptionStruct.ScreenWidth = 1920;
+    OptionStruct.ScreenHeight = 1080;
+    scaleAdjustmentMM = 1.0f;
+    generateAllText(0);
+    jpb_TextSetDrawHook(capture_menu_text, &trace);
+    for (unlocked = 0; unlocked < 2; ++unlocked) {
+        secretBits = unlocked ? 0x100u : 0;
+        memset(&trace, 0, sizeof(trace));
+        menuVars.mmSelect1[0] = unlocked ? 5 : 4;
+        mmDraw(gamepauseMenuMdef);
+        CHECK(menuVars.mmTotal == (unlocked ? 6u : 5u));
+        CHECK(menuVars.mmSubSet == (unlocked ? 0u : 1u));
+        CHECK(menuVars.mmSelectPtr == &gamepauseMenuMdef[30]);
+        CHECK(trace.calls == (unlocked ? 7 : 6));
+        CHECK(utf16_matches_utf8(trace.text[unlocked ? 5 : 4], "> Quit <"));
+        if (unlocked) {
+            CHECK(utf16_matches_utf8(trace.text[4], "Ultimate Saber OFF"));
+            menuVars.mmSelect1[0] = 4;
+            mmDraw(gamepauseMenuMdef);
+            CHECK(menuVars.mmSelectPtr == &gamepauseMenuMdef[25]);
+        }
+    }
+    jpb_TextSetDrawHook(NULL, NULL);
+    return 0;
+}
+
+static int test_controls_retail_layout(void)
+{
+    /* runControlsMenu, retail RVA 0xD81F0: resolution columns and sliders. */
+    static const int primary[] = {-310, -390, -390, -310, -410, -420, -310};
+    static const int force[] = {25, -15, -15, 5, -35, -55, 25};
+    static const int slider_x[] = {520, 650, 610, 550, 580, 600, 520};
+    static const int slider_y[] = {510, 515, 515, 512, 515, 515, 510};
+    _Material icons[10];
+    _Material slider_material;
+    _Material *saved_controls[10];
+    _Material *saved_keyboard[10];
+    _Material *saved_force[4];
+    _Material *saved_slider;
+    JPBMenuPlatformHooks hooks;
+    MenuDrawTrace text;
+    MenuTextureDrawTrace draw;
+    int size, mode, input, scheme, i;
+
+    reset_menu_state();
+    memset(icons, 0, sizeof(icons));
+    memset(&slider_material, 0, sizeof(slider_material));
+    memset(&hooks, 0, sizeof(hooks));
+    memcpy(saved_controls, controlTextures, sizeof(saved_controls));
+    memcpy(saved_keyboard, kbmTextures, sizeof(saved_keyboard));
+    memcpy(saved_force, kbmForceTextures, sizeof(saved_force));
+    saved_slider = menuTextures[166];
+    menuTextures[166] = &slider_material;
+    for (i = 0; i < 10; ++i) {
+        icons[i].iw = 200 + i * 20;
+        icons[i].ih = 100 + i * 10;
+        controlTextures[i] = kbmTextures[i] = &icons[i];
+    }
+    for (i = 0; i < 4; ++i) kbmForceTextures[i] = &icons[i];
+    hooks.controllerName = read_menu_controller_name;
+    menu_test_controller_name = "Generic Controller";
+    jpb_MenuSetPlatformHooks(&hooks, NULL);
+    jpb_TextSetDrawHook(capture_menu_text, &text);
+    jpb_WHookSetDrawTextureHook(capture_menu_texture_draw, &draw);
+    generateAllText(0);
+    GameStruct.NumPlayers = 1;
+
+    for (size = 1; size <= 2; ++size) {
+        float scale = (float)size * 0.5f;
+        OptionStruct.ScreenWidth = 960 * size;
+        OptionStruct.ScreenHeight = 540 * size;
+        scaleAdjustmentMM = scale;
+        for (mode = 0; mode < 7; ++mode) {
+            OptionStruct.ResolutionChanged = mode;
+            for (input = 0; input < 2; ++input) {
+                lastUsedInputType = input;
+                for (scheme = 0; scheme < 2; ++scheme) {
+                    const unsigned char *normal = input && scheme ?
+                        ModernControlScheme : ClassicControlScheme;
+                    const unsigned char *special = input && scheme ?
+                        ModernControlSchemeForce : ClassicControlSchemeForce;
+                    float primary_left = 510.0f + primary[mode] -
+                        (float)icons[normal[0]].iw * 0.3f * 0.5f;
+                    float force_left = 510.0f + force[mode] -
+                        (float)icons[special[0]].iw * 0.3f * 0.5f;
+                    int found = 0, sliders = 0;
+
+                    OptionStruct.ControllerConfig[0] = scheme;
+                    OptionStruct.WalkLimit[0] = 2;
+                    OptionStruct.RunLimit[0] = 8;
+                    memset(&text, 0, sizeof(text));
+                    memset(&draw, 0, sizeof(draw));
+                    runControlsMenu();
+                    CHECK(text.calls <= 32);
+                    for (i = 0; i < text.calls; ++i) {
+                        if (utf16_matches_utf8(text.text[i], allText[controlTextList[3]])) {
+                            CHECK(text.x[i] == (int)((primary_left + 65.0f) * scale));
+                            CHECK(text.y[i] == (int)(762.0f * scale));
+                            ++found;
+                        }
+                        if (utf16_matches_utf8(text.text[i], allText[controlTextListForce[3]])) {
+                            CHECK(text.x[i] == (int)((force_left + (input ? 150.0f : 65.0f)) * scale));
+                            CHECK(text.y[i] == (int)((mode == 5 ? 761.0f : 762.0f) * scale));
+                            ++found;
+                        }
+                        if (utf16_matches_utf8(text.text[i], allText[242])) {
+                            CHECK(text.scale[i] == 3.0f);
+                            ++found;
+                        }
+                    }
+                    CHECK(found == 3);
+                    for (i = 0; i < draw.calls && i < 64; ++i) {
+                        if (draw.materials[i] == &slider_material) {
+                            CHECK(draw.destinations[i].left == (int)(slider_x[mode] * scale));
+                            CHECK(draw.destinations[i].top == (int)((slider_y[mode] + sliders * 45) * scale));
+                            ++sliders;
+                        }
+                    }
+                    CHECK(sliders == 2);
+                }
+            }
+        }
+    }
+    memcpy(controlTextures, saved_controls, sizeof(saved_controls));
+    memcpy(kbmTextures, saved_keyboard, sizeof(saved_keyboard));
+    memcpy(kbmForceTextures, saved_force, sizeof(saved_force));
+    menuTextures[166] = saved_slider;
     jpb_TextSetDrawHook(NULL, NULL);
     jpb_WHookSetDrawTextureHook(NULL, NULL);
     jpb_MenuSetPlatformHooks(NULL, NULL);
@@ -2625,8 +2914,9 @@ static int test_main_loop_dispatch(void)
     menuVars.pad[0] = JPB_PAD_COMBO_SOUTH;
     menu_mainMenu(gameoverMdef);
     CHECK((GameStruct.GameState & UINT32_C(0x02000000)) != 0);
-    CHECK(menuVars.menuModeSP == 1);
-    CHECK(menuVars.menuMode[1] == 6);
+    /* The invisible 0x0f confirmation pops; its following stream word is
+     * not a destination (retail menu_mainMenu 0xCD560). */
+    CHECK(menuVars.menuModeSP == 7);
     menuVars.menuModeSP = 0;
     menuVars.pad[0] = 0;
 
@@ -2642,6 +2932,46 @@ static int test_main_loop_dispatch(void)
     CHECK(menuVars.scoreScore == 1);
 
     jpb_TextSetDrawHook(NULL, NULL);
+    return 0;
+}
+
+static int test_title_prompt_and_objective_confirmation(void)
+{
+    reset_menu_state();
+    generateAllText(0);
+    OptionStruct.ScreenWidth = 960;
+    OptionStruct.ScreenHeight = 540;
+    scaleAdjustmentMM = 0.5f;
+    LevelSelect = 1;
+    menuVars.menuMode[0] = 1;
+    menuVars.pad[0] = 0;
+    menu_mainMenu(startMdef);
+    CHECK(menuVars.menuModeSP == 0);
+    menuVars.pad[0] = JPB_PAD_COMBO_SOUTH;
+    menu_mainMenu(startMdef);
+    CHECK(menuVars.menuMode[menuVars.menuModeSP] == 0);
+    menuVars.pad[0] = JPB_PAD_JUMP;
+    menu_mainMenu(mainMdefNoRegisterGame);
+    CHECK(menuVars.menuMode[menuVars.menuModeSP] == 1);
+    menuVars.pad[0] = JPB_PAD_COMBO_SOUTH;
+    menu_mainMenu(startMdef);
+    CHECK(menuVars.menuMode[menuVars.menuModeSP] == 0);
+
+    GameStruct.gameMode = 6;
+    GameStruct.CurrentLevel = 1;
+    GameStruct.inMenuFlag = 1;
+    menu_pushMenu(0x41);
+    menu_pushMenu(0x2a);
+    menuVars.pad[0] = JPB_PAD_JUMP;
+    menu_mainMenu(objectiveMenuMdef);
+    CHECK(menuVars.menuMode[menuVars.menuModeSP] == 0x2a);
+    menuVars.pad[0] = JPB_PAD_COMBO_SOUTH;
+    menu_mainMenu(objectiveMenuMdef);
+    CHECK(menuVars.menuMode[menuVars.menuModeSP] == 0x41);
+    menuVars.pad[0] = 0;
+    menu_mainLoop();
+    CHECK(GameStruct.inMenuFlag == 0);
+    CHECK(GameStruct.gameMode == 6);
     return 0;
 }
 
@@ -3799,7 +4129,12 @@ static int test_exact_state_leaves(void)
     CHECK(menu_playerSelectCheck(
               (int64_t)(uintptr_t)player_select_item) == 1);
     CHECK(menuVars.menuModeSP == 1);
-    CHECK(menuVars.menuMode[1] == 0x9c);
+    CHECK(menuVars.menuMode[1] == 0x0d);
+    CHECK(tempPlayersVs == 2);
+    menuVars.menuModeSP = 0;
+    menuVars.menuMode[0] = 1;
+    menuVars.menuMode[7] = 0x32;
+    GameStruct.NumPlayers = 2;
     menuVars.pad[1] = JPB_PAD_JUMP;
     CHECK(menu_playerSelectCheck(
               (int64_t)(uintptr_t)player_select_item) == 1);
@@ -5278,6 +5613,11 @@ static int test_trigger_dispatcher(void)
     g_resolutions[5] = saved_resolution;
 
     menuVars.menuModeSP = 0;
+    CHECK(menu_handleMenuTriggers(0x9d) == 0);
+    CHECK(tempPlayersVs == 2);
+    CHECK(GameStruct.NumPlayers == 1);
+    CHECK(menuVars.menuMode[1] == 0x0d);
+    menuVars.menuModeSP = 0;
     CHECK(menu_handleMenuTriggers(0x9a) == 0);
     CHECK(tempPlayersVs == 1);
     CHECK(GameStruct.NumPlayers == 1);
@@ -6179,7 +6519,7 @@ static int test_score_award_menu_draw(void)
 {
     MPNT saved_positions[3];
     int16_t saved_cached_rewards[3];
-    _Material *saved_material = menuTextures[238];
+    _Material *saved_material = menuTextures[235];
     char *saved_text[3] = {allText[359], allText[360], allText[369]};
     optionstruct saved_options = OptionStruct;
     float saved_scale_mm = scaleAdjustmentMM;
@@ -6204,7 +6544,7 @@ static int test_score_award_menu_draw(void)
     scaleAdjustmentMM = 1.0f;
     gPSXDrawScaleX = 1.0f;
     gPSXDrawScaleY = 1.0f;
-    menuTextures[238] = &material;
+    menuTextures[235] = &material;
     allText[359] = "AWARD ONE";
     allText[360] = "AWARD ZERO";
     allText[369] = "AWARD TWO";
@@ -6293,7 +6633,7 @@ static int test_score_award_menu_draw(void)
     memcpy(
         cachedRewardsEnd, saved_cached_rewards,
         sizeof(saved_cached_rewards));
-    menuTextures[238] = saved_material;
+    menuTextures[235] = saved_material;
     allText[359] = saved_text[0];
     allText[360] = saved_text[1];
     allText[369] = saved_text[2];
@@ -6398,7 +6738,7 @@ static int test_score_redline_draw(void)
         {66, 450, 1222, 944},
         {25, 582, 1181, 1076}
     };
-    _Material *saved_material = controlTextures[2];
+    _Material *saved_material = menuTextures[248];
     optionstruct saved_options = OptionStruct;
     float saved_scale_mm = scaleAdjustmentMM;
     _Material material;
@@ -6410,7 +6750,7 @@ static int test_score_redline_draw(void)
     OptionStruct.ScreenWidth = 1920;
     OptionStruct.ScreenHeight = 1080;
     scaleAdjustmentMM = 1.0f;
-    controlTextures[2] = &material;
+    menuTextures[248] = &material;
     jpb_WHookSetDrawTextureClippedHook(
         capture_menu_texture_draw_clipped, &trace);
 
@@ -6435,7 +6775,7 @@ static int test_score_redline_draw(void)
     }
 
     jpb_WHookSetDrawTextureClippedHook(NULL, NULL);
-    controlTextures[2] = saved_material;
+    menuTextures[248] = saved_material;
     OptionStruct = saved_options;
     scaleAdjustmentMM = saved_scale_mm;
     return 0;
@@ -6473,6 +6813,7 @@ static int test_score_screen_state_machine(void)
     menuVars.awardSet[0].awardType[0] = 0;
     menuVars.awardSet[0].awardTotal = 1;
     menuVars.awardSet[0].pointAwarded[0] = 500;
+    menuVars.scoreScore = 9000;
     jpb_WHookSetDrawTextureHook(
         capture_menu_texture_draw, &draw_trace);
     jpb_WHookSetDrawTextureClippedHook(
@@ -6481,20 +6822,21 @@ static int test_score_screen_state_machine(void)
 
     menu_drawScoreScreen(0);
     CHECK(menuVars.scoreMode == 9u);
+    CHECK(menuVars.scoreScore == 0u);
     CHECK(menuVars.scoreNextMode == 10u);
     CHECK(menuVars.pointSeek == 500u);
     CHECK(menuVars.bar_y == UINT32_C(0x00b10000));
     CHECK(menuVars.bar_speed == 0u);
-    CHECK(menuVars.mp[0].x == -166 && menuVars.mp[0].y == 81);
-    CHECK(menuVars.mp[1].x == -166 && menuVars.mp[1].y == 282);
+    CHECK(menuVars.mp[0].x == -166 && menuVars.mp[0].y == 110);
+    CHECK(menuVars.mp[1].x == -166 && menuVars.mp[1].y == 85);
     CHECK(menuVars.mp[2].x == -166 && menuVars.mp[2].y == 60);
     CHECK(menuVars.mp[0].state == 0u);
     CHECK(menuVars.mp[0].maxScrolly == 64u);
     CHECK(cachedRewardsInit[0] == 0);
     CHECK(gPSXDrawScaleX == 1.0f && gPSXDrawScaleY == 1.0f);
     CHECK(draw_trace.calls >= 9);
-    CHECK(draw_trace.materials[0] == menuTextures[167]);
-    CHECK(draw_trace.materials[1] == menuTextures[168]);
+    CHECK(draw_trace.materials[0] == menuTextures[164]);
+    CHECK(draw_trace.materials[1] == menuTextures[165]);
     CHECK(draw_trace.destinations[8].right -
               draw_trace.destinations[8].left == 139);
     CHECK(draw_trace.destinations[8].bottom -
@@ -6527,6 +6869,16 @@ static int test_score_screen_state_machine(void)
     CHECK(menuVars.mp[0].state == 1u);
     CHECK(menuVars.mp[0].x == -150);
 
+    /* Retail C5800 leaves the award screen even when testcombo's list
+     * remains populated after the chosen combo has been enabled. */
+    menuVars.scoreMode = 1;
+    menuVars.awardSet[0].awardTotal = 1;
+    menuVars.td.comboListCount = 5;
+    menu_drawScoreScreen(0);
+    CHECK(menuVars.scoreMode == 3u);
+    menu_drawScoreScreen(0);
+    CHECK(menuVars.menuMode[menuVars.menuModeSP] == 0x66);
+
     reset_menu_state();
     OptionStruct.ScreenWidth = 1920;
     OptionStruct.ScreenHeight = 1080;
@@ -6547,6 +6899,18 @@ static int test_score_screen_state_machine(void)
     CHECK(menuVars.scoreCurrentPlayer == 1u);
     CHECK(menuVars.scoreMode == 0u);
     CHECK(menuVars.td.jedi == 1u);
+
+    /* P2 must count from zero, even after a larger P1 score. */
+    menuVars.scoreScore = 40000;
+    menuVars.mmv[0].state = 1;
+    menuVars.awardSet[1].award[0] = 1;
+    menuVars.awardSet[1].pointAwarded[0] = 4000;
+    menu_drawScoreScreen(0);
+    CHECK(menuVars.scoreScore == 0u);
+    CHECK(menuVars.pointSeek == 4000u);
+    CHECK(menuVars.mp[0].y == 110);
+    CHECK(menuVars.mp[1].y == 85);
+    CHECK(menuVars.mp[2].y == 60);
 
     jpb_TextSetDrawHook(NULL, NULL);
     jpb_WHookSetDrawTextureHook(NULL, NULL);
@@ -6584,8 +6948,8 @@ static int test_score_screen_main_dispatch(void)
 
     menu_mainLoop();
     CHECK(trace.calls == 2);
-    CHECK(trace.materials[0] == menuTextures[167]);
-    CHECK(trace.materials[1] == menuTextures[168]);
+    CHECK(trace.materials[0] == menuTextures[164]);
+    CHECK(trace.materials[1] == menuTextures[165]);
     CHECK((menuVars.pad[0] & 0x20u) == 0);
     CHECK((menuVars.pad[1] & 0x20u) == 0);
     CHECK(menuVars.fadeupCounter == 4u);
@@ -7962,8 +8326,11 @@ int main(void)
         test_level_selection_owner() != 0 ||
         test_legacy_level_selection_renderer() != 0 ||
         test_title_command_interpreter() != 0 ||
+        test_pause_ultimate_visibility() != 0 ||
+        test_controls_retail_layout() != 0 ||
         test_main_loop_dispatch() != 0 ||
         test_demo_movie_owner() != 0 ||
+        test_title_prompt_and_objective_confirmation() != 0 ||
         test_concept_art_presentation() != 0 ||
         test_credit_presentation() != 0 ||
         test_eula_presentation_and_acceptance() != 0 ||

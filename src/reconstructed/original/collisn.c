@@ -759,7 +759,7 @@ int coll_gCheckHotNodes(
     int node_index;
 
     attacker->pFlags &= ~0x00010000u;
-    if ((uint32_t)totalframes < target->hitDelay) {
+    if (gGlobalTimer < target->hitDelay) {
         return 0;
     }
     for (node_index = 0;

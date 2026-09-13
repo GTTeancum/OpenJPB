@@ -18,6 +18,7 @@
 #include "jpb/player.h"
 #include "jpb/resources.h"
 #include "jpb/scene.h"
+#include "jpb/sound.h"
 #include "jpb/shaolin.h"
 #include "jpb/vectors.h"
 #include "jpb/world.h"
@@ -401,6 +402,15 @@ int ai_FireWeapon(
             }
             bullet_ShootProjectile(
                 proj, player, pos0, &tpos1, vel);
+            /* Fighter CAD motions 8/10 fire projectile 20 through events.
+             * project.eff leaves its fireSound empty; the flying-phase owner
+             * at retail RVA 0x1B010 supplies dfrblstr explicitly. Extend that
+             * same cue to these event-fired shots without doubling phase 1. */
+            if (player->playerID == 47 && ptype == 20) {
+                int bank = player->playernum + 1;
+                if (bank > 3) bank = 3;
+                (void)sound_Play(pos0, bank, "dfrblstr", 0);
+            }
         }
     }
     return result;

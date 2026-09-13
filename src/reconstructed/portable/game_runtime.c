@@ -1,3 +1,4 @@
+#include "jpb/mods.h"
 /*
  * Portable live-scene integration loop.
  *
@@ -39,6 +40,7 @@
 #include "jpb/menu.h"
 #include "jpb/portable_text.h"
 #include "jpb/pwrup.h"
+#include "jpb/projection.h"
 #include "jpb/resources.h"
 #include "jpb/settings.h"
 #include "jpb/shaolin.h"
@@ -234,6 +236,12 @@ static void game_runtime_capture_render_load(void *user_data)
 
     if (runtime != NULL) {
         ++runtime->loadScreenPresentCount;
+        if (runtime->loadScreenPresentHook != NULL &&
+            !runtime->loadScreenPresentHook(
+                runtime->loadScreenPresentUserData)) {
+            ++runtime->loadScreenPresentFailureCount;
+            runtime->loadScreenPresentFailed = 1;
+        }
     }
 }
 
@@ -261,9 +269,11 @@ static void game_runtime_capture_player_tile(
 {
     JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
     JPBGameRuntimeScreenDraw *draw;
+    FVECTOR camera_top_left;
+    FVECTOR camera_bottom_right;
+    FVECTOR screen_top_left;
+    FVECTOR screen_bottom_right;
     float depth;
-    float scale_x;
-    float scale_y;
 
     if (runtime == NULL || position == NULL ||
         OptionStruct.ScreenWidth == 0 ||
@@ -283,21 +293,28 @@ static void game_runtime_capture_player_tile(
         return;
     }
 
-    scale_x = (float)OptionStruct.ScreenWidth / 640.0f;
-    scale_y = (float)OptionStruct.ScreenHeight / 480.0f;
+    camera_top_left = *position;
+    camera_top_left.vz = depth;
+    camera_bottom_right = camera_top_left;
+    camera_bottom_right.vx += width + 1.0f;
+    camera_bottom_right.vy += height + 1.0f;
+    (void)jpb_ProjectPcCameraToViewport(
+        &camera_top_left,
+        (float)OptionStruct.ScreenWidth,
+        (float)OptionStruct.ScreenHeight,
+        &screen_top_left);
+    (void)jpb_ProjectPcCameraToViewport(
+        &camera_bottom_right,
+        (float)OptionStruct.ScreenWidth,
+        (float)OptionStruct.ScreenHeight,
+        &screen_bottom_right);
     draw = &runtime->screenDraws[runtime->screenDrawCount++];
     draw->order = runtime->drawOrder++;
     draw->texture = NULL;
-    draw->destination.left = (int32_t)(
-        (position->vx * 460.0f / depth + 320.0f) * scale_x);
-    draw->destination.top = (int32_t)(
-        (position->vy * 460.0f / depth + 240.0f) * scale_y);
-    draw->destination.right = (int32_t)(
-        ((position->vx + width + 1.0f) * 460.0f / depth +
-         320.0f) * scale_x);
-    draw->destination.bottom = (int32_t)(
-        ((position->vy + height + 1.0f) * 460.0f / depth +
-         240.0f) * scale_y);
+    draw->destination.left = (int32_t)screen_top_left.vx;
+    draw->destination.top = (int32_t)screen_top_left.vy;
+    draw->destination.right = (int32_t)screen_bottom_right.vx;
+    draw->destination.bottom = (int32_t)screen_bottom_right.vy;
     draw->color.r = (uint8_t)(color >> 16);
     draw->color.g = (uint8_t)(color >> 8);
     draw->color.b = (uint8_t)color;
@@ -875,6 +892,24 @@ static void game_runtime_flush_screen_draw_range(
                 texture = candidate;
             }
         }
+        if (draw->texture != NULL && texture == NULL) {
+            game_runtime_set_failure_detail(
+                "screen-draw:invalid-texture",
+                "material=%p platform=%p destination=%d/%d/%d/%d "
+                "source=%d/%d/%d/%d",
+                (void *)draw->texture,
+                draw->texture->texture,
+                draw->destination.left,
+                draw->destination.top,
+                draw->destination.right,
+                draw->destination.bottom,
+                draw->source.left,
+                draw->source.top,
+                draw->source.right,
+                draw->source.bottom);
+            ++runtime->screenDrawDroppedCount;
+            continue;
+        }
 
         if (left < 0) left = 0;
         if (top < 0) top = 0;
@@ -1313,9 +1348,10 @@ static void game_runtime_flush_text_draws(
     }
 }
 
-static void game_runtime_flush_ordered_title_draws(
+static int game_runtime_flush_ordered_title_draws(
     JPBGameRuntime *runtime,
-    JPBSoftwareFramebuffer *framebuffer)
+    JPBSoftwareFramebuffer *framebuffer,
+    int hardware)
 {
     typedef struct JPBOrderedHudDraw {
         size_t index;
@@ -1326,11 +1362,13 @@ static void game_runtime_flush_ordered_title_draws(
     JPBOrderedHudDraw draws[
         JPB_GAME_RUNTIME_SCREEN_DRAW_CAPACITY +
         JPB_GAME_RUNTIME_TEXT_DRAW_CAPACITY];
+    JPBGameRuntimeScreenDraw batch[JPB_GAME_RUNTIME_SCREEN_DRAW_CAPACITY];
+    size_t batch_count = 0;
     size_t draw_count = 0;
     size_t index;
 
     if (runtime == NULL) {
-        return;
+        return 0;
     }
     for (index = 0; index < runtime->screenDrawCount; ++index) {
         draws[draw_count].index = index;
@@ -1356,9 +1394,21 @@ static void game_runtime_flush_ordered_title_draws(
         while (insertion > 0) {
             const JPBOrderedHudDraw *previous = &draws[insertion - 1];
             const JPBOrderedHudDraw *current = &draws[insertion];
-            int ordered = previous->depth > current->depth ||
-                (previous->depth == current->depth &&
-                 previous->order <= current->order);
+            int ordered = previous->depth > current->depth;
+
+            if (previous->depth == current->depth) {
+                /*
+                 * The matched renderer expands a string into individual
+                 * SpriteDraw glyphs. The portable renderer retains each
+                 * string as one software draw, so equal-depth menu panels
+                 * and their text cannot inherit std::sort's per-glyph
+                 * permutation. Composite the textured owner first and
+                 * preserve submission order within each draw class.
+                 */
+                ordered = previous->isText != current->isText
+                    ? !previous->isText
+                    : previous->order <= current->order;
+            }
 
             if (ordered) {
                 break;
@@ -1374,10 +1424,18 @@ static void game_runtime_flush_ordered_title_draws(
     }
     for (index = 0; index < draw_count; ++index) {
         if (draws[index].isText) {
+            if (batch_count != 0) {
+                if (!runtime->titleScreenDrawRenderHook(
+                        runtime->titleScreenDrawRenderUserData,
+                        batch, batch_count, framebuffer)) return 0;
+                batch_count = 0;
+            }
             game_runtime_flush_text_draw(
                 runtime,
                 framebuffer,
                 &runtime->textDraws[draws[index].index]);
+        } else if (hardware && runtime->titleScreenDrawRenderHook != NULL) {
+            batch[batch_count++] = runtime->screenDraws[draws[index].index];
         } else {
             game_runtime_flush_screen_draw_range(
                 runtime,
@@ -1386,6 +1444,50 @@ static void game_runtime_flush_ordered_title_draws(
                 1);
         }
     }
+    if (batch_count != 0 && !runtime->titleScreenDrawRenderHook(
+            runtime->titleScreenDrawRenderUserData,
+            batch, batch_count, framebuffer)) return 0;
+    return 1;
+}
+
+int jpb_GameRuntimeRenderTitleDraws(
+    JPBGameRuntime *runtime,
+    JPBSoftwareFramebuffer *framebuffer)
+{
+    if (runtime == NULL || framebuffer == NULL || framebuffer->pixels == NULL ||
+        framebuffer->width <= 0 || framebuffer->height <= 0 ||
+        framebuffer->stridePixels < framebuffer->width ||
+        runtime->screenDrawCount > JPB_GAME_RUNTIME_SCREEN_DRAW_CAPACITY ||
+        runtime->textDrawCount > JPB_GAME_RUNTIME_TEXT_DRAW_CAPACITY) {
+        return JPB_GAME_RUNTIME_INVALID_ARGUMENT;
+    }
+    return game_runtime_flush_ordered_title_draws(runtime, framebuffer, 1)
+        ? JPB_GAME_RUNTIME_OK : JPB_GAME_RUNTIME_RENDER_FAILED;
+}
+
+static void game_runtime_reset_load_screen_draws(
+    JPBGameRuntime *runtime)
+{
+    if (runtime == NULL) {
+        return;
+    }
+    runtime->screenDrawCount = 0;
+    runtime->screenDrawDroppedCount = 0;
+    runtime->screenDrawCompositePixelCount = 0;
+    runtime->screenDrawTextureAlphaModulatedPixelCount = 0;
+    runtime->itemHudTextureAlphaModulatedPixelCount = 0;
+    runtime->creditHudTextureAlphaModulatedPixelCount = 0;
+    runtime->rescueHudTextureAlphaModulatedPixelCount = 0;
+    runtime->textDrawCount = 0;
+    runtime->textDrawDroppedCount = 0;
+    runtime->textDrawCompositePixelCount = 0;
+    runtime->textTrueTypeDrawCount = 0;
+    runtime->textFailedDrawCount = 0;
+    runtime->maximumTextPointSize = 0;
+    runtime->maximumTextMeasuredWidth = 0;
+    runtime->maximumTextMeasuredHeight = 0;
+    runtime->drawOrder = 0;
+    runtime->clearWindowRequested = 0;
 }
 
 struct JPBGameRuntimeTextureCache {
@@ -1774,6 +1876,8 @@ static int game_runtime_path_stem_equals(
 static int game_runtime_set_effect_directory(
     const char *asset_path)
 {
+    char installed_path[JPB_MOD_PATH];
+    if (jpb_ModsBasePath(asset_path, installed_path, sizeof(installed_path))) asset_path = installed_path;
     size_t path_bytes = strlen(asset_path);
     size_t index;
     const char *effects = "effects";
@@ -2482,6 +2586,8 @@ static int game_runtime_load_platform_image(
     int *height)
 {
     size_t pixel_count;
+    char resolved[JPB_MOD_PATH];
+    if (jpb_ModsResolvePath(path, resolved, sizeof(resolved))) path = resolved;
 
     if (entry == NULL || path == NULL || width == NULL || height == NULL ||
         game_runtime_image_inspect_hook == NULL ||
@@ -3613,6 +3719,9 @@ int jpb_GameRuntimeInitWithPlayerAssets(
     const char *default_texture_path;
     int level_index;
     int result;
+    int selected_model_id = player_model_id;
+
+    player_model_id = jpb_ModDonor(player_model_id);
 
     if (runtime == NULL || jpx_path == NULL ||
         player_model_id < 0 ||
@@ -3620,12 +3729,26 @@ int jpb_GameRuntimeInitWithPlayerAssets(
         game_runtime_set_failure_stage("init:invalid-arguments");
         return JPB_GAME_RUNTIME_INVALID_ARGUMENT;
     }
+    jpb_ModSetPlayer(0, selected_model_id);
     game_runtime_set_failure_stage("none");
     memset(runtime, 0, sizeof(*runtime));
+    runtime->screenPolyCapacity =
+        JPB_GAME_RUNTIME_SCREEN_POLY_CAPACITY;
+    runtime->screenPolyDraws =
+        (JPBGameRuntimeScreenPolyDraw *)calloc(
+            runtime->screenPolyCapacity,
+            sizeof(*runtime->screenPolyDraws));
+    if (runtime->screenPolyDraws == NULL) {
+        game_runtime_set_failure_stage("init:screen-poly-storage");
+        return JPB_GAME_RUNTIME_OUT_OF_MEMORY;
+    }
     runtime->meshStorage =
         (uint8_t *)malloc(JPB_JPX_REFERENCE_WORLD_CAPACITY);
     if (runtime->meshStorage == NULL) {
         game_runtime_set_failure_stage("init:mesh-storage");
+        free(runtime->screenPolyDraws);
+        runtime->screenPolyDraws = NULL;
+        runtime->screenPolyCapacity = 0;
         return JPB_GAME_RUNTIME_OUT_OF_MEMORY;
     }
     memset(&config, 0, sizeof(config));
@@ -3800,6 +3923,7 @@ int jpb_GameRuntimeInitWithPlayerAssets(
     maskPadBits(0);
     scene_gInitScenes(0);
     physics_gInitObjects(0);
+    physics_InitPhysics();
     anim_InitAnimations(0);
     player_gInitPlayers(0);
     model_InitModels();
@@ -4186,6 +4310,7 @@ int jpb_GameRuntimeInitWithPlayerAssets(
     runtime->playerProcessObserverReady = 1;
     jpb_BulletSetLaunchObserver(
         game_runtime_observe_bullet_launch, runtime);
+    jpb_BulletResetDiagnostics();
     runtime->bulletLaunchObserverReady = 1;
     {
         JPBSceneMiddleRenderHooks hooks;
@@ -4248,8 +4373,18 @@ int jpb_GameRuntimeRunCanonicalConstructor(JPBGameRuntime *runtime)
         runtime->textureCache);
     file_SetChunkLoadHooks(game_runtime_resolve_resource, NULL);
     gFileNotFound = 0;
+    game_runtime_reset_load_screen_draws(runtime);
+    runtime->loadScreenPresentFailed = 0;
     game_initVar(3);
     file_SetChunkLoadHooks(NULL, NULL);
+    if (runtime->loadScreenPresentFailed) {
+        game_runtime_set_failure_detail(
+            "canonical-constructor:load-screen-present",
+            "requests=%zu failures=%zu",
+            runtime->loadScreenPresentCount,
+            runtime->loadScreenPresentFailureCount);
+        return JPB_GAME_RUNTIME_RENDER_FAILED;
+    }
 
     runtime->player = &gaPlayerData[0];
     runtime->inactivePlayer = &gaPlayerData[1];
@@ -4285,10 +4420,17 @@ int jpb_GameRuntimeRunCanonicalConstructor(JPBGameRuntime *runtime)
 
     player_model = game_runtime_scene_model(
         runtime->actorScene, NULL);
+    /* Mod players may share a stock donor, so maModelData[donor] can
+     * already refer to P2's separately loaded archive. The constructed
+     * actor retains its own relocated root at payload + one geomData. */
     if ((uint32_t)GameStruct.ModelSelect[0] >= JPB_MODEL_NAME_COUNT ||
         !game_runtime_bind_relocated_bmd_view(
             &runtime->bmdView,
-            maModelData[GameStruct.ModelSelect[0]],
+            jpb_ModPlayer(0) != NULL && player_model != NULL &&
+                    player_model->pRootNode != NULL &&
+                    player_model->pRootNode->pGeomData != NULL
+                ? (void *)(player_model->pRootNode->pGeomData - 1)
+                : maModelData[GameStruct.ModelSelect[0]],
             player_model)) {
         game_runtime_set_failure_stage(
             "canonical-constructor:player-model-view");
@@ -4305,7 +4447,11 @@ int jpb_GameRuntimeRunCanonicalConstructor(JPBGameRuntime *runtime)
                 JPB_MODEL_NAME_COUNT ||
             !game_runtime_bind_relocated_bmd_view(
                 &state->bmdView,
-                maModelData[GameStruct.ModelSelect[1]],
+                jpb_ModPlayer(1) != NULL && second_model != NULL &&
+                        second_model->pRootNode != NULL &&
+                        second_model->pRootNode->pGeomData != NULL
+                    ? (void *)(second_model->pRootNode->pGeomData - 1)
+                    : maModelData[GameStruct.ModelSelect[1]],
                 second_model)) {
             game_runtime_set_failure_stage(
                 "canonical-constructor:second-player-model-view");
@@ -4444,6 +4590,9 @@ int jpb_GameRuntimeGetEnemyPlacementState(
         memset(state, 0, sizeof(*state));
         state->placementIndex = placement_index;
         state->objectId = actor->actorRoot.objectID;
+        state->playerNum = actor->player != NULL
+            ? actor->player->playernum
+            : -1;
         state->enemyId = enemy->enemyID;
         state->enemyNum = enemy->enemyNum;
         state->modelId = actor->player != NULL
@@ -4598,6 +4747,13 @@ static void game_runtime_observe_bullet_launch(
     }
     slot = (int)player->playernum;
     if ((unsigned)slot >= 2U) {
+        ++runtime->enemyProjectileLaunchCount;
+        runtime->lastEnemyProjectileLaunchFrame =
+            (uint32_t)totalframes;
+        runtime->lastEnemyProjectileType = projectile->pj_Type;
+        runtime->lastEnemyProjectileOwner = player->playerRoot.objectID;
+        runtime->lastEnemyProjectileStart = *start;
+        runtime->lastEnemyProjectileTarget = *target;
         return;
     }
     ++runtime->playerProjectileLaunchCount[slot];
@@ -5651,6 +5807,9 @@ int jpb_GameRuntimeActivateSecondPlayer(
     playerObject *player;
     unsigned level_index;
     int result;
+    int selected_model_id = player_model_id;
+
+    player_model_id = jpb_ModDonor(player_model_id);
 
     if (runtime == NULL || cad_path == NULL || bmd_path == NULL ||
         runtime->inactivePlayerScene == NULL ||
@@ -5661,6 +5820,7 @@ int jpb_GameRuntimeActivateSecondPlayer(
         player_model_id >= JPB_MODEL_NAME_COUNT) {
         return JPB_GAME_RUNTIME_INVALID_ARGUMENT;
     }
+    jpb_ModSetPlayer(1, selected_model_id);
     state = (JPBGameRuntimeSecondPlayerState *)calloc(1, sizeof(*state));
     if (state == NULL) {
         return JPB_GAME_RUNTIME_OUT_OF_MEMORY;
@@ -5983,6 +6143,59 @@ void jpb_GameRuntimeSetTitleScreenDrawRenderHook(
         runtime->titleScreenDrawRenderHook = hook;
         runtime->titleScreenDrawRenderUserData = user_data;
     }
+}
+
+void jpb_GameRuntimeSetLoadScreenPresentHook(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeLoadScreenPresentHook hook,
+    void *user_data)
+{
+    if (runtime != NULL) {
+        runtime->loadScreenPresentHook = hook;
+        runtime->loadScreenPresentUserData = user_data;
+    }
+}
+
+int jpb_GameRuntimeRenderLoadScreen(
+    JPBGameRuntime *runtime,
+    JPBSoftwareFramebuffer *framebuffer)
+{
+    int result = JPB_GAME_RUNTIME_OK;
+
+    if (runtime == NULL || framebuffer == NULL ||
+        framebuffer->pixels == NULL || framebuffer->width <= 0 ||
+        framebuffer->height <= 0 ||
+        framebuffer->stridePixels < framebuffer->width ||
+        !runtime->textHookReady) {
+        return JPB_GAME_RUNTIME_INVALID_ARGUMENT;
+    }
+    OptionStruct.ScreenWidth = (uint32_t)framebuffer->width;
+    OptionStruct.ScreenHeight = (uint32_t)framebuffer->height;
+    scaleAdjustment = getScaleAdjustment();
+    scaleAdjustmentMM = getScaleAdjustmentMM();
+    game_runtime_clear_framebuffer(
+        framebuffer, UINT32_C(0xff000000));
+    if (runtime->titleScreenDrawRenderHook != NULL) {
+        if (!runtime->titleScreenDrawRenderHook(
+                runtime->titleScreenDrawRenderUserData,
+                runtime->screenDraws,
+                runtime->screenDrawCount,
+                framebuffer)) {
+            result = JPB_GAME_RUNTIME_RENDER_FAILED;
+        } else {
+            game_runtime_flush_text_draws(runtime, framebuffer);
+        }
+    } else {
+        (void)game_runtime_flush_ordered_title_draws(runtime, framebuffer, 0);
+    }
+    if ((runtime->screenDrawCount == 0 &&
+         runtime->textDrawCount == 0) ||
+        runtime->screenDrawDroppedCount != 0 ||
+        runtime->textDrawDroppedCount != 0) {
+        result = JPB_GAME_RUNTIME_RENDER_FAILED;
+    }
+    game_runtime_reset_load_screen_draws(runtime);
+    return result;
 }
 
 void jpb_GameRuntimeSetGameplayCompositeHook(
@@ -6395,8 +6608,34 @@ static void game_runtime_capture_screen_poly(
         context->result != JPB_GAME_RUNTIME_OK) {
         return;
     }
+    if (runtime->screenPolyDrawCount >=
+        runtime->screenPolyCapacity) {
+        size_t new_capacity = runtime->screenPolyCapacity != 0
+            ? runtime->screenPolyCapacity * 2
+            : JPB_GAME_RUNTIME_SCREEN_POLY_CAPACITY;
+        JPBGameRuntimeScreenPolyDraw *new_draws;
+
+        if (new_capacity <= runtime->screenPolyDrawCount) {
+            new_capacity = runtime->screenPolyDrawCount + 1;
+        }
+        new_draws = (JPBGameRuntimeScreenPolyDraw *)realloc(
+            runtime->screenPolyDraws,
+            new_capacity * sizeof(*runtime->screenPolyDraws));
+        if (new_draws == NULL) {
+            ++runtime->screenPolyDroppedCount;
+            game_runtime_set_failure_detail(
+                "frame:screen-poly-storage",
+                "draws=%zu capacity=%zu",
+                runtime->screenPolyDrawCount,
+                runtime->screenPolyCapacity);
+            context->result = JPB_GAME_RUNTIME_OUT_OF_MEMORY;
+            return;
+        }
+        runtime->screenPolyDraws = new_draws;
+        runtime->screenPolyCapacity = new_capacity;
+    }
     if (runtime->screenPolyDrawCount <
-        JPB_GAME_RUNTIME_SCREEN_POLY_CAPACITY) {
+        runtime->screenPolyCapacity) {
         draw = &runtime->screenPolyDraws[
             runtime->screenPolyDrawCount];
         if (copy_count > JPB_SCREEN_POLY_VERTEX_CAPACITY) {
@@ -6423,8 +6662,6 @@ static void game_runtime_capture_screen_poly(
                          copy_count) *
                     sizeof(draw->vertices[0]));
         }
-    } else {
-        ++runtime->screenPolyDroppedCount;
     }
     ++runtime->screenPolyDrawCount;
     if (!context->sharedDepthReady ||
@@ -6488,7 +6725,7 @@ static void game_runtime_flush_deferred_screen_polys(
     }
     for (draw_index = 0;
          draw_index < runtime->screenPolyDrawCount &&
-         draw_index < JPB_GAME_RUNTIME_SCREEN_POLY_CAPACITY;
+         draw_index < runtime->screenPolyCapacity;
          ++draw_index) {
         JPBGameRuntimeScreenPolyDraw *draw =
             &runtime->screenPolyDraws[draw_index];
@@ -7191,6 +7428,7 @@ void jpb_GameRuntimeShutdown(JPBGameRuntime *runtime)
     game_runtime_free_texture_cache(
         runtime->defaultTextureCache);
     free(runtime->renderDepthBuffer);
+    free(runtime->screenPolyDraws);
     free(runtime->world);
     memset(runtime, 0, sizeof(*runtime));
 }
@@ -7219,6 +7457,9 @@ int jpb_GameRuntimeFrame(
             (void *)runtime, (void *)framebuffer);
         return JPB_GAME_RUNTIME_INVALID_ARGUMENT;
     }
+    /* The retail active-mode owner consumes the authored level-complete signal
+     * before the final gameplay frame. The outer mode owner handles mode 5. */
+    jpb_GameRunActiveModePrelude();
     game_runtime_set_failure_detail("none", NULL);
     frame_started = game_runtime_wall_seconds();
     runtime->profileLastFrameSeconds = 0.0;
@@ -7243,13 +7484,6 @@ int jpb_GameRuntimeFrame(
     runtime->profileLastSceneBackdropSeconds = 0.0;
     runtime->profileLastScenePhysicsSeconds = 0.0;
     runtime->profileLastSceneLevelOwnerSeconds = 0.0;
-    runtime->profileLastEnemyCreateTotalSeconds = 0.0;
-    runtime->profileLastEnemyCreatePoolSeconds = 0.0;
-    runtime->profileLastEnemyCreateAiSeconds = 0.0;
-    runtime->profileLastEnemyCreateModelSeconds = 0.0;
-    runtime->profileLastEnemyCreateAnimSeconds = 0.0;
-    runtime->profileLastEnemyCreatePlayerSeconds = 0.0;
-    runtime->profileLastEnemyCreateRefreshSeconds = 0.0;
     runtime->screenDrawCount = 0;
     runtime->drawOrder = 0;
     runtime->screenDrawDroppedCount = 0;
@@ -7555,7 +7789,7 @@ int jpb_GameRuntimeFrame(
                     runtime->textDraws[draw_index].compositePixels;
             }
             stage_started = game_runtime_wall_seconds();
-            game_runtime_flush_ordered_title_draws(runtime, framebuffer);
+            (void)game_runtime_flush_ordered_title_draws(runtime, framebuffer, 0);
             game_runtime_record_duration(
                 &runtime->profileHudSeconds,
                 &runtime->profileLastHudSeconds,
@@ -7597,7 +7831,7 @@ int jpb_GameRuntimeFrame(
             stage_started = game_runtime_wall_seconds();
             game_runtime_clear_framebuffer(
                 framebuffer, UINT32_C(0x00ffffff));
-            game_runtime_flush_ordered_title_draws(runtime, framebuffer);
+            (void)game_runtime_flush_ordered_title_draws(runtime, framebuffer, 0);
             game_runtime_record_duration(
                 &runtime->profileHudReplaySeconds,
                 &runtime->profileLastHudReplaySeconds,
@@ -7669,7 +7903,7 @@ int jpb_GameRuntimeFrame(
         {
             double hud_started = game_runtime_wall_seconds();
 
-            game_runtime_flush_ordered_title_draws(runtime, framebuffer);
+            (void)game_runtime_flush_ordered_title_draws(runtime, framebuffer, 0);
             game_runtime_record_duration(
                 &runtime->profileHudSeconds,
                 &runtime->profileLastHudSeconds,
@@ -7738,17 +7972,11 @@ int jpb_GameRuntimeTitleFrame(
             framebuffer, UINT32_C(0xff000000));
     }
 
-    if (runtime->titleScreenDrawRenderHook != NULL) {
-        if (!runtime->titleScreenDrawRenderHook(
-                runtime->titleScreenDrawRenderUserData,
-                runtime->screenDraws,
-                runtime->screenDrawCount,
-                framebuffer)) {
-            return JPB_GAME_RUNTIME_RENDER_FAILED;
-        }
-        game_runtime_flush_text_draws(runtime, framebuffer);
-    } else {
-        game_runtime_flush_ordered_title_draws(runtime, framebuffer);
+    /* Hardware and software must interleave panels, labels, and inline
+     * controls by the same recovered depth order. A final text-only pass
+     * exposes completed-award labels through the newer foreground panels. */
+    if (jpb_GameRuntimeRenderTitleDraws(runtime, framebuffer) != JPB_GAME_RUNTIME_OK) {
+        return JPB_GAME_RUNTIME_RENDER_FAILED;
     }
     menu_mode = menuVars.menuMode[menuVars.menuModeSP & 7u];
 

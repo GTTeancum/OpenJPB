@@ -23,7 +23,17 @@ typedef struct JPBPCAudioWavInfo {
 
 typedef struct JPBPCAudioStats {
     uint32_t sfxStarted;
+    uint32_t musicRequested;
+    uint32_t musicResolved;
     uint32_t musicStarted;
+    uint32_t musicDeferred;
+    uint32_t musicDeferredReleased;
+    uint32_t musicPauseRequests;
+    uint32_t musicResumeRequests;
+    uint32_t musicStopRequests;
+    uint32_t movieGateBegins;
+    uint32_t movieGateEnds;
+    uint32_t movieSfxSuppressed;
 } JPBPCAudioStats;
 
 /*
@@ -42,6 +52,9 @@ void jpb_PCAudioUpdate(JPBPCAudio *audio);
 void jpb_PCAudioGetStats(
     const JPBPCAudio *audio,
     JPBPCAudioStats *stats);
+void jpb_PCAudioSetMoviePlayback(
+    JPBPCAudio *audio,
+    int active);
 
 int jpb_PCAudioResolveSound(
     const JPBPCAudio *audio,

@@ -15,6 +15,7 @@
  */
 
 #include "jpb/resources.h"
+#include "jpb/mods.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -117,6 +118,7 @@ const char *resource_getPath(
         path[0] = '\0';
         return NULL;
     }
+    (void)jpb_ModsResolve(path + strlen(basePath), path, sizeof(path));
     return path;
 }
 

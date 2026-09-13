@@ -79,7 +79,7 @@ void anim_GetSeqFrameRange(
     animObject *animation =
         animutil_from_object(object);
     _animTemplate *sequence =
-        &animation->depack_context.seqdata[motion->Seq];
+        &animation->depack_context.seqdata[motion->globalID];
 
     *first_frame = sequence->Fframe;
     *last_frame = sequence->Lframe;
@@ -123,7 +123,7 @@ _animTemplate *anim_GetTargetSeqPtr(
     animObject *animation, Motion *motion)
 {
     return &anim_GetTargetContext(animation)
-                ->seqdata[motion->Seq];
+                ->seqdata[motion->globalID];
 }
 
 /* 0x19960, 133 bytes, global, 4 named locals

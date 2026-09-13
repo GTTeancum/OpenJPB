@@ -1,3 +1,4 @@
+#include "jpb/mods.h"
 /*
  * COMPLETE REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\work\win32\IO.c.
@@ -97,6 +98,8 @@ uint64_t file_GETSIZE(JPBFileHandle *fd)
 int file_OPEN(char *name, JPBFileHandle *fd)
 {
     FILE *file;
+    char resolved[JPB_MOD_PATH];
+    if (jpb_ModsResolvePath(name, resolved, sizeof(resolved))) name = resolved;
 
     if (name == NULL) {
         return 0;

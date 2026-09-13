@@ -6,6 +6,7 @@
 #include "jpb/cube.h"
 #include "jpb/effects.h"
 #include "jpb/flex.h"
+#include "jpb/filesys.h"
 #include "jpb/game.h"
 #include "jpb/globalarrays.h"
 #include "jpb/jonny.h"
@@ -1199,6 +1200,7 @@ static int test_normal_movement_surface_forces(void)
     int32_t poly;
     int32_t *old_leveldata = leveldata;
     int32_t old_totalframes = totalframes;
+    uint32_t old_global_timer = gGlobalTimer;
     FVECTOR old_gravity = globalgravity;
     float old_frame_rate = fGlobalFrameRate;
     char old_level = LevelSelect;
@@ -1281,7 +1283,16 @@ static int test_normal_movement_surface_forces(void)
     globalgravity.vy = 0.0f;
     globalgravity.vz = 0.0f;
     fGlobalFrameRate = 1.0f;
-    totalframes = 100 + 0x0f00 + 1;
+    /* Retail expires the reverse trajectory in timer ticks, not frames. */
+    totalframes = 9000;
+    gGlobalTimer = 100 + 0x0f00;
+
+    CHECK(jpb_PhysicsCalcMovementNormal(&physics) ==
+          JPB_PHYSICS_RESULT_OK);
+    CHECK(physics.reversoi == 100);
+    totalframes = 20;
+    ++gGlobalTimer;
+    jpb_PhysicsBeginObjectFrame(&physics);
 
     CHECK(jpb_PhysicsCalcMovementNormal(&physics) ==
           JPB_PHYSICS_RESULT_OK);
@@ -1289,6 +1300,11 @@ static int test_normal_movement_surface_forces(void)
     CHECK(fabsf(physics.mov.vy - 3.0f) < 0.00001f);
     CHECK(fabsf(physics.mov.vz + 4.0f) < 0.00001f);
     CHECK(physics.reversoi == 0);
+
+    jpb_PhysicsBeginObjectFrame(&physics);
+    CHECK(jpb_PhysicsCalcMovementNormal(&physics) ==
+          JPB_PHYSICS_RESULT_OK);
+    CHECK(fabsf(physics.mov.vz - 4.0f) < 0.00001f);
 
     connect_complete_actor(
         &actor, &scene, &model, &physics, &animation, &player);
@@ -1305,6 +1321,7 @@ static int test_normal_movement_surface_forces(void)
 
     leveldata = old_leveldata;
     totalframes = old_totalframes;
+    gGlobalTimer = old_global_timer;
     globalgravity = old_gravity;
     fGlobalFrameRate = old_frame_rate;
     LevelSelect = old_level;
@@ -2139,7 +2156,7 @@ static int test_general_solid_collision(void)
     geomData geometry;
     _svector vertices[4];
     _svector normals[1];
-    int16_t indices[4] = {0, 1, 2, 3};
+    int16_t indices[4] = {0, 1, 3, 2};
     FVECTOR movement = {0.0f, -1.0f, 0.0f};
     FVECTOR from = {0.0f, 5.0f, 0.0f};
     int index_id;
@@ -2184,6 +2201,10 @@ static int test_general_solid_collision(void)
               &solid, &movement, &from, 10.0f, 1.0f) ==
           1);
     CHECK(mvp.numsides == 4);
+    CHECK(mvp.points[2].vx == (float)vertices[2].vx);
+    CHECK(mvp.points[2].vz == (float)vertices[2].vz);
+    CHECK(mvp.points[3].vx == (float)vertices[3].vx);
+    CHECK(mvp.points[3].vz == (float)vertices[3].vz);
     CHECK(mvp.info.flags == 6);
     CHECK(mvp.facenormal.vx == 0.0f);
     CHECK(mvp.facenormal.vy == 1.0f);
@@ -2298,10 +2319,11 @@ static int test_newclosest_poly_thin_map(void)
     CHECK(polyhit == &leveldata[LIB_INDEX + 2]);
     CHECK(bestinfo.type == 1);
     CHECK(bestinfo.flags == 0);
-    CHECK(bestinfo.dist > 8.99f);
-    CHECK(bestinfo.dist < 9.0f);
+    CHECK(bestinfo.dist > 9.04f);
+    CHECK(bestinfo.dist < 9.05f);
     CHECK(bestinfo.facenormal.vy > 0.99f);
-    CHECK(fabsf(bestinfo.kisspoint.vy) < 0.01f);
+    CHECK(bestinfo.facenormal.vz == 3.0f / 4096.0f);
+    CHECK(fabsf(bestinfo.kisspoint.vy) < 0.05f);
 
     from.vy = -10.0f;
     to.vy = 10.0f;
@@ -2344,7 +2366,7 @@ static int test_newclosest_poly_dynamic_solid(void)
     geomData geometry;
     _svector vertices[4];
     _svector normals[1];
-    int16_t indices[4] = {0, 1, 2, 3};
+    int16_t indices[4] = {0, 1, 3, 2};
     int32_t *cubehit = (int32_t *)(uintptr_t)1;
     int32_t *entryhit = (int32_t *)(uintptr_t)1;
     int32_t *polyhit = (int32_t *)(uintptr_t)1;
@@ -2568,7 +2590,7 @@ static int test_check_cube_blocking_dynamic_contact(void)
     geomData geometry;
     _svector vertices[4];
     _svector normals[1];
-    int16_t indices[4] = {0, 1, 2, 3};
+    int16_t indices[4] = {0, 1, 3, 2};
     FVECTOR world = {0.0f, -5.0f, 0.0f};
     FVECTOR dir = {0.0f, -10.0f, 0.0f};
     FVECTOR normal = {0.0f, -1.0f, 0.0f};
@@ -2628,8 +2650,8 @@ static int test_check_cube_blocking_dynamic_contact(void)
     CHECK(physics.noncollideframes == 0);
     CHECK(physics.collidetime == UINT32_C(0x100));
     CHECK(physics.anycollidetime == UINT32_C(0x100));
-    CHECK(world.vy > 4.9f);
-    CHECK(world.vy < 5.1f);
+    CHECK(world.vy == 2.0f);
+    CHECK(dir.vy == -3.0f);
 
     leveldata = old_leveldata;
     pointerRegistry_Reset();
@@ -2654,7 +2676,7 @@ static int test_check_cube_blocking_clear_wall_slide(void)
     geomData geometry;
     _svector vertices[4];
     _svector normals[1];
-    int16_t indices[4] = {0, 1, 2, 3};
+    int16_t indices[4] = {0, 1, 3, 2};
     FVECTOR world = {-5.0f, 11.0f, 0.0f};
     FVECTOR dir = {-10.0f, 10.0f, 0.0f};
     FVECTOR normal = {-0.70710677f, 0.70710677f, 0.0f};
@@ -3908,33 +3930,174 @@ static float physics_retail_random_float(float low, float high)
     return low + (high - low) * unit;
 }
 
-static int test_retail_sphere_polygon_differential(const char *path)
+static uint8_t *physics_load_fed_collision(
+    const char *executable_path, size_t *size)
+{
+    char path[MAX_PATH];
+    const char *slash = strrchr(executable_path, '\\');
+    const char *forward_slash = strrchr(executable_path, '/');
+    const char suffix[] = "res\\level\\W3D\\fed.j3d";
+    FILE *file;
+    long file_size;
+    uint8_t *storage;
+    size_t prefix;
+
+    if (forward_slash != NULL &&
+        (slash == NULL || forward_slash > slash)) {
+        slash = forward_slash;
+    }
+    if (slash == NULL) {
+        return NULL;
+    }
+    prefix = (size_t)(slash - executable_path) + 1;
+    if (prefix + sizeof(suffix) > sizeof(path)) {
+        return NULL;
+    }
+    memcpy(path, executable_path, prefix);
+    memcpy(path + prefix, suffix, sizeof(suffix));
+    file = fopen(path, "rb");
+    if (file == NULL) {
+        return NULL;
+    }
+    if (fseek(file, 0, SEEK_END) != 0 ||
+        (file_size = ftell(file)) <= 0 ||
+        fseek(file, 0, SEEK_SET) != 0) {
+        fclose(file);
+        return NULL;
+    }
+    storage = (uint8_t *)malloc((size_t)file_size);
+    if (storage == NULL ||
+        fread(storage, 1, (size_t)file_size, file) !=
+            (size_t)file_size) {
+        free(storage);
+        fclose(file);
+        return NULL;
+    }
+    fclose(file);
+    *size = (size_t)file_size;
+    return storage;
+}
+
+static int test_retail_collision_differential(const char *path)
 {
     typedef int (*RetailSphereAndPoly)(void);
+    typedef int (*RetailPolyCollideCheck)(void);
+    typedef int (*RetailNewClosestPoly)(
+        FVECTOR *,
+        FVECTOR *,
+        FVECTOR *,
+        float,
+        float,
+        FVECTOR *,
+        int,
+        int32_t **,
+        int32_t **,
+        int32_t **);
+    typedef int (*RetailFindWalkHeight)(
+        VECTOR *, VECTOR *, objectRoot *, unsigned);
+    typedef int (*RetailCheckCubeBlocking)(
+        playerObject *, FVECTOR *, FVECTOR *, FVECTOR *, float, float *);
     typedef float (*RetailVectorNormalize)(FVECTOR *);
     enum {
         RETAIL_VECTOR_NORMALIZE_RVA = 0x9A470,
+        RETAIL_FIND_WALK_HEIGHT_RVA = 0xB0470,
+        RETAIL_CHECK_CUBE_BLOCKING_RVA = 0xDC5F0,
+        RETAIL_NEW_CLOSEST_POLY_RVA = 0xDFB00,
+        RETAIL_GPWORLD_RVA = 0x4AFDA0,
+        RETAIL_GLOBAL_FRAME_RATE_RVA = 0x4CC0A0,
+        RETAIL_FLOAT_FRAME_RATE_RVA = 0x4CC0A4,
+        RETAIL_UBER_X_RANGE_RVA = 0x4F1AB8,
+        RETAIL_UBER_Z_RANGE_RVA = 0x4F1ABC,
+        RETAIL_UBER_LOCK_RVA = 0x4F1AC0,
+        RETAIL_POLY_COLLIDE_CHECK_RVA = 0xE20B0,
         RETAIL_SPHERE_AND_POLY_RVA = 0xE22B0,
+        RETAIL_BESTINFO_RVA = 0x53A4E0,
+        RETAIL_EDGE_START_RVA = 0x53A520,
+        RETAIL_EDGE_END_RVA = 0x53A530,
+        RETAIL_LEVELDATA_RVA = 0x537C88,
+        RETAIL_LEVEL_SELECT_RVA = 0x537DEA,
+        RETAIL_TOTAL_FRAMES_RVA = 0x547B48,
         RETAIL_CVARS_RVA = 0x951AA0,
-        RETAIL_MVP_RVA = 0x954320
+        RETAIL_NUMSOLIDS_RVA = 0x951B90,
+        RETAIL_PHYSICS_DATA_RVA = 0x951BA0,
+        RETAIL_MVP_RVA = 0x954320,
+        RETAIL_CAMERA_RVA = 0x10DE6A0,
+        RETAIL_MAPYEND_RVA = 0x10DBEE0
     };
     HMODULE image = LoadLibraryExA(
         path, NULL, DONT_RESOLVE_DLL_REFERENCES);
     uint8_t *base;
     RetailVectorNormalize retail_vector_normalize;
+    RetailPolyCollideCheck retail_poly_collide_check;
+    RetailNewClosestPoly retail_new_closest_poly;
+    RetailFindWalkHeight retail_find_walk_height;
+    RetailCheckCubeBlocking retail_check_cube_blocking;
     RetailSphereAndPoly retail_sphere_and_poly;
+    _collide_info *retail_bestinfo;
+    FVECTOR *retail_edge_start;
+    FVECTOR *retail_edge_end;
     _movement_packet *retail_mvp;
     _collidevars *retail_cvars;
+    int32_t **retail_leveldata;
+    int32_t *retail_numsolids;
+    int32_t *retail_mapyend;
+    WorldData **retail_world;
+    int32_t *retail_global_frame_rate;
+    float *retail_float_frame_rate;
+    int32_t *retail_uber_x_range;
+    int32_t *retail_uber_z_range;
+    int32_t *retail_uber_lock;
+    char *retail_level_select;
+    int32_t *retail_total_frames;
+    physicsObject *retail_physics_data;
+    Camera *retail_camera;
     int iteration;
 
     CHECK(image != NULL);
     base = (uint8_t *)(void *)image;
     retail_vector_normalize = (RetailVectorNormalize)(void *)(
         base + RETAIL_VECTOR_NORMALIZE_RVA);
+    retail_poly_collide_check = (RetailPolyCollideCheck)(void *)(
+        base + RETAIL_POLY_COLLIDE_CHECK_RVA);
+    retail_new_closest_poly = (RetailNewClosestPoly)(void *)(
+        base + RETAIL_NEW_CLOSEST_POLY_RVA);
+    retail_find_walk_height = (RetailFindWalkHeight)(void *)(
+        base + RETAIL_FIND_WALK_HEIGHT_RVA);
+    retail_check_cube_blocking = (RetailCheckCubeBlocking)(void *)(
+        base + RETAIL_CHECK_CUBE_BLOCKING_RVA);
     retail_sphere_and_poly = (RetailSphereAndPoly)(void *)(
         base + RETAIL_SPHERE_AND_POLY_RVA);
+    retail_bestinfo = (_collide_info *)(void *)(
+        base + RETAIL_BESTINFO_RVA);
+    retail_edge_start = (FVECTOR *)(void *)(
+        base + RETAIL_EDGE_START_RVA);
+    retail_edge_end = (FVECTOR *)(void *)(
+        base + RETAIL_EDGE_END_RVA);
     retail_cvars = (_collidevars *)(void *)(base + RETAIL_CVARS_RVA);
     retail_mvp = (_movement_packet *)(void *)(base + RETAIL_MVP_RVA);
+    retail_leveldata = (int32_t **)(void *)(
+        base + RETAIL_LEVELDATA_RVA);
+    retail_numsolids = (int32_t *)(void *)(
+        base + RETAIL_NUMSOLIDS_RVA);
+    retail_mapyend = (int32_t *)(void *)(base + RETAIL_MAPYEND_RVA);
+    retail_world = (WorldData **)(void *)(base + RETAIL_GPWORLD_RVA);
+    retail_global_frame_rate = (int32_t *)(void *)(
+        base + RETAIL_GLOBAL_FRAME_RATE_RVA);
+    retail_float_frame_rate = (float *)(void *)(
+        base + RETAIL_FLOAT_FRAME_RATE_RVA);
+    retail_uber_x_range = (int32_t *)(void *)(
+        base + RETAIL_UBER_X_RANGE_RVA);
+    retail_uber_z_range = (int32_t *)(void *)(
+        base + RETAIL_UBER_Z_RANGE_RVA);
+    retail_uber_lock = (int32_t *)(void *)(
+        base + RETAIL_UBER_LOCK_RVA);
+    retail_level_select = (char *)(void *)(
+        base + RETAIL_LEVEL_SELECT_RVA);
+    retail_total_frames = (int32_t *)(void *)(
+        base + RETAIL_TOTAL_FRAMES_RVA);
+    retail_physics_data = (physicsObject *)(void *)(
+        base + RETAIL_PHYSICS_DATA_RVA);
+    retail_camera = (Camera *)(void *)(base + RETAIL_CAMERA_RVA);
 
     {
         _movement_packet initial;
@@ -4047,7 +4210,13 @@ static int test_retail_sphere_polygon_differential(const char *path)
 
     for (iteration = 0; iteration < 4096; ++iteration) {
         _movement_packet initial;
+        _collide_info initial_best;
         _collide_info reconstructed_info;
+        _collide_info reconstructed_best;
+        FVECTOR initial_edge_start;
+        FVECTOR initial_edge_end;
+        FVECTOR reconstructed_edge_start;
+        FVECTOR reconstructed_edge_end;
         int reconstructed_result;
         int retail_result;
         float half_x = physics_retail_random_float(8.0f, 512.0f);
@@ -4139,9 +4308,746 @@ static int test_retail_sphere_polygon_differential(const char *path)
                 (double)retail_mvp->info.kisspoint.vx,
                 (double)retail_mvp->info.kisspoint.vy,
                 (double)retail_mvp->info.kisspoint.vz);
+            fprintf(
+                stderr,
+                "cvars plane=%a/%a rsq=%a/%a best=%a/%a "
+                "edge0=%a/%a/%a|%a/%a/%a "
+                "normal0=%a/%a/%a|%a/%a/%a\n",
+                (double)cvars.distToPlane,
+                (double)retail_cvars->distToPlane,
+                (double)cvars.rsquared,
+                (double)retail_cvars->rsquared,
+                (double)cvars.bestDist,
+                (double)retail_cvars->bestDist,
+                (double)cvars.edge[0].vx,
+                (double)cvars.edge[0].vy,
+                (double)cvars.edge[0].vz,
+                (double)retail_cvars->edge[0].vx,
+                (double)retail_cvars->edge[0].vy,
+                (double)retail_cvars->edge[0].vz,
+                (double)cvars.edgenormal[0].vx,
+                (double)cvars.edgenormal[0].vy,
+                (double)cvars.edgenormal[0].vz,
+                (double)retail_cvars->edgenormal[0].vx,
+                (double)retail_cvars->edgenormal[0].vy,
+                (double)retail_cvars->edgenormal[0].vz);
+            {
+                FVECTOR reconstructed_normal = cvars.edgenormal[0];
+                FVECTOR retail_normal = retail_cvars->edgenormal[0];
+                float reconstructed_length =
+                    VectorNormalize(&reconstructed_normal);
+                float retail_length =
+                    retail_vector_normalize(&retail_normal);
+
+                fprintf(
+                    stderr,
+                    "normalized edge0 len=%a/%a value=%a/%a/%a|%a/%a/%a\n",
+                    (double)reconstructed_length,
+                    (double)retail_length,
+                    (double)reconstructed_normal.vx,
+                    (double)reconstructed_normal.vy,
+                    (double)reconstructed_normal.vz,
+                    (double)retail_normal.vx,
+                    (double)retail_normal.vy,
+                    (double)retail_normal.vz);
+            }
             FreeLibrary(image);
             return 1;
         }
+
+        memset(&initial_best, 0, sizeof(initial_best));
+        initial_best.type = (int16_t)(
+            (int[]){0, 1, 2, 4}[physics_retail_random() & 3U]);
+        initial_best.flags = (int16_t)physics_retail_random();
+        initial_best.dist = physics_retail_random_float(-8.0f, 512.0f);
+        initial_best.edge = (int32_t)(physics_retail_random() & 3U);
+        initial_best.facenormal.vy =
+            physics_retail_random_float(-1.0f, 1.0f);
+        initial_edge_start = (FVECTOR){11.0f, 12.0f, 13.0f};
+        initial_edge_end = (FVECTOR){21.0f, 22.0f, 23.0f};
+
+        mvp = initial;
+        memset(&cvars, 0, sizeof(cvars));
+        bestinfo = initial_best;
+        jpb_PhysicsSetSelectedEdge(
+            &initial_edge_start, &initial_edge_end);
+        reconstructed_result = jpb_PhysicsPolyCollideCheck();
+        reconstructed_info = mvp.info;
+        reconstructed_best = bestinfo;
+        jpb_PhysicsGetSelectedEdge(
+            &reconstructed_edge_start, &reconstructed_edge_end);
+
+        *retail_mvp = initial;
+        memset(retail_cvars, 0, sizeof(*retail_cvars));
+        *retail_bestinfo = initial_best;
+        *retail_edge_start = initial_edge_start;
+        *retail_edge_end = initial_edge_end;
+        retail_result = retail_poly_collide_check();
+        if (reconstructed_result != retail_result ||
+            memcmp(
+                &reconstructed_info,
+                &retail_mvp->info,
+                sizeof(reconstructed_info)) != 0 ||
+            memcmp(
+                &reconstructed_best,
+                retail_bestinfo,
+                sizeof(reconstructed_best)) != 0 ||
+            memcmp(
+                &reconstructed_edge_start,
+                retail_edge_start,
+                sizeof(reconstructed_edge_start)) != 0 ||
+            memcmp(
+                &reconstructed_edge_end,
+                retail_edge_end,
+                sizeof(reconstructed_edge_end)) != 0) {
+            fprintf(
+                stderr,
+                "polycollidecheck retail mismatch iteration=%d "
+                "result=%d/%d info=%d/%d,%a/%a "
+                "best=%d/%d,%a/%a edge=%d/%d\n",
+                iteration,
+                reconstructed_result,
+                retail_result,
+                (int)reconstructed_info.type,
+                (int)retail_mvp->info.type,
+                (double)reconstructed_info.dist,
+                (double)retail_mvp->info.dist,
+                (int)reconstructed_best.type,
+                (int)retail_bestinfo->type,
+                (double)reconstructed_best.dist,
+                (double)retail_bestinfo->dist,
+                reconstructed_best.edge,
+                retail_bestinfo->edge);
+            FreeLibrary(image);
+            return 1;
+        }
+    }
+
+    {
+        uint8_t *collision_storage;
+        size_t collision_size = 0;
+        uint8_t *end_cursor = NULL;
+        WorldData *saved_world = gpWorld;
+        int32_t *saved_leveldata = leveldata;
+        int32_t saved_mapyend = mapyend;
+        int32_t saved_numsolids = numsolids;
+        char *saved_jonnylevel = jonnylevel;
+        WorldData *collision_world =
+            (WorldData *)calloc(1, sizeof(*collision_world));
+
+        collision_storage = physics_load_fed_collision(
+            path, &collision_size);
+        CHECK(collision_storage != NULL);
+        CHECK(collision_world != NULL);
+        gpWorld = collision_world;
+        CHECK(file_RelocateChunks(
+                  collision_storage,
+                  collision_size,
+                  &end_cursor) == JPB_CHUNKS_OK);
+        CHECK(end_cursor == collision_storage + collision_size);
+        CHECK(leveldata != NULL);
+
+        *retail_leveldata = leveldata;
+        *retail_mapyend = mapyend;
+        *retail_numsolids = 0;
+        numsolids = 0;
+        maPhysicsData[2].airstick = 0;
+
+        for (iteration = 0; iteration < 4096; ++iteration) {
+            VECTOR position = {
+                (int32_t)physics_retail_random_float(
+                    9400.0f, 10800.0f),
+                (int32_t)physics_retail_random_float(
+                    3200.0f, 4800.0f),
+                (int32_t)physics_retail_random_float(
+                    -8000.0f, -6400.0f),
+                0
+            };
+            VECTOR reconstructed_normal = {
+                INT32_C(0x11111111),
+                INT32_C(0x22222222),
+                INT32_C(0x33333333),
+                INT32_C(0x44444444)
+            };
+            VECTOR retail_normal = reconstructed_normal;
+            _jheightstuff reconstructed_height;
+            _jheightstuff retail_height;
+            int reconstructed_result;
+            int retail_result;
+
+            memset(&reconstructed_height, 0x5a, sizeof(reconstructed_height));
+            retail_height = reconstructed_height;
+            reconstructed_result = intersec_FindWalkHeight(
+                &position,
+                &reconstructed_normal,
+                (objectRoot *)(void *)&reconstructed_height,
+                1);
+            retail_result = retail_find_walk_height(
+                &position,
+                &retail_normal,
+                (objectRoot *)(void *)&retail_height,
+                1);
+            if (reconstructed_result != retail_result ||
+                memcmp(
+                    &reconstructed_normal,
+                    &retail_normal,
+                    sizeof(reconstructed_normal)) != 0 ||
+                memcmp(
+                    &reconstructed_height,
+                    &retail_height,
+                    sizeof(reconstructed_height)) != 0) {
+                fprintf(
+                    stderr,
+                    "FED FindWalkHeight retail mismatch iteration=%d "
+                    "position=%d/%d/%d height=%d/%d "
+                    "normal=%d/%d/%d|%d/%d/%d "
+                    "map=%p/%p,%p/%p,%p/%p\n",
+                    iteration,
+                    position.vx,
+                    position.vy,
+                    position.vz,
+                    reconstructed_result,
+                    retail_result,
+                    reconstructed_normal.vx,
+                    reconstructed_normal.vy,
+                    reconstructed_normal.vz,
+                    retail_normal.vx,
+                    retail_normal.vy,
+                    retail_normal.vz,
+                    (void *)reconstructed_height.cube,
+                    (void *)retail_height.cube,
+                    (void *)reconstructed_height.entry,
+                    (void *)retail_height.entry,
+                    (void *)reconstructed_height.poly,
+                    (void *)retail_height.poly);
+                FreeLibrary(image);
+                return 1;
+            }
+        }
+
+        for (iteration = -1; iteration < 4096; ++iteration) {
+            FVECTOR from;
+            FVECTOR to;
+            FVECTOR move;
+            FVECTOR reconstructed_from;
+            FVECTOR reconstructed_to;
+            FVECTOR reconstructed_move;
+            FVECTOR retail_from;
+            FVECTOR retail_to;
+            FVECTOR retail_move;
+            float distance;
+            float radius;
+            int32_t *reconstructed_cube = NULL;
+            int32_t *reconstructed_entry = NULL;
+            int32_t *reconstructed_poly = NULL;
+            int32_t *retail_cube = NULL;
+            int32_t *retail_entry = NULL;
+            int32_t *retail_poly = NULL;
+            _movement_packet reconstructed_mvp;
+            _collide_info reconstructed_best;
+            int reconstructed_result;
+            int retail_result;
+
+            if (iteration < 0) {
+                from = (FVECTOR){
+                    0x1.401444p+13f,
+                    0x1.ddap+11f,
+                    -0x1.c35172p+12f
+                };
+                to = (FVECTOR){
+                    0x1.408e96p+13f,
+                    0x1.ddap+11f,
+                    -0x1.c34638p+12f
+                };
+                move = (FVECTOR){
+                    0x1.ff762ep-1f,
+                    0.0f,
+                    0x1.77933ap-5f
+                };
+                distance = 0x1.e9c9dep+3f;
+                radius = 54.0f;
+            } else {
+                from = (FVECTOR){
+                    physics_retail_random_float(9600.0f, 10600.0f),
+                    physics_retail_random_float(3500.0f, 4500.0f),
+                    physics_retail_random_float(-7600.0f, -6500.0f)
+                };
+                move = (FVECTOR){
+                    physics_retail_random_float(-1.0f, 1.0f),
+                    physics_retail_random_float(-1.0f, 1.0f),
+                    physics_retail_random_float(-1.0f, 1.0f)
+                };
+                (void)VectorNormalize(&move);
+                distance = physics_retail_random_float(0.25f, 256.0f);
+                radius = physics_retail_random_float(24.0f, 96.0f);
+                to.vx = from.vx + move.vx * distance;
+                to.vy = from.vy + move.vy * distance;
+                to.vz = from.vz + move.vz * distance;
+            }
+            reconstructed_from = from;
+            reconstructed_to = to;
+            reconstructed_move = move;
+            retail_from = from;
+            retail_to = to;
+            retail_move = move;
+
+            memset(&mvp, 0, sizeof(mvp));
+            memset(&cvars, 0, sizeof(cvars));
+            memset(&bestinfo, 0, sizeof(bestinfo));
+            reconstructed_result = newclosestPoly(
+                &reconstructed_from,
+                &reconstructed_to,
+                &reconstructed_move,
+                distance,
+                radius,
+                &reconstructed_move,
+                2,
+                &reconstructed_cube,
+                &reconstructed_entry,
+                &reconstructed_poly);
+            reconstructed_mvp = mvp;
+            reconstructed_best = bestinfo;
+
+            memset(retail_mvp, 0, sizeof(*retail_mvp));
+            memset(retail_cvars, 0, sizeof(*retail_cvars));
+            memset(retail_bestinfo, 0, sizeof(*retail_bestinfo));
+            retail_result = retail_new_closest_poly(
+                &retail_from,
+                &retail_to,
+                &retail_move,
+                distance,
+                radius,
+                &retail_move,
+                2,
+                &retail_cube,
+                &retail_entry,
+                &retail_poly);
+
+            if (reconstructed_result != retail_result ||
+                memcmp(
+                    &reconstructed_mvp,
+                    retail_mvp,
+                    sizeof(reconstructed_mvp)) != 0 ||
+                memcmp(
+                    &reconstructed_best,
+                    retail_bestinfo,
+                    sizeof(reconstructed_best)) != 0 ||
+                memcmp(
+                    &reconstructed_from,
+                    &retail_from,
+                    sizeof(reconstructed_from)) != 0 ||
+                memcmp(
+                    &reconstructed_to,
+                    &retail_to,
+                    sizeof(reconstructed_to)) != 0 ||
+                memcmp(
+                    &reconstructed_move,
+                    &retail_move,
+                    sizeof(reconstructed_move)) != 0 ||
+                reconstructed_cube != retail_cube ||
+                reconstructed_entry != retail_entry ||
+                reconstructed_poly != retail_poly) {
+                size_t mvp_difference = 0;
+                size_t best_difference = 0;
+
+                while (mvp_difference < sizeof(reconstructed_mvp) &&
+                       ((const uint8_t *)&reconstructed_mvp)[mvp_difference] ==
+                           ((const uint8_t *)retail_mvp)[mvp_difference]) {
+                    ++mvp_difference;
+                }
+                while (best_difference < sizeof(reconstructed_best) &&
+                       ((const uint8_t *)&reconstructed_best)[best_difference] ==
+                           ((const uint8_t *)retail_bestinfo)[best_difference]) {
+                    ++best_difference;
+                }
+                fprintf(
+                    stderr,
+                    "FED newclosestPoly retail mismatch iteration=%d "
+                    "result=%d/%d type=%d/%d dist=%a/%a "
+                    "cube=%p/%p entry=%p/%p poly=%p/%p "
+                    "mvp_diff=%zu best_diff=%zu "
+                    "face=%a/%a/%a|%a/%a/%a "
+                    "best_n=%a/%a/%a|%a/%a/%a "
+                    "best_face=%a/%a/%a|%a/%a/%a\n",
+                    iteration,
+                    reconstructed_result,
+                    retail_result,
+                    (int)reconstructed_best.type,
+                    (int)retail_bestinfo->type,
+                    (double)reconstructed_best.dist,
+                    (double)retail_bestinfo->dist,
+                    (void *)reconstructed_cube,
+                    (void *)retail_cube,
+                    (void *)reconstructed_entry,
+                    (void *)retail_entry,
+                    (void *)reconstructed_poly,
+                    (void *)retail_poly,
+                    mvp_difference,
+                    best_difference,
+                    (double)reconstructed_mvp.facenormal.vx,
+                    (double)reconstructed_mvp.facenormal.vy,
+                    (double)reconstructed_mvp.facenormal.vz,
+                    (double)retail_mvp->facenormal.vx,
+                    (double)retail_mvp->facenormal.vy,
+                    (double)retail_mvp->facenormal.vz,
+                    (double)reconstructed_best.n.vx,
+                    (double)reconstructed_best.n.vy,
+                    (double)reconstructed_best.n.vz,
+                    (double)retail_bestinfo->n.vx,
+                    (double)retail_bestinfo->n.vy,
+                    (double)retail_bestinfo->n.vz,
+                    (double)reconstructed_best.facenormal.vx,
+                    (double)reconstructed_best.facenormal.vy,
+                    (double)reconstructed_best.facenormal.vz,
+                    (double)retail_bestinfo->facenormal.vx,
+                    (double)retail_bestinfo->facenormal.vy,
+                    (double)retail_bestinfo->facenormal.vz);
+                FreeLibrary(image);
+                return 1;
+            }
+        }
+
+        {
+            playerObject reconstructed_player;
+            playerObject retail_player;
+            sceneObject reconstructed_scene;
+            sceneObject retail_scene;
+            physicsObject reconstructed_physics;
+            physicsObject retail_physics;
+            Camera saved_camera = gCamera;
+            int32_t saved_global_frame_rate = gGlobalFrameRate;
+            float saved_float_frame_rate = fGlobalFrameRate;
+            char saved_level_select = LevelSelect;
+            int32_t saved_total_frames = totalframes;
+            int retail_ledge_grabs = 0;
+
+            memset(&gCamera, 0, sizeof(gCamera));
+            gCamera.viewType = 6;
+            gGlobalFrameRate = 2048;
+            fGlobalFrameRate = 0.5f;
+            LevelSelect = 0;
+            totalframes = 100;
+            uberXRange = 0;
+            uberZRange = 0;
+            uberLock = 0;
+            memset(&maPhysicsData[2], 0, sizeof(maPhysicsData[2]));
+            maPhysicsData[2].physicsRoot.objectID = 2;
+
+            *retail_world = collision_world;
+            *retail_global_frame_rate = gGlobalFrameRate;
+            *retail_float_frame_rate = fGlobalFrameRate;
+            *retail_uber_x_range = 0;
+            *retail_uber_z_range = 0;
+            *retail_uber_lock = 0;
+            *retail_level_select = LevelSelect;
+            *retail_total_frames = totalframes;
+            memset(
+                &retail_physics_data[2],
+                0,
+                sizeof(retail_physics_data[2]));
+            retail_physics_data[2].physicsRoot.objectID = 2;
+            memset(retail_camera, 0, sizeof(*retail_camera));
+            retail_camera->viewType = 6;
+
+            for (iteration = -1; iteration < 6152; ++iteration) {
+                FVECTOR reconstructed_direction;
+                FVECTOR retail_direction;
+                FVECTOR reconstructed_direction_normal;
+                FVECTOR retail_direction_normal;
+                FVECTOR reconstructed_world;
+                FVECTOR retail_world_position;
+                float reconstructed_ground = -32768.0f;
+                float retail_ground = reconstructed_ground;
+                float input_distance;
+                int reconstructed_result;
+                int retail_result;
+                physicsObject reconstructed_physics_state;
+                physicsObject retail_physics_state;
+                playerObject reconstructed_player_state;
+                playerObject retail_player_state;
+
+                memset(
+                    &reconstructed_player,
+                    0,
+                    sizeof(reconstructed_player));
+                memset(
+                    &reconstructed_scene,
+                    0,
+                    sizeof(reconstructed_scene));
+                memset(
+                    &reconstructed_physics,
+                    0,
+                    sizeof(reconstructed_physics));
+                reconstructed_player.playerRoot.objectID = -1;
+                reconstructed_player.playerRoot.pParent =
+                    &reconstructed_scene.sceneRoot;
+                reconstructed_player.playerID = 2;
+                reconstructed_player.playernum = 2;
+                reconstructed_scene.sceneRoot.objectID = 2;
+                reconstructed_scene.pPlayer =
+                    &reconstructed_player.playerRoot;
+                reconstructed_scene.pPhysics =
+                    &reconstructed_physics.physicsRoot;
+                reconstructed_physics.physicsRoot.objectID = 2;
+                reconstructed_physics.physicsRoot.pParent =
+                    &reconstructed_scene.sceneRoot;
+                reconstructed_physics.radius = 54;
+                reconstructed_physics.height = 220;
+                reconstructed_physics.maxledge = 256;
+
+                if (iteration < 0) {
+                    reconstructed_physics.pos = (FVECTOR){
+                        0x1.401444p+13f,
+                        3711.0f,
+                        -0x1.c35172p+12f
+                    };
+                    reconstructed_direction = (FVECTOR){
+                        0x1.e9bd48p+3f,
+                        0.0f,
+                        0x1.6a446p-1f
+                    };
+                    reconstructed_direction_normal = (FVECTOR){
+                        0x1.ff762ep-1f,
+                        0.0f,
+                        0x1.77933ap-5f
+                    };
+                    reconstructed_world = (FVECTOR){
+                        0x1.408e96p+13f,
+                        3711.0f,
+                        -0x1.c34638p+12f
+                    };
+                    reconstructed_physics.movemode = MOVE_NORMAL;
+                    input_distance = 0x1.e9c9dep+3f;
+                } else {
+                    reconstructed_physics.pos = (FVECTOR){
+                        physics_retail_random_float(
+                            9400.0f, 10800.0f),
+                        physics_retail_random_float(
+                            3400.0f, 4400.0f),
+                        physics_retail_random_float(
+                            -7600.0f, -6500.0f)
+                    };
+                    reconstructed_direction = (FVECTOR){
+                        physics_retail_random_float(-96.0f, 96.0f),
+                        physics_retail_random_float(-24.0f, 24.0f),
+                        physics_retail_random_float(-96.0f, 96.0f)
+                    };
+                    reconstructed_direction_normal =
+                        reconstructed_direction;
+                    input_distance = VectorNormalize(
+                        &reconstructed_direction_normal);
+                    if (input_distance == 0.0f) {
+                        reconstructed_direction.vx = 1.0f;
+                        reconstructed_direction_normal.vx = 1.0f;
+                        input_distance = 1.0f;
+                    }
+                    reconstructed_world.vx =
+                        reconstructed_physics.pos.vx +
+                        reconstructed_direction.vx;
+                    reconstructed_world.vy =
+                        reconstructed_physics.pos.vy +
+                        reconstructed_direction.vy;
+                    reconstructed_world.vz =
+                        reconstructed_physics.pos.vz +
+                        reconstructed_direction.vz;
+                    reconstructed_player.pFlags =
+                        physics_retail_random() & 1U;
+                    reconstructed_physics.movemode =
+                        (physics_retail_random() & 1U) != 0
+                            ? MOVE_NORMAL
+                            : MOVE_HOVER;
+                    if (iteration >= 2048) {
+                        /* User-confirmed FED semicircle: sample grounded tier
+                         * edges using the actual collision bank and compare
+                         * the entire response to the shipped routine. */
+                        FVECTOR probe;
+                        int floor_height;
+                        reconstructed_physics.pos.vx = physics_retail_random_float(-7000.0f, -1000.0f);
+                        reconstructed_physics.pos.vz = physics_retail_random_float(-13500.0f, -9500.0f);
+                        probe = reconstructed_physics.pos;
+                        probe.vy = 6100.0f;
+                        floor_height = intersec_FindWalkHeightFV(
+                            &probe, NULL, &reconstructed_player.playerRoot, 0);
+                        if (floor_height <= -32768) continue;
+                        reconstructed_physics.pos.vy = (float)floor_height;
+                        reconstructed_physics.maxledge = 65536;
+                        reconstructed_physics.movemode = MOVE_NORMAL;
+                        reconstructed_player.pFlags = 0;
+                        reconstructed_direction.vy = 0.0f;
+                        if (iteration >= 4096) {
+                            reconstructed_player.pFlags = 1;
+                            reconstructed_player.playernum = 0;
+                            reconstructed_physics.physicsRoot.objectID = 0;
+                            reconstructed_physics.angle.vy =
+                                (int32_t)(physics_retail_random() & 4095U);
+                            reconstructed_physics.face.vy =
+                                (int32_t)(physics_retail_random() & 4095U);
+                            reconstructed_physics.pos.vy +=
+                                physics_retail_random_float(-64.0f, 160.0f);
+                            reconstructed_direction.vy =
+                                physics_retail_random_float(-48.0f, 8.0f);
+                        }
+                        reconstructed_direction_normal = reconstructed_direction;
+                        input_distance = VectorNormalize(&reconstructed_direction_normal);
+                        reconstructed_world = reconstructed_physics.pos;
+                        reconstructed_world.vx += reconstructed_direction.vx;
+                        reconstructed_world.vy += reconstructed_direction.vy;
+                        reconstructed_world.vz += reconstructed_direction.vz;
+                    }
+
+                }
+                reconstructed_physics.mov = reconstructed_direction;
+                reconstructed_physics.mov.vy = 0.0f;
+                if (iteration >= 4096) {
+                    reconstructed_physics.mov.vy = reconstructed_direction.vy;
+                    reconstructed_physics.airmov.vy = -40.0f;
+                }
+                reconstructed_physics.airGround =
+                    reconstructed_physics.pos.vy;
+
+                if (iteration >= 6144) {
+                    /* Retain a previously detected ledge through a clear sweep.
+                     * Actual yaw and desired facing disagree in both directions. */
+                    reconstructed_physics.pos = (FVECTOR){-2688.0f, 6000.0f, -11392.0f};
+                    reconstructed_physics.flags = UINT32_C(0x100000);
+                    reconstructed_physics.ledgepoint = (FVECTOR){-2688.0f, 6071.0f, -11392.0f};
+                    reconstructed_physics.ledgeangle = 0;
+                    reconstructed_physics.angle.vy = (iteration & 1) ? 2048 : 0;
+                    reconstructed_physics.face.vy = (iteration & 1) ? 0 : 2048;
+                    reconstructed_direction = (FVECTOR){0};
+                    reconstructed_direction_normal = (FVECTOR){0};
+                    reconstructed_physics.mov = (FVECTOR){0};
+                    reconstructed_world = reconstructed_physics.pos;
+                    input_distance = 0.0f;
+                }
+
+                retail_direction = reconstructed_direction;
+                retail_direction_normal =
+                    reconstructed_direction_normal;
+                retail_world_position = reconstructed_world;
+                retail_player = reconstructed_player;
+                retail_scene = reconstructed_scene;
+                retail_physics = reconstructed_physics;
+                retail_player.playerRoot.pParent =
+                    &retail_scene.sceneRoot;
+                retail_scene.pPlayer = &retail_player.playerRoot;
+                retail_scene.pPhysics = &retail_physics.physicsRoot;
+                retail_physics.physicsRoot.pParent =
+                    &retail_scene.sceneRoot;
+                memset(&maPhysicsData[2], 0, sizeof(maPhysicsData[2]));
+                maPhysicsData[2].physicsRoot.objectID = 2;
+                memset(
+                    &retail_physics_data[2],
+                    0,
+                    sizeof(retail_physics_data[2]));
+                retail_physics_data[2].physicsRoot.objectID = 2;
+
+                reconstructed_result = jpb_PhysicsCheckCubeBlocking(
+                    &reconstructed_player,
+                    &reconstructed_world,
+                    &reconstructed_direction,
+                    &reconstructed_direction_normal,
+                    input_distance,
+                    &reconstructed_ground);
+                retail_result = retail_check_cube_blocking(
+                    &retail_player,
+                    &retail_world_position,
+                    &retail_direction,
+                    &retail_direction_normal,
+                    input_distance,
+                    &retail_ground);
+                reconstructed_physics_state = reconstructed_physics;
+                if ((retail_player.pFlags & UINT32_C(0x04000000)) != 0) {
+                    ++retail_ledge_grabs;
+                }
+                retail_physics_state = retail_physics;
+                reconstructed_physics_state.physicsRoot.pParent = NULL;
+                retail_physics_state.physicsRoot.pParent = NULL;
+                reconstructed_player_state = reconstructed_player;
+                retail_player_state = retail_player;
+                reconstructed_player_state.playerRoot.pParent = NULL;
+                retail_player_state.playerRoot.pParent = NULL;
+
+                if (reconstructed_result != retail_result ||
+                    memcmp(
+                        &reconstructed_world,
+                        &retail_world_position,
+                        sizeof(reconstructed_world)) != 0 ||
+                    memcmp(
+                        &reconstructed_direction,
+                        &retail_direction,
+                        sizeof(reconstructed_direction)) != 0 ||
+                    memcmp(
+                        &reconstructed_direction_normal,
+                        &retail_direction_normal,
+                        sizeof(reconstructed_direction_normal)) != 0 ||
+                    memcmp(
+                        &reconstructed_ground,
+                        &retail_ground,
+                        sizeof(reconstructed_ground)) != 0 ||
+                    memcmp(
+                        &reconstructed_physics_state,
+                        &retail_physics_state,
+                        sizeof(reconstructed_physics_state)) != 0 ||
+                    memcmp(
+                        &reconstructed_player_state,
+                        &retail_player_state,
+                        sizeof(reconstructed_player_state)) != 0) {
+                    size_t byte;
+                    for (byte = 0; byte < sizeof(reconstructed_physics_state); ++byte) {
+                        if (((unsigned char *)&reconstructed_physics_state)[byte] !=
+                            ((unsigned char *)&retail_physics_state)[byte]) {
+                            fprintf(stderr, "physics byte %zx: %02x/%02x\n", byte,
+                                ((unsigned char *)&reconstructed_physics_state)[byte],
+                                ((unsigned char *)&retail_physics_state)[byte]);
+                        }
+                    }
+                    fprintf(
+                        stderr,
+                        "FED CheckCubeBlocking retail mismatch iteration=%d "
+                        "result=%d/%d world=%a/%a/%a|%a/%a/%a "
+                        "move=%a/%a/%a|%a/%a/%a ground=%a/%a "
+                        "retail_best=%d/%x/%a\n",
+                        iteration,
+                        reconstructed_result,
+                        retail_result,
+                        (double)reconstructed_world.vx,
+                        (double)reconstructed_world.vy,
+                        (double)reconstructed_world.vz,
+                        (double)retail_world_position.vx,
+                        (double)retail_world_position.vy,
+                        (double)retail_world_position.vz,
+                        (double)reconstructed_direction.vx,
+                        (double)reconstructed_direction.vy,
+                        (double)reconstructed_direction.vz,
+                        (double)retail_direction.vx,
+                        (double)retail_direction.vy,
+                        (double)retail_direction.vz,
+                        (double)reconstructed_ground,
+                        (double)retail_ground,
+                        (int)retail_bestinfo->type,
+                        (unsigned)retail_bestinfo->flags,
+                        (double)retail_bestinfo->dist);
+                    FreeLibrary(image);
+                    return 1;
+                }
+            }
+
+            gCamera = saved_camera;
+            CHECK(retail_ledge_grabs == 4);
+            gGlobalFrameRate = saved_global_frame_rate;
+            fGlobalFrameRate = saved_float_frame_rate;
+            LevelSelect = saved_level_select;
+            totalframes = saved_total_frames;
+        }
+
+        gpWorld = saved_world;
+        leveldata = saved_leveldata;
+        mapyend = saved_mapyend;
+        numsolids = saved_numsolids;
+        jonnylevel = saved_jonnylevel;
+        free(collision_world);
+        free(collision_storage);
     }
 
     FreeLibrary(image);
@@ -4197,7 +5103,7 @@ int main(int argc, char **argv)
     CHECK(test_range_cache_hit_and_miss() == 0);
 #if defined(_WIN32)
     if (argc > 1) {
-        CHECK(test_retail_sphere_polygon_differential(argv[1]) == 0);
+        CHECK(test_retail_collision_differential(argv[1]) == 0);
     }
 #else
     (void)argc;

@@ -27,6 +27,7 @@
 #include "jpb/game.h"
 #include "jpb/input.h"
 #include "jpb/jonny.h"
+#include "jpb/mods.h"
 #include "jpb/objroot.h"
 #include "jpb/physics.h"
 #include "jpb/scene.h"
@@ -710,6 +711,9 @@ void brain_ControlPlayer(
          (uint32_t)gaButtonMap[
              OptionStruct.ControllerConfig[0]][4]) != 0 &&
         (player->playerID < 9 ||
+         (jpb_ModPlayer(player->playernum) != NULL &&
+          jpb_ModPlayer(player->playernum)->animationDonor == player->playerID &&
+          jpb_ModPlayer(player->playernum)->isJedi) ||
          (player->playernum < 2 &&
           extracharacter_CanForcePower(
               (model_id)player->playerID))) &&

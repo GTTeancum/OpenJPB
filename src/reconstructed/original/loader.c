@@ -16,6 +16,7 @@
  */
 
 #include "jpb/loader.h"
+#include "jpb/mods.h"
 #include "jpb/ai.h"
 #include "jpb/anim.h"
 #include "jpb/animctrl.h"
@@ -392,9 +393,19 @@ static playerObject *loader_CreateCharacter(
     char *anim,
     JPBPlayerInitCallback fpPlayerInit)
 {
+    const JPBModCharacter *mod = jpb_ModPlayer(ID);
+    char package_name[32];
     char *name = sModelNames[type];
     sceneObject *pScene;
     playerObject *pPlayer = NULL;
+
+    if (mod != NULL && mod->animationDonor == type) {
+        /* Cache names are engine-owned, bounded and distinct from stock.
+         * Asset stems may be shared or exceed the cache's 31-byte limit. */
+        (void)snprintf(package_name, sizeof(package_name),
+            "native_mod_%d", mod->modelId);
+        name = package_name;
+    }
 
     memory_gSetDefaultMemoryType(-1);
     pScene = scene_gCreateObject(name, model, ID);
@@ -892,9 +903,9 @@ void loader_LoadJedi(void)
     pPlayer0->shadow = (int32_t *)(void *)sprite_GetBaseNodeMarker(
         pPlayer0->playerRoot.objectID, 0x30);
     game_gSetMaxEnergy(
-        0, GameStruct.maxEnergyLevels[pPlayer0->playerID]);
+        0, game_getProgressCapacity(jpb_ModPlayerModel(0, pPlayer0->playerID), 0));
     game_gSetEnergy(
-        0, GameStruct.maxEnergyLevels[pPlayer0->playerID]);
+        0, game_getProgressCapacity(jpb_ModPlayerModel(0, pPlayer0->playerID), 0));
     pauseUnpauseBucket();
 
     if (GameStruct.NumPlayers == 2 && LevelSelect != 0x0c) {
@@ -910,9 +921,9 @@ void loader_LoadJedi(void)
         pPlayer1->shadow = (int32_t *)(void *)sprite_GetBaseNodeMarker(
             pPlayer1->playerRoot.objectID, 0x30);
         game_gSetMaxEnergy(
-            1, GameStruct.maxEnergyLevels[pPlayer1->playerID]);
+            1, game_getProgressCapacity(jpb_ModPlayerModel(1, pPlayer1->playerID), 0));
         game_gSetEnergy(
-            1, GameStruct.maxEnergyLevels[pPlayer1->playerID]);
+            1, game_getProgressCapacity(jpb_ModPlayerModel(1, pPlayer1->playerID), 0));
     } else {
         geomData *secondModelBuffer = pModelBuffer;
 

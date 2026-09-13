@@ -1989,6 +1989,10 @@ int jpb_PCD3D11PresenterRenderTitleScreenDraws(
         float source_top = 0.0f;
         float source_right = 1.0f;
         float source_bottom = 1.0f;
+        float left = (float)draw->destination.left;
+        float top = (float)draw->destination.top;
+        float right = (float)draw->destination.right;
+        float bottom = (float)draw->destination.bottom;
 
         if (draw->destination.left == draw->destination.right ||
             draw->destination.top == draw->destination.bottom) {
@@ -2004,6 +2008,10 @@ int jpb_PCD3D11PresenterRenderTitleScreenDraws(
                 candidate->stridePixels >= candidate->width) {
                 texture = candidate;
             }
+        }
+        if (draw->texture != NULL && texture == NULL) {
+            result = E_FAIL;
+            goto finish;
         }
         if (texture != NULL) {
             int source_x0 = draw->hasSource ? draw->source.left : 0;
@@ -2025,25 +2033,43 @@ int jpb_PCD3D11PresenterRenderTitleScreenDraws(
                 color.cd = UINT8_MAX;
             }
         }
+        /* The recovered clipped draw owner applies this rectangle to both
+         * artwork and inline controller glyphs. Trim UVs with geometry so
+         * the hardware title path matches the software compositor. */
+        if (draw->hasScissor) {
+            float clipped_left = fmaxf(fminf(left, right), (float)draw->scissor.left);
+            float clipped_right = fminf(fmaxf(left, right), (float)draw->scissor.right);
+            float clipped_top = fmaxf(fminf(top, bottom), (float)draw->scissor.top);
+            float clipped_bottom = fminf(fmaxf(top, bottom), (float)draw->scissor.bottom);
+            float du = (source_right - source_left) / (right - left);
+            float dv = (source_bottom - source_top) / (bottom - top);
+            if (clipped_left >= clipped_right || clipped_top >= clipped_bottom) {
+                continue;
+            }
+            source_right = source_left + (clipped_right - left) * du;
+            source_left += (clipped_left - left) * du;
+            source_bottom = source_top + (clipped_bottom - top) * dv;
+            source_top += (clipped_top - top) * dv;
+            left = clipped_left;
+            right = clipped_right;
+            top = clipped_top;
+            bottom = clipped_bottom;
+        }
         pc_present_set_title_vertex(
             &vertices[0],
-            (float)draw->destination.left,
-            (float)draw->destination.top,
+            left, top,
             source_left, source_top, color);
         pc_present_set_title_vertex(
             &vertices[1],
-            (float)draw->destination.left,
-            (float)draw->destination.bottom,
+            left, bottom,
             source_left, source_bottom, color);
         pc_present_set_title_vertex(
             &vertices[2],
-            (float)draw->destination.right,
-            (float)draw->destination.top,
+            right, top,
             source_right, source_top, color);
         pc_present_set_title_vertex(
             &vertices[3],
-            (float)draw->destination.right,
-            (float)draw->destination.bottom,
+            right, bottom,
             source_right, source_bottom, color);
         if (!pc_present_append_triangle(
                 presenter, &vertices[0], &vertices[1], &vertices[2],
@@ -2247,6 +2273,26 @@ void jpb_PCD3D11PresenterDestroy(JPBPCD3D11Presenter *presenter)
     if (presenter->context != NULL) ID3D11DeviceContext_Release(presenter->context);
     if (presenter->device != NULL) ID3D11Device_Release(presenter->device);
     free(presenter);
+}
+
+void jpb_PCD3D11PresenterResetLevelResources(
+    JPBPCD3D11Presenter *presenter)
+{
+    ID3D11ShaderResourceView *null_view = NULL;
+    ID3D11Buffer *null_buffer = NULL;
+    UINT stride = 0;
+    UINT offset = 0;
+
+    if (presenter == NULL) {
+        return;
+    }
+    if (presenter->context != NULL) {
+        ID3D11DeviceContext_PSSetShaderResources(
+            presenter->context, 0, 1, &null_view);
+        ID3D11DeviceContext_IASetVertexBuffers(
+            presenter->context, 0, 1, &null_buffer, &stride, &offset);
+    }
+    pc_present_release_world_mesh(presenter);
 }
 
 int jpb_PCD3D11PresenterPresent(
@@ -2602,6 +2648,9 @@ static int pc_present_render_level_range(
         constants->transparentPass[1] = 0.0f;
         constants->transparentPass[2] = 0.0f;
         constants->transparentPass[3] = 0.0f;
+        constants->uvScrollSpeed[0] = g_levelUVScroll.vx;
+        constants->uvScrollSpeed[1] = g_levelUVScroll.vy;
+        memset(constants->padding, 0, sizeof(constants->padding));
         ID3D11DeviceContext_Unmap(
             presenter->context,
             (ID3D11Resource *)presenter->worldConstants, 0);

@@ -2,6 +2,7 @@
 #include "jpb/anim.h"
 #include "jpb/collision.h"
 #include "jpb/effects.h"
+#include "jpb/enemy.h"
 #include "jpb/game.h"
 #include "jpb/jonny.h"
 #include "jpb/physics.h"
@@ -207,6 +208,7 @@ static int test_player_block_reaction(void)
     hit_motion.fx1 = -1;
     for (i = 0; i < 50; ++i) {
         motions[i].Seq = (uint16_t)i;
+        motions[i].globalID = (uint16_t)i;
         motions[i].Lock = 25;
         motions[i].Speed = -1;
         templates[i].Lframe = 10;
@@ -268,9 +270,11 @@ static int test_player_block_reaction(void)
      * The matched special-block owner reads player->target at +0x18 for the
      * Obi-Wan/Mace condition, not the hit source passed as target. Keep the
      * two relationships deliberately different so a parameter substitution
-     * cannot silently regress this branch. Invalid reaction sequence IDs
+     * cannot silently regress this branch. Invalid reaction globalIDs
      * deliberately stop after the condition's fStun mutation, isolating
-     * relationship ownership from animation activation.
+     * relationship ownership from animation activation. Retail
+     * anim_AddNextAnimSeq (RVA 0x17750) validates Motion +6 (globalID),
+     * not Motion +4 (Seq).
      */
     init_test_animations();
     animation = &maAnimationData[0];
@@ -290,17 +294,17 @@ static int test_player_block_reaction(void)
     lock_target.currentMotion = 43;
     attacker.playerID = 10;
     attacker.currentMotion = 0;
-    motions[16].Seq = 50;
-    motions[17].Seq = 50;
-    motions[18].Seq = 50;
+    motions[16].globalID = 50;
+    motions[17].globalID = 50;
+    motions[18].globalID = 50;
     srand(1);
     CHECK(braindmg_Blocking(&player, &attacker, 10) == 0);
     CHECK(player.currentMotion == 0);
     CHECK(player.fStun == 0);
     CHECK(player.fForce == 0);
-    motions[16].Seq = 16;
-    motions[17].Seq = 17;
-    motions[18].Seq = 18;
+    motions[16].globalID = 16;
+    motions[17].globalID = 17;
+    motions[18].globalID = 18;
 
     init_test_animations();
     animation = &maAnimationData[0];
@@ -496,6 +500,91 @@ static int test_droid_death_detaches_node(void)
     return 0;
 }
 
+static int test_hangar_pilot_death_lifecycle(void)
+{
+    static WorldData world;
+    playerObject player;
+    playerObject target;
+    sceneObject scene;
+    sceneObject target_scene;
+    physicsObject physics;
+    physicsObject target_physics;
+    Motion motions[52];
+    Motion hit_motion;
+    Motion *current_motion = &motions[0];
+    _animTemplate templates[52];
+    animObject *animation;
+    int i;
+
+    memset(&world, 0, sizeof(world));
+    memset(&player, 0, sizeof(player));
+    memset(&target, 0, sizeof(target));
+    memset(&scene, 0, sizeof(scene));
+    memset(&target_scene, 0, sizeof(target_scene));
+    memset(&physics, 0, sizeof(physics));
+    memset(&target_physics, 0, sizeof(target_physics));
+    memset(motions, 0, sizeof(motions));
+    memset(&hit_motion, 0, sizeof(hit_motion));
+    init_test_templates(
+        templates, sizeof(templates) / sizeof(templates[0]));
+    memset(&GameStruct, 0, sizeof(GameStruct));
+    memset(abGlobalBits, 0, sizeof(abGlobalBits));
+
+    gpWorld = &world;
+    player.playerRoot.pParent = &scene.sceneRoot;
+    player.playerRoot.objectID = 2;
+    player.playernum = 2;
+    player.playerID = 59;
+    player.paMotions = motions;
+    player.maxMotions = 52;
+    player.oldmaxCMotions = 52;
+    player.hitMotion = &hit_motion;
+    player.pMotion = &current_motion;
+    player.target = &target;
+    scene.pPhysics = &physics.physicsRoot;
+    scene.pPlayer = &player.playerRoot;
+    physics.physicsRoot.pParent = &scene.sceneRoot;
+
+    target.playerRoot.pParent = &target_scene.sceneRoot;
+    target_scene.pPhysics = &target_physics.physicsRoot;
+    target_physics.physicsRoot.pParent = &target_scene.sceneRoot;
+    target_physics.vpos.vx = 111;
+    target_physics.vpos.vy = 222;
+    target_physics.vpos.vz = 333;
+    world.player0 = &target;
+    world.player1 = &target;
+    for (i = 0; i < 52; ++i) {
+        motions[i].Seq = (uint16_t)i;
+        motions[i].Speed = -1;
+        templates[i].Lframe = 10;
+    }
+    motions[23].fx1 = -1;
+
+    init_test_animations();
+    animation = &maAnimationData[0];
+    animation->animRoot.pParent = &scene.sceneRoot;
+    animation->depack_context.seqdata = templates;
+    scene.pAnim = &animation->animRoot;
+    LevelSelect = 9;
+    pilotsKilled = 0;
+    abGlobalBits[0] = UINT8_C(1);
+    savedPlayerPos.vx = 444;
+    savedPlayerPos.vy = 555;
+    savedPlayerPos.vz = 666;
+    hit_motion.fx1 = -1;
+    CHECK(braindmg_DamageControl(&player) == 0);
+    CHECK(braindmg_DeathReaction(&player, NULL) == 1);
+    CHECK(pilotsKilled == 1);
+    CHECK((abGlobalBits[0] & UINT8_C(1)) == 0);
+    CHECK(tpos.vx == 444);
+    CHECK(tpos.vy == 555);
+    CHECK(tpos.vz == 666);
+    CHECK(target_physics.pos.vx == 944.0f);
+    CHECK(target_physics.pos.vy == 555.0f);
+    CHECK(target_physics.pos.vz == 466.0f);
+    return 0;
+}
+
 int main(void)
 {
     playerObject player;
@@ -515,6 +604,7 @@ int main(void)
     CHECK(test_player_block_reaction() == 0);
     CHECK(test_forced_death_effect() == 0);
     CHECK(test_droid_death_detaches_node() == 0);
+    CHECK(test_hangar_pilot_death_lifecycle() == 0);
 
     memset(&player, 0, sizeof(player));
     memset(&attacker, 0, sizeof(attacker));

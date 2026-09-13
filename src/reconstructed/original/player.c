@@ -1,3 +1,4 @@
+#include "jpb/mods.h"
 /*
  * REVIEWED RECONSTRUCTION of
  * W:\SWJediPowerBattles\Work\player.c.
@@ -683,8 +684,7 @@ static void player_DrawDamageTracker(
     }
     if (player->playerID < 9) {
         brightness_limit =
-            ((int)jediUpgrades[player->playerID]
-                 .attackDefendUpgrades >> 4) * 5;
+            ((int)game_getUpgrades(jpb_ModPlayerModel(player->playernum, player->playerID))->attackDefendUpgrades >> 4) * 5;
     }
     brightness = (int)tracker->total;
     if (brightness > brightness_limit + 128) {
@@ -884,11 +884,9 @@ void player_RefreshPlayer(playerObject *player)
         if (player->playerID < 10 &&
             GameStruct.versusModeFlag == 0) {
             int energy =
-                GameStruct.maxEnergyLevels[
-                    player->playerID];
+                game_getProgressCapacity(jpb_ModPlayerModel(player->playernum, player->playerID), 0);
             int force =
-                GameStruct.maxForceLevels[
-                    player->playerID];
+                game_getProgressCapacity(jpb_ModPlayerModel(player->playernum, player->playerID), 1);
 
             game_gSetMaxEnergy(player->playernum, energy);
             game_gSetEnergy(player->playernum, energy);
@@ -974,11 +972,9 @@ void player_RefreshPlayer(playerObject *player)
         if (player->playerID < 10 &&
             GameStruct.versusModeFlag == 0) {
             int energy =
-                GameStruct.maxEnergyLevels[
-                    player->playerID];
+                game_getProgressCapacity(jpb_ModPlayerModel(player->playernum, player->playerID), 0);
             int force =
-                GameStruct.maxForceLevels[
-                    player->playerID];
+                game_getProgressCapacity(jpb_ModPlayerModel(player->playernum, player->playerID), 1);
 
             game_gSetMaxEnergy(player->playernum, energy);
             game_gSetEnergy(player->playernum, energy);

@@ -1,4 +1,5 @@
 #include "jpb/pc_audio_win32.h"
+#include "jpb/audio_stream.h"
 #include "jpb/sound_bank_data.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -150,6 +151,46 @@ static void test_two_player_banks(void)
     jpb_PCAudioDestroy(audio);
 }
 
+static void test_movie_audio_gate(void)
+{
+    JPBPCAudio *audio = jpb_PCAudioCreate(
+        "C:\\Game\\res\\level\\jpx\\fed\\fed.jpx",
+        "C:\\Game\\res\\animation\\obi_wan.cad",
+        NULL,
+        1,
+        0);
+    JPBPCAudioStats stats;
+
+    CHECK(audio != NULL);
+    jpb_PCAudioSetMoviePlayback(audio, 1);
+    playXA(7, 60, 1);
+    jpb_PCAudioGetStats(audio, &stats);
+    CHECK(stats.movieGateBegins == 1);
+    CHECK(stats.movieGateEnds == 0);
+    CHECK(stats.musicRequested == 1);
+    CHECK(stats.musicResolved == 1);
+    CHECK(stats.musicStarted == 0);
+    CHECK(stats.musicDeferred == 1);
+    CHECK(stats.musicDeferredReleased == 0);
+
+    jpb_PCAudioSetMoviePlayback(audio, 0);
+    jpb_PCAudioGetStats(audio, &stats);
+    CHECK(stats.movieGateEnds == 1);
+    CHECK(stats.musicDeferredReleased == 1);
+    CHECK(stats.musicStarted == 0);
+
+    jpb_PCAudioSetMoviePlayback(audio, 1);
+    playXA(7, 60, 1);
+    stopXA();
+    jpb_PCAudioSetMoviePlayback(audio, 0);
+    jpb_PCAudioGetStats(audio, &stats);
+    CHECK(stats.movieGateBegins == 2);
+    CHECK(stats.movieGateEnds == 2);
+    CHECK(stats.musicDeferred == 2);
+    CHECK(stats.musicDeferredReleased == 1);
+    jpb_PCAudioDestroy(audio);
+}
+
 static void test_real_wav(int argc, char **argv)
 {
     JPBPCAudioWavInfo info;
@@ -274,6 +315,7 @@ int main(int argc, char **argv)
     test_bank_resolution();
     test_exact_alias_banks();
     test_two_player_banks();
+    test_movie_audio_gate();
     if (argc == 3 && strcmp(argv[1], "--corpus") == 0) {
         size_t count = test_wav_corpus_directory(argv[2]);
         size_t bank_path_count = test_exact_bank_path_corpus(argv[2]);

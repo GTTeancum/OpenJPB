@@ -12,7 +12,8 @@ typedef enum JPBSaveResult {
     JPB_SAVE_NOT_FOUND = 1,
     JPB_SAVE_INVALID_DATA = 2,
     JPB_SAVE_IO_ERROR = 3,
-    JPB_SAVE_BAD_ARGUMENT = 4
+    JPB_SAVE_BAD_ARGUMENT = 4,
+    JPB_SAVE_MOD_UNAVAILABLE = 5
 } JPBSaveResult;
 
 /* Exact PDB types used by the legacy three-slot memory-card owner. */

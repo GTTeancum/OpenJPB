@@ -41,12 +41,25 @@
 
 static JPBBulletLaunchObserver bullet_launch_observer;
 static void *bullet_launch_observer_user_data;
+static JPBBulletDiagnostics bullet_diagnostics;
 
 void jpb_BulletSetLaunchObserver(
     JPBBulletLaunchObserver observer, void *user_data)
 {
     bullet_launch_observer = observer;
     bullet_launch_observer_user_data = user_data;
+}
+
+void jpb_BulletResetDiagnostics(void)
+{
+    memset(&bullet_diagnostics, 0, sizeof(bullet_diagnostics));
+}
+
+void jpb_BulletGetDiagnostics(JPBBulletDiagnostics *diagnostics)
+{
+    if (diagnostics != NULL) {
+        *diagnostics = bullet_diagnostics;
+    }
 }
 
 static void bullet_observe_launch(
@@ -116,9 +129,12 @@ Projectile *bullet_AllocProjectile(int type)
     Projectile *proj =
         (Projectile *)memalloc((unsigned)sizeof(*proj));
 
+    ++bullet_diagnostics.allocationAttempts;
     if (proj != NULL) {
         memset(proj, 0, sizeof(*proj));
         proj->pj_Type = (int16_t)type;
+    } else {
+        ++bullet_diagnostics.allocationFailures;
     }
     return proj;
 }
@@ -508,6 +524,9 @@ void bullet_Explosion(
  */
 void bullet_FreeProjectile(Projectile *proj)
 {
+    if (proj != NULL) {
+        ++bullet_diagnostics.freeCount;
+    }
     memfree(proj);
 }
 
@@ -627,6 +646,7 @@ void bullet_ShootProjectile(
                     type->hitEffect == 0x11 ? 9 : 8);
             }
             bullet_observe_launch(proj, player, pos0, pos1);
+            ++bullet_diagnostics.successfulLaunches;
             return;
         }
     } else {
@@ -668,6 +688,7 @@ void bullet_ShootProjectile(
             }
             (void)sound_Play(pos0, sound_bank, terminatedSound, 0);
             bullet_observe_launch(proj, player, pos0, pos1);
+            ++bullet_diagnostics.successfulLaunches;
             return;
         }
     }

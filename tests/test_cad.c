@@ -94,8 +94,10 @@ static void make_cad(AlignedCadBuffer *storage)
         0x55667788u);
     motions = (Motion *)(payload + TEST_MOTION_OFFSET);
     motions[0].Seq = 0;
+    motions[0].globalID = 0;
     memcpy(motions[0].name, "idle", sizeof("idle"));
     motions[1].Seq = 1;
+    motions[1].globalID = 1;
     motions[1].vel = 27;
     memcpy(motions[1].name, "walk", sizeof("walk"));
 }
@@ -508,6 +510,7 @@ static int test_animation_frame_accumulation(void)
     player.maxMotions = 1;
     player.oldmaxCMotions = 1;
     motion.Seq = 0;
+    motion.globalID = 0;
     motion.Speed = JPB_FIXED_ONE;
     motion.Lock = 4;
     motion.FunctPtr = -1;

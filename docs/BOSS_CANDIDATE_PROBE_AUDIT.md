@@ -48,40 +48,70 @@ placements `31..34` are independent range-activated encounter stages.
 
 ## Palace Offscreen Bosses
 
-Status: pending discovery; not promoted.
+Status: lifecycle resolved; correctly not promoted as bosses.
 
 - Recovered `level_Palace()` calls
   `level_Palace_KillOffscreenBoss(163)` and
   `level_Palace_KillOffscreenBoss(164)`.
-- Direct probes at placements `163` and `164` found both placements inactive
-  (`status=0`) while the runtime camera/enemy target resolved to other active
-  placements (`161` and `108` respectively).
-- The recovered helper only kills those placements if they are already active
-  and offscreen relative to player range; it does not itself start a boss fight.
+- Installed `palace.j3d` resolves the actual activation chain. Range-active
+  placement `113` (owner `3`, AI `60`) references guards `163/164` and starts
+  controller `183`; controller `183` (owner `0`, AI `11`) references and starts
+  the same guards. Both guards are actor `13`, AI `58`, owner `2`, with no
+  independent range-activation flag.
+- A 240-frame native process-local run at placement `113`'s authored camera-21
+  coordinate retires trigger `113` to status `2`, leaves controller `183`
+  active at status `1`, and activates guards `163/164` at status `1` with their
+  real model, AI, physics, and animation owners.
+- `level_Palace_KillOffscreenBoss` is the terminal cleanup owner, not an
+  activator: an active guard is reduced to zero energy only after its tracked X
+  position reaches `-8500` or greater and its player range is at least `750`.
+  The focused object/scene regression covers both the kill and threshold
+  rejection branches.
+- `jpb_pc_palace_authored_activation_lifecycle` now locks the real-asset
+  `113 -> 183 -> 163/164` chain and all actor/AI/owner references.
 
 Probe logs:
 
 - `out/boss-candidate-probes/palace-offscreen-163.console.txt`
 - `out/boss-candidate-probes/palace-offscreen-164.console.txt`
 
-Next credible step: identify the trigger path that activates Palace placements
-`163/164`, then verify an active runtime placement before adding coverage.
+These guards remain absent from `tools/smoke_bosses.ps1` because the canonical
+data identifies them as scripted cleanup actors, not boss placements.
 
 ## Hangar Set Piece
 
-Status: pending discovery; not promoted.
+Status: lifecycle resolved; correctly covered as an objective rather than a boss.
 
 - Recovered `level_Hangar()` is a timer/rescue special: it initializes
   `hangarStart`, draws the countdown text, watches `pilotsKilled`, and toggles
   global bits when the timer expires or the rescue succeeds.
+- `braindmg_DeathReaction` is the canonical pilot-death producer: model `59` on
+  level `9` increments `pilotsKilled`, restores the saved player position, and
+  clears global bit `0`.
+- `level_Hangar` starts a 400-second timer, publishes the timer objective bit,
+  and completes when the timer expires or two pilots are killed. Counter values
+  above `5` signal the authored completion bit; lower values also set the stage
+  reset flags, checkpoint `0`, and restart score `0`.
+- Focused regressions now cover reset initialization, timer/HUD ownership, UV
+  scrolling, pilot-death production, rescue success, timeout, and both terminal
+  counter branches.
 - Quickload `hangar` exposes authored encounter placements and active
-  powerup/state rows, but not a distinct boss actor anchor comparable to the
-  existing forced-placement boss smokes.
+  powerup/state rows, but no distinct boss actor anchor comparable to the
+  forced-placement boss smokes.
 
 Probe log:
 
 - `out/boss-candidate-probes/hangar.console.txt`
 
-Next credible step: if Hangar needs smoke coverage, treat it as a set-piece HUD
-or objective smoke with timer/pilot-state assertions instead of a boss-placement
-row.
+Hangar therefore remains outside the boss matrix. Its canonical objective path
+is covered directly instead of being represented by a fabricated boss row.
+
+## Hardware Boss Matrix Refresh
+
+The separate native hardware boss matrix was refreshed after these lifecycle
+closures. All eight authoritative entries pass at `960x540` for 180 frames,
+including Core Maul. The Coruscant thug harness now starts at placement `138`
+waypoint `0`, the nearby authored camera-66 anchor; the prior coordinate had no
+camera record and caused a player fall before the proof frame. The retained
+eight-entry contact sheet is `out/boss-smoke-hardware/contact-sheet.png` and the
+ledger is `docs/BOSS_HARDWARE_SMOKE_AUDIT.md`.

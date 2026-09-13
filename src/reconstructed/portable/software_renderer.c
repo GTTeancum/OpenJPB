@@ -88,6 +88,7 @@ typedef struct SoftwareModelDraw {
     JPBSoftwareTriangleSink triangleSink;
     void *triangleUserData;
     sceneObject *sceneObject;
+    modelObject *model;
     physicsObject *physics;
 } SoftwareModelDraw;
 
@@ -3114,6 +3115,16 @@ static int software_draw_model_node(
     }
     fMulMatrix(&current.rotation, &local_rotation);
 
+    /* render_RenderNode suppresses packets for model flag 0x10.
+     * Script owners can remain active with visible scene roots while their
+     * placeholder model is hidden. Player hierarchies still advance. */
+    if ((state->model->flags & UINT32_C(0x10)) != 0) {
+        if (state->sceneObject != NULL &&
+            state->sceneObject->sceneRoot.objectID > 1) {
+            return JPB_SOFTWARE_RENDER_OK;
+        }
+        goto clear_transient_hide;
+    }
     if ((node->flags & UINT32_C(0x4)) != 0) {
         goto clear_transient_hide;
     }
@@ -3437,6 +3448,7 @@ static int software_render_bmd(
 
     memset(&state, 0, sizeof(state));
     state.bmd = bmd;
+    state.model = model;
     state.sceneObject = scene_object;
     state.physics = physics;
     state.draw.scene = world_scene;
@@ -3715,6 +3727,13 @@ int jpb_SoftwareRenderBmdForScene(
     void *triangle_user_data,
     JPBSoftwareRenderStats *stats)
 {
+    /* render_RenderScene excludes retired and hidden scene owners before
+     * render_RenderModel can draw geometry or advance detached parts. */
+    if (scene_object != NULL &&
+        (scene_object->sceneRoot.objectID == -1 ||
+         (scene_object->sceneRoot.flags & UINT32_C(0x20)) != 0)) {
+        return JPB_SOFTWARE_RENDER_OK;
+    }
     return software_render_bmd(
         bmd, model, key_frame, scene_object, physics,
         world_position, world_facing, view_matrix, world_scene,

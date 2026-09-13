@@ -39,6 +39,13 @@ typedef void (*JPBBulletLaunchObserver)(
     const VECTOR *start,
     const VECTOR *target);
 
+typedef struct JPBBulletDiagnostics {
+    size_t allocationAttempts;
+    size_t allocationFailures;
+    size_t freeCount;
+    size_t successfulLaunches;
+} JPBBulletDiagnostics;
+
 enum {
     JPB_PROJECTILE_GLOBAL_CAPACITY = 32
 };
@@ -51,6 +58,8 @@ extern char terminatedSound[9];
 void TerminateSFXString(char *dest, const char *source);
 void jpb_BulletSetLaunchObserver(
     JPBBulletLaunchObserver observer, void *user_data);
+void jpb_BulletResetDiagnostics(void);
+void jpb_BulletGetDiagnostics(JPBBulletDiagnostics *diagnostics);
 Projectile *bullet_AllocProjectile(int type);
 int bullet_CallBack(Projectile *proj);
 int bullet_Dummy(int32_t *unused);

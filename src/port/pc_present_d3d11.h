@@ -24,6 +24,8 @@ typedef struct JPBPCD3D11Presenter JPBPCD3D11Presenter;
 
 JPBPCD3D11Presenter *jpb_PCD3D11PresenterCreate(HWND window);
 void jpb_PCD3D11PresenterDestroy(JPBPCD3D11Presenter *presenter);
+void jpb_PCD3D11PresenterResetLevelResources(
+    JPBPCD3D11Presenter *presenter);
 int jpb_PCD3D11PresenterPresent(
     JPBPCD3D11Presenter *presenter,
     const JPBSoftwareFramebuffer *framebuffer);

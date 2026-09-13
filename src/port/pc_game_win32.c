@@ -1,3 +1,4 @@
+#include "jpb/mods.h"
 /*
  * Thin Win32 host for the portable gameplay/software-render loop.
  *
@@ -74,11 +75,14 @@ enum {
     PC_FRAMEBUFFER_HEIGHT = 540,
     PC_VISIBLE_FRAMEBUFFER_WIDTH = 1920,
     PC_VISIBLE_FRAMEBUFFER_HEIGHT = 1080,
-    PC_HEADLESS_PHASE_CAPACITY = 32,
-    PC_MOVIE_AUDIO_BUFFER_COUNT = 8,
+    PC_HEADLESS_PHASE_CAPACITY = 128,
     PC_MOVIE_AUDIO_BUFFER_BYTES = 16384,
-    /* 132 front-end records plus the exact 77 controller/KBM records. */
-    PC_MENU_TEXTURE_CAPACITY = JPB_MENU_TEXTURE_ENTRY_COUNT + 77,
+    PC_MOVIE_AUDIO_PREBUFFER_MS = 2000,
+    /* Maximum canonical publication set: white pair, 132 front-end records,
+     * 15 level previews, 23 results portraits, and 77 controller/KBM records. Duplicate paths are
+     * coalesced by the cache, but capacity must not depend on that. */
+    PC_MENU_TEXTURE_CAPACITY =
+        2 + JPB_MENU_TEXTURE_ENTRY_COUNT + 15 + 23 + 77,
     PC_MENU_TEXTURE_PATH_CAPACITY = 1024
 };
 
@@ -141,18 +145,38 @@ typedef struct PcExpectedScreenDraw {
     float layerDepth;
 } PcExpectedScreenDraw;
 
+typedef struct PcMovieAudioBuffer {
+    WAVEHDR header;
+    uint8_t bytes[PC_MOVIE_AUDIO_BUFFER_BYTES];
+    struct PcMovieAudioBuffer *next;
+} PcMovieAudioBuffer;
+
 typedef struct PcMoviePlayback {
     int active;
+    int timingProbe;
+    DWORD nextTimingReportMs;
+    unsigned timingSamples;
+    unsigned timingClockErrors;
+    unsigned timingDeadlineMisses;
+    unsigned timingStallMs;
+    int timingStallDone;
+    double timingMaxClockSkewMs;
+    DWORD timingMaxDeadlineLateMs;
+    LARGE_INTEGER timingFrameStart;
+    LARGE_INTEGER timingAfterAudio;
+    LARGE_INTEGER timingAfterVideo;
+    LARGE_INTEGER timingAfterBlit;
+    uint64_t timingFrameCpuStart;
+    int timingFrameCpuValid;
     int audioOutputEnabled;
     int audioOutputPaused;
     HWAVEOUT audioOutput;
-    WAVEHDR audioHeaders[PC_MOVIE_AUDIO_BUFFER_COUNT];
-    uint8_t audioBuffers[PC_MOVIE_AUDIO_BUFFER_COUNT]
-                        [PC_MOVIE_AUDIO_BUFFER_BYTES];
+    PcMovieAudioBuffer *audioBuffers;
     THEORAPLAY_Decoder *decoder;
     const THEORAPLAY_VideoFrame *nextVideo;
     const THEORAPLAY_VideoFrame *currentVideo;
     const THEORAPLAY_AudioPacket *nextAudio;
+    size_t nextAudioSampleOffset;
     DWORD playbackStartTicks;
     int width;
     int height;
@@ -163,6 +187,7 @@ typedef struct PcMoviePlayback {
     volatile LONG audioBytesQueued;
     volatile LONG audioChunksDecoded;
     volatile LONG audioChunksQueued;
+    unsigned audioBytesQueuedAtStart;
     unsigned audioSampleRate;
     unsigned audioChannels;
     unsigned audioBytesPerSample;
@@ -289,6 +314,7 @@ typedef struct PcInput {
     int validateHudOwnerCoverage;
     int validateTeleport;
     int validateDeathRestart;
+    int validatePalaceLifecycle;
     int validateCameraFollow;
     int validateTitleAudio;
     int validateTitleMovie;
@@ -301,6 +327,7 @@ typedef struct PcInput {
     int validateNeutralHandoff;
     int headlessMaximumProgression;
     int fedTraversalHarness;
+    int fedProjectileSoakHarness;
     int fedTraversalTargetPlacement;
     int fedTraversalAttackCooldown;
     int fedTraversalNavigationPathNodes;
@@ -334,22 +361,32 @@ typedef struct PcInput {
     unsigned movieAudioChunkCount;
     unsigned movieAudioQueuedByteCount;
     unsigned movieAudioQueuedChunkCount;
+    unsigned movieAudioPrebufferByteCount;
     unsigned movieStartFailureCount;
     unsigned movieSkipCount;
     unsigned movieLastIndex;
     int movieLastFlags;
     int moviePending;
+    float moviePendingVolume;
+    unsigned movieQueueCount;
+    unsigned movieQueueIndex[8];
+    int movieQueueFlags[8];
+    float movieQueueVolume[8];
     int movieAudioOutputEnabled;
-    int autoIntroMovieStarted;
     int autoLevelMovieStarted;
     char movieLastPath[MAX_PATH];
     char movieLastError[160];
     PcMoviePlayback *moviePlayback;
+    JPBPCAudio *currentAudio;
     int movieFramebufferWidth;
     int movieFramebufferHeight;
     uint16_t previousMovieXInputButtons[4];
     int movieXInputSkipSeeded;
     int playerOneUsesKeyboard;
+    int playerTwoUsesKeyboard;
+    int twoPlayerInputSessionActive;
+    int gameplayRumbleEnabled;
+    unsigned nonGameplayRumbleSuppressed;
     /* A menu confirmation must be released before it can become gameplay. */
     uint8_t gameplayHandoffReleaseMask;
     /* Zero means unassigned; otherwise this is physical XInput user + 1. */
@@ -389,6 +426,10 @@ typedef struct PcInput {
 } PcInput;
 
 static void pc_apply_control_scheme_overrides(const PcInput *input);
+static void pc_save_game_data(void *user_data);
+static wsl_ENEMY *pc_enemy_for_placement(
+    const JPBGameRuntime *runtime,
+    int placement_index);
 
 typedef struct PcPlayerSaberDiagnostics {
     int playerModel;
@@ -435,6 +476,17 @@ typedef struct PcPlayerAssets {
     char cmb[MAX_PATH];
 } PcPlayerAssets;
 
+typedef struct PcLoadScreenPresentation {
+    JPBGameRuntime *runtime;
+    JPBPCD3D11Presenter *presenter;
+    JPBSoftwareFramebuffer *framebuffer;
+    unsigned presented;
+    unsigned failures;
+    const char *capturePath;
+    unsigned captured;
+    HRESULT lastError;
+} PcLoadScreenPresentation;
+
 typedef enum PcPlayerSaberColorMode {
     PC_PLAYER_SABER_COLOR_CURRENT,
     PC_PLAYER_SABER_COLOR_CANON,
@@ -443,6 +495,74 @@ typedef enum PcPlayerSaberColorMode {
 
 static int pc_running = 1;
 static char pc_asset_root[MAX_PATH];
+
+static int pc_write_ppm(
+    const char *path,
+    const JPBSoftwareFramebuffer *framebuffer);
+
+static int pc_pump_window_messages(void)
+{
+    MSG message;
+
+    while (PeekMessageA(&message, NULL, 0, 0, PM_REMOVE)) {
+        if (message.message == WM_QUIT) {
+            pc_running = 0;
+            return 0;
+        }
+        TranslateMessage(&message);
+        DispatchMessageA(&message);
+    }
+    return pc_running;
+}
+
+static int pc_present_load_screen(void *user_data)
+{
+    PcLoadScreenPresentation *presentation =
+        (PcLoadScreenPresentation *)user_data;
+    int capture_ready = 0;
+
+    if (presentation == NULL || presentation->runtime == NULL ||
+        presentation->presenter == NULL ||
+        presentation->framebuffer == NULL) {
+        return 0;
+    }
+    if (presentation->capturePath != NULL &&
+        presentation->captured == 0 &&
+        presentation->runtime->screenDrawCount >= 7 &&
+        presentation->runtime->textDrawCount >= 2 &&
+        (int)(int8_t)LevelSelect >= 1 &&
+        (int)(int8_t)LevelSelect <= 15 &&
+        fontSpec[409 + (int)(int8_t)LevelSelect].clut ==
+            (uint16_t)(79 + (int)(int8_t)LevelSelect)) {
+        capture_ready = 1;
+    }
+    if (!pc_pump_window_messages() ||
+        jpb_GameRuntimeRenderLoadScreen(
+            presentation->runtime,
+            presentation->framebuffer) != JPB_GAME_RUNTIME_OK ||
+        !jpb_PCD3D11PresenterPresent(
+            presentation->presenter,
+            presentation->framebuffer)) {
+        presentation->lastError =
+            jpb_PCD3D11PresenterLastError(presentation->presenter);
+        ++presentation->failures;
+        jpb_PCLog(
+            "load-screen present failed HRESULT=0x%08lx",
+            (unsigned long)presentation->lastError);
+        return 0;
+    }
+    if (capture_ready) {
+        if (!pc_write_ppm(
+                presentation->capturePath,
+                presentation->framebuffer)) {
+            ++presentation->failures;
+            return 0;
+        }
+        presentation->captured = 1;
+    }
+    ++presentation->presented;
+    return 1;
+}
 
 static int pc_parse_player_saber_color_mode(
     const char *text,
@@ -630,6 +750,8 @@ static int pc_expected_player_saber_segment(
             &second_tip_id)) {
         return 0;
     }
+    (void)jpb_ModSaberNodes(player->playernum, &base_id, &tip_id,
+                          &second_base_id, &second_tip_id);
     if (second_blade) {
         if (second_base_id == 0 && second_tip_id == 0) {
             return 0;
@@ -761,6 +883,11 @@ static void pc_collect_player_saber_diagnostics(
         jedi_GetColour32(pc_player_saber_color_index(
             diagnostics->playerModel)) |
         UINT32_C(0x7f000000);
+    {
+        const JPBModCharacter *mod = jpb_ModPlayer(player->playernum);
+        if (mod != NULL) diagnostics->outerColor =
+            (mod->colors[2] & UINT32_C(0x00ffffff)) | UINT32_C(0x7f000000);
+    }
     for (outer_index = 0;
          outer_index < runtime->glowDrawCount;
          ++outer_index) {
@@ -975,10 +1102,10 @@ static int pc_compare_resolutions(
     const RESOLUTION *right = (const RESOLUTION *)right_value;
 
     if (left->height != right->height) {
-        return left->height < right->height ? -1 : 1;
+        return left->height > right->height ? -1 : 1;
     }
     if (left->width != right->width) {
-        return left->width < right->width ? -1 : 1;
+        return left->width > right->width ? -1 : 1;
     }
     return 0;
 }
@@ -1043,6 +1170,31 @@ static int pc_select_startup_resolution(int width, int height)
     return 0;
 }
 
+static int pc_menu_paths_equal(const char *left, const char *right)
+{
+    if (left == NULL || right == NULL) {
+        return left == right;
+    }
+    while (*left != '\0' && *right != '\0') {
+        unsigned char left_character = (unsigned char)*left++;
+        unsigned char right_character = (unsigned char)*right++;
+
+        if (left_character == '/') left_character = '\\';
+        if (right_character == '/') right_character = '\\';
+        if (left_character >= 'A' && left_character <= 'Z') {
+            left_character = (unsigned char)(left_character - 'A' + 'a');
+        }
+        if (right_character >= 'A' && right_character <= 'Z') {
+            right_character =
+                (unsigned char)(right_character - 'A' + 'a');
+        }
+        if (left_character != right_character) {
+            return 0;
+        }
+    }
+    return *left == '\0' && *right == '\0';
+}
+
 static void *pc_load_menu_texture(
     void *user_data,
     const char *filename,
@@ -1065,7 +1217,7 @@ static void *pc_load_menu_texture(
     }
     for (index = 0; index < cache->count; ++index) {
         entry = &cache->textures[index];
-        if (strcmp(entry->path, filename) == 0) {
+        if (pc_menu_paths_equal(entry->path, filename)) {
             *width = (int16_t)entry->texture.width;
             *height = (int16_t)entry->texture.height;
             return &entry->texture;
@@ -1078,6 +1230,11 @@ static void *pc_load_menu_texture(
         image_width > INT16_MAX || image_height > INT16_MAX ||
         (size_t)image_width >
             SIZE_MAX / (size_t)image_height / sizeof(uint32_t)) {
+        jpb_PCLog(
+            "menu texture load rejected count=%zu requested=%s first=%s",
+            cache->count,
+            filename,
+            cache->count != 0 ? cache->textures[0].path : "<none>");
         return NULL;
     }
     entry = &cache->textures[cache->count];
@@ -1124,6 +1281,85 @@ static void pc_release_menu_textures(PcMenuTextureCache *cache)
     memset(cache, 0, sizeof(*cache));
 }
 
+static int pc_restore_menu_materials(PcMenuTextureCache *cache)
+{
+    size_t index;
+
+    if (cache == NULL) {
+        return 1;
+    }
+    /* CleanupLevelData owns this invalidation in the shipped executable.
+     * The portable runtime tears the level down directly, so perform the
+     * same invalidation before republishing front-end material pointers.
+     * Otherwise a path-cache hit can return a material slot since reused by
+     * the level (most visibly white.png for the Pause panel). */
+    _ClearTextureCache();
+    jpb_TextureSetPlatformHooks(
+        pc_load_menu_texture, NULL, cache);
+    menuTexLoaded = 0;
+    menu_winLoadTextures();
+    if (menuTexLoaded == 0) {
+        return 0;
+    }
+    for (index = 0; index < JPB_MENU_TEXTURE_ENTRY_COUNT; ++index) {
+        unsigned texture_index =
+            menuTextureList[index].textureIndex;
+        _Material *material;
+
+        if (texture_index >=
+            sizeof(menuTextures) / sizeof(menuTextures[0])) {
+            return 0;
+        }
+        material = menuTextures[texture_index];
+        if (material == NULL || material->texture == NULL ||
+            (menuTextureList[index].filename != NULL &&
+             !pc_menu_paths_equal(
+                 material->filename,
+                 resource_getPath(
+                     menuTextureList[index].filename,
+                     JPB_RESOURCE_FRONT)))) {
+            jpb_PCLog(
+                "menu material restore failed index=%u file=%s actual=%s",
+                texture_index,
+                menuTextureList[index].filename,
+                material != NULL ? material->filename : "<null>");
+            return 0;
+        }
+    }
+    for (index = 0; index < 15; ++index) {
+        _Material *material = menuTextures[80u + index];
+
+        if (material == NULL || material->texture == NULL) {
+            jpb_PCLog(
+                "menu level-preview restore failed index=%zu",
+                index);
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* Direct quickload has no front-end bank until gameplay returns to a menu.
+ * Publish that bank without reinitializing the menu or saved game state. */
+static int pc_ensure_return_menu_resources(
+    PcMenuTextureCache **cache, uint32_t **title_pixels,
+    const JPBSoftwareFramebuffer *framebuffer)
+{
+    if (*cache != NULL && *title_pixels != NULL) return 1;
+    if (*cache == NULL) *cache = (PcMenuTextureCache *)calloc(1, sizeof(**cache));
+    if (*title_pixels == NULL) {
+        *title_pixels = (uint32_t *)malloc(
+            (size_t)framebuffer->width * framebuffer->height * sizeof(**title_pixels));
+        if (*title_pixels == NULL || !jpb_PCLoadImageWIC(
+                resource_getPath("JPB_SplashV3_Sharpened.png", JPB_RESOURCE_FRONT),
+                framebuffer->width, framebuffer->height, *title_pixels,
+                framebuffer->stridePixels)) return 0;
+    }
+    if (*cache == NULL || !pc_restore_menu_materials(*cache)) return 0;
+    jpb_PCLog("initialized front-end resources after direct gameplay textures=%zu", (*cache)->count);
+    return 1;
+}
+
 static const char *pc_save_result_name(JPBSaveResult result)
 {
     switch (result) {
@@ -1135,6 +1371,8 @@ static const char *pc_save_result_name(JPBSaveResult result)
         return "invalid data";
     case JPB_SAVE_IO_ERROR:
         return "I/O error";
+    case JPB_SAVE_MOD_UNAVAILABLE:
+        return "required mod package unavailable";
     case JPB_SAVE_BAD_ARGUMENT:
         return "bad argument";
     default:
@@ -1311,6 +1549,7 @@ static int pc_default_asset_path(
         relative_path == NULL) {
         return 0;
     }
+    if (jpb_ModsResolve(relative_path, path, path_capacity)) return 1;
     written = snprintf(
         path, path_capacity, "%s\\%s", directory, relative_path);
     if (written < 0 || (size_t)written >= path_capacity) {
@@ -1413,6 +1652,16 @@ static int pc_configure_player_assets(
     char relative_path[MAX_PATH];
     const char *model_name;
     int written;
+    const JPBModCharacter *mod = jpb_ModCharacterById(model_id);
+    if (assets != NULL && mod != NULL) {
+        if (strlen(mod->cad) >= sizeof(assets->cad) ||
+            strlen(mod->bmd) >= sizeof(assets->bmd) ||
+            strlen(mod->cmb) >= sizeof(assets->cmb)) return 0;
+        strcpy(assets->cad, mod->cad);
+        strcpy(assets->bmd, mod->bmd);
+        strcpy(assets->cmb, mod->cmb);
+        return 1;
+    }
 
     if (assets == NULL || model_id < 0 ||
         model_id >= JPB_MODEL_NAME_COUNT ||
@@ -1474,7 +1723,7 @@ static JPBPCAudio *pc_create_current_game_audio(
     if (GameStruct.NumPlayers == 2) {
         if (!pc_configure_player_assets(
                 &player_two_assets,
-                GameStruct.ModelSelect[1])) {
+                jpb_ModPlayerModel(1, GameStruct.ModelSelect[1]))) {
             jpb_PCLog(
                 "audio initialization failed stage=resolve-p2-assets "
                 "model=%d",
@@ -1625,6 +1874,48 @@ static int pc_front_end_requests_versus(int *level_index)
     return 1;
 }
 
+static int pc_gameplay_requests_title(void)
+{
+    unsigned stack = menuVars.menuModeSP & 7u;
+
+    return GameStruct.inMenuFlag != 0 &&
+        menuVars.menuMode[stack] == 0 &&
+        (GameStruct.gameMode == 0 || GameStruct.gameMode == 9);
+}
+
+static void pc_review_score_trace(int frame)
+{
+    static unsigned previous = UINT_MAX;
+    unsigned menu = menuVars.menuMode[menuVars.menuModeSP & 7u];
+    unsigned state = menu | ((unsigned)menuVars.scoreMode << 8) |
+        ((unsigned)menuVars.scoreCurrentPlayer << 16);
+    unsigned player = menuVars.scoreCurrentPlayer & 1u;
+    if (state != previous) {
+        AWARDSET *award = &menuVars.awardSet[player];
+        printf("score_review=(frame=%d,menu=%u,mode=%u,player=%u,score=%u,"
+               "awards=%u/%u,types=%u/%u/%u,combo_count=%u)\n",
+               frame, menu, (unsigned)menuVars.scoreMode, player,
+               (unsigned)menuVars.scoreScore, (unsigned)award->awardCount,
+               (unsigned)award->awardTotal, (unsigned)award->awardType[0],
+               (unsigned)award->awardType[1], (unsigned)award->awardType[2],
+               (unsigned)menuVars.td.comboListCount);
+        fflush(stdout);
+        previous = state;
+    }
+}
+
+static int pc_gameplay_enters_score_mode(void)
+{
+    if (GameStruct.gameMode != 4 && GameStruct.gameMode != 5) {
+        return 0;
+    }
+
+    camera_SetCameras();
+    menu_enterScoreMode(3);
+    GameStruct.CurrentLevel = (uint8_t)LevelSelect;
+    return 1;
+}
+
 static int pc_release_front_end_gameplay_control(
     JPBGameRuntime *runtime,
     int selected_players)
@@ -1664,7 +1955,12 @@ static int pc_start_selected_gameplay(
     const char *enemy_bmd_path,
     int selected_level,
     int selected_game_mode,
-    PcInput *input
+    PcInput *input,
+    PcLoadScreenPresentation *load_screen_presentation,
+    PcMenuTextureCache *menu_texture_cache,
+    JPBPCAudio **audio,
+    int audio_output_enabled,
+    unsigned *audio_generation_count
 #if defined(JPB_PC_HAS_UFBX)
     , JPBPcFbxLevel *fbx_level,
     int *fbx_level_loaded
@@ -1673,8 +1969,8 @@ static int pc_start_selected_gameplay(
 {
     optionstruct selected_options = OptionStruct;
     PcPlayerAssets second_player_assets = {0};
-    int selected_model = GameStruct.ModelSelect[0];
-    int selected_player_two = GameStruct.ModelSelect[1];
+    int selected_model = jpb_ModPlayerModel(0, GameStruct.ModelSelect[0]);
+    int selected_player_two = jpb_ModPlayerModel(1, GameStruct.ModelSelect[1]);
     int selected_players = GameStruct.NumPlayers;
     int selected_difficulty = GameStruct.difficulty;
     int selected_versus = GameStruct.versusModeFlag;
@@ -1691,7 +1987,7 @@ static int pc_start_selected_gameplay(
     jpb_PCLogSetCheckpoint(
         "gameplay handoff enter level=%d mode=%d players=%d models=%d/%d",
         selected_level,
-        selected_game_mode,
+        (int)GameStruct.gameMode,
         selected_players,
         selected_model,
         selected_player_two);
@@ -1711,6 +2007,9 @@ static int pc_start_selected_gameplay(
         mesh_path != NULL ? mesh_path : "<null>");
 
     if (input != NULL) {
+        input->gameplayRumbleEnabled = 0;
+        vibration_stop(0);
+        vibration_stop(1);
         /*
          * Arm this before runtime construction: player initialization can
          * sample the still-held menu confirmation.  The retail loading
@@ -1743,6 +2042,32 @@ static int pc_start_selected_gameplay(
     jpb_PCLogSetCheckpoint(
         "gameplay handoff previous runtime shutdown level=%d",
         selected_level);
+    if (audio != NULL) {
+        if (input != NULL) {
+            input->currentAudio = NULL;
+        }
+        jpb_PCAudioDestroy(*audio);
+        *audio = pc_create_current_game_audio(
+            mesh_path,
+            player_assets->cad,
+            selected_level,
+            audio_output_enabled,
+            audio_generation_count);
+        if (*audio == NULL) {
+            jpb_PCLog(
+                "gameplay handoff failed stage=audio-create level=%d",
+                selected_level);
+            return JPB_GAME_RUNTIME_LOAD_FAILED;
+        }
+        if (input != NULL) {
+            input->currentAudio = *audio;
+            if (input->moviePending ||
+                (input->moviePlayback != NULL &&
+                 input->moviePlayback->active)) {
+                jpb_PCAudioSetMoviePlayback(*audio, 1);
+            }
+        }
+    }
     result = jpb_GameRuntimeInitWithPlayerAssets(
         runtime,
         mesh_path,
@@ -1764,6 +2089,13 @@ static int pc_start_selected_gameplay(
         "gameplay handoff runtime initialized level=%d model=%d",
         selected_level,
         selected_model);
+    if (!pc_restore_menu_materials(menu_texture_cache)) {
+        jpb_PCLog(
+            "gameplay handoff failed stage=menu-material-restore "
+            "level=%d",
+            selected_level);
+        return JPB_GAME_RUNTIME_LOAD_FAILED;
+    }
     OptionStruct = selected_options;
     generateAllText(OptionStruct.Language);
     menuVars.pplayers[0] = selected_player_index[0];
@@ -1887,7 +2219,18 @@ static int pc_start_selected_gameplay(
         return JPB_GAME_RUNTIME_LOAD_FAILED;
     }
 #endif
+    if (load_screen_presentation != NULL) {
+        load_screen_presentation->runtime = runtime;
+        jpb_GameRuntimeSetLoadScreenPresentHook(
+            runtime,
+            pc_present_load_screen,
+            load_screen_presentation);
+    }
     result = jpb_GameRuntimeRunCanonicalConstructor(runtime);
+    jpb_GameRuntimeSetLoadScreenPresentHook(runtime, NULL, NULL);
+    if (load_screen_presentation != NULL) {
+        load_screen_presentation->runtime = NULL;
+    }
 #if defined(JPB_PC_HAS_UFBX)
     fbx_import_result = jpb_PCEndFbxLevelImport();
 #endif
@@ -1932,20 +2275,32 @@ static int pc_start_selected_gameplay(
     GameStruct.difficulty = (char)(selected_difficulty == 0 ? 0 : 1);
     jpb_game_ApplyLevelDifficulty((unsigned)selected_level);
     GameStruct.CurrentLevel = (char)selected_level;
-    GameStruct.gameMode = (char)selected_game_mode;
-    GameStruct.inMenuFlag = 0;
+    /* game_gPlayTheGame (retail RVA 0xA98F0) changes load modes 2/3 to
+     * active mode 6 after game_initVar(3). The host has just completed that
+     * constructor; retaining a request mode here can enter the score screen
+     * on the very first gameplay frame (modes 4/5). */
+    GameStruct.gameMode = 6;
+    /* game_initPerLevel opened the objective menu (or council). Preserve
+     * that constructor-owned state until its normal confirmation path. */
     pc_release_front_end_gameplay_control(runtime, selected_players);
+    /* Native packages need a stable-ID checkpoint even when the results
+     * owner offers no upgrade/combo award (and therefore no save trigger). */
+    if (OptionStruct.AutoSave != 0 && selected_level >= 1 && selected_level <= 14 &&
+        !selected_versus && (jpb_ModPlayer(0) != NULL || jpb_ModPlayer(1) != NULL)) {
+        GameStruct.continueAble = 1;
+        pc_save_game_data(input);
+    }
     jpb_PCLogSetCheckpoint(
         "gameplay handoff complete level=%d mode=%d players=%d models=%d/%d",
         selected_level,
-        selected_game_mode,
+        (int)GameStruct.gameMode,
         selected_players,
         selected_model,
         selected_player_two);
     jpb_PCLog(
         "gameplay handoff complete level=%d mode=%d players=%d models=%d/%d",
         selected_level,
-        selected_game_mode,
+        (int)GameStruct.gameMode,
         selected_players,
         selected_model,
         selected_player_two);
@@ -1956,7 +2311,7 @@ static void pc_apply_front_end_player_model_override(
     int enabled,
     int model)
 {
-    if (!enabled) {
+    if (!enabled || jpb_ModPlayer(0) != NULL) {
         return;
     }
 
@@ -2077,12 +2432,18 @@ static void pc_refresh_controller_ownership(PcInput *input)
     int player_two_user;
     unsigned selected_user;
 
-    if (input == NULL || input->headless) {
+    if (input == NULL || input->headless || input->scriptedInput) {
         return;
     }
     connected_mask = input->xinput.connectedMask;
     added_mask = connected_mask & ~input->previousControllerMask;
     input->previousControllerMask = connected_mask;
+    if (GameStruct.NumPlayers == 2 && input->playerTwoUsesKeyboard) {
+        input->playerTwoControllerSlot = 0;
+        p2Connected = 1;
+        player2InputType = 0;
+        return;
+    }
     player_two_user = input->playerTwoControllerSlot != 0
         ? (int)input->playerTwoControllerSlot - 1
         : -1;
@@ -2142,6 +2503,10 @@ static const char *pc_controller_name(
     PcInput *input = (PcInput *)user_data;
     unsigned user_index;
 
+    if (input != NULL && input->headless && player < 2 &&
+        (input->headlessPhaseXInputMask & (1u << player)) != 0) {
+        return "Xbox Series X Controller";
+    }
     (void)pc_controller_count(user_data);
     pc_refresh_controller_ownership(input);
     return input != NULL &&
@@ -2169,6 +2534,27 @@ static void pc_set_rumble(
 
     if (input == NULL || input->headless ||
         controller_index < 0 || controller_index > 1) {
+        return;
+    }
+    if ((low_frequency != 0 || high_frequency != 0) &&
+        (!input->gameplayRumbleEnabled ||
+         GameStruct.inMenuFlag != 0 || input->moviePending ||
+         (input->moviePlayback != NULL &&
+          input->moviePlayback->active))) {
+        ++input->nonGameplayRumbleSuppressed;
+        jpb_PCLog(
+            "rumble suppressed outside gameplay controller=%d "
+            "motors=%u/%u menu=%d pending_movie=%d active_movie=%d",
+            (int)controller_index,
+            (unsigned)low_frequency,
+            (unsigned)high_frequency,
+            (int)GameStruct.inMenuFlag,
+            input->moviePending,
+            input->moviePlayback != NULL &&
+            input->moviePlayback->active);
+        return;
+    }
+    if (input->scriptedInput) {
         return;
     }
     (void)jpb_PCXInputConnectedCount(&input->xinput);
@@ -2433,7 +2819,7 @@ static int pc_movie_xinput_skip_pressed(PcInput *input)
     uint32_t connected;
     int pressed = 0;
 
-    if (input == NULL || input->xinput.getState == NULL) {
+    if (input == NULL || input->scriptedInput || input->xinput.getState == NULL) {
         return 0;
     }
     connected = input->xinput.connectedMask;
@@ -2536,7 +2922,9 @@ static const char *pc_movie_name_for_index(unsigned movie)
         "1080/flipped/HorizontalFlippedMace_converted.ogg",
         "1080/flipped/HorizontalFlippedPlo_converted.ogg",
         "1080/flipped/HorizontalFlippedAdi_converted.ogg",
-        "1080/flipped/End1080Flipped_converted.ogg"
+        "1080/flipped/End1080Flipped_converted.ogg",
+        "1080/flipped/Aspyr_Logo_1080_Flipped.ogg",
+        "1080/flipped/photo_warning_English_1080_Flipped.ogg"
     };
 
     if (movie >= sizeof(names) / sizeof(names[0])) {
@@ -2589,28 +2977,37 @@ static void pc_movie_copy_error(
 
 static void pc_movie_audio_close_output(PcMoviePlayback *movie)
 {
-    unsigned index;
+    PcMovieAudioBuffer *buffer;
 
     if (movie == NULL) {
         return;
     }
     movie->audioOutputPaused = 0;
-    if (movie->audioOutput == NULL) {
-        return;
-    }
-    waveOutReset(movie->audioOutput);
-    for (index = 0; index < PC_MOVIE_AUDIO_BUFFER_COUNT; ++index) {
-        WAVEHDR *header = &movie->audioHeaders[index];
-
-        if ((header->dwFlags & WHDR_PREPARED) != 0) {
-            (void)waveOutUnprepareHeader(
-                movie->audioOutput, header, sizeof(*header));
+    if (movie->audioOutput != NULL) {
+        waveOutReset(movie->audioOutput);
+        for (buffer = movie->audioBuffers;
+             buffer != NULL;
+             buffer = buffer->next) {
+            if ((buffer->header.dwFlags & WHDR_PREPARED) != 0) {
+                (void)waveOutUnprepareHeader(
+                    movie->audioOutput,
+                    &buffer->header,
+                    sizeof(buffer->header));
+            }
         }
-        memset(header, 0, sizeof(*header));
+        waveOutClose(movie->audioOutput);
+        movie->audioOutput = NULL;
     }
-    waveOutClose(movie->audioOutput);
-    movie->audioOutput = NULL;
+    while (movie->audioBuffers != NULL) {
+        buffer = movie->audioBuffers;
+        movie->audioBuffers = buffer->next;
+        free(buffer);
+    }
 }
+
+static int pc_movie_pump_audio(
+    PcMoviePlayback *movie,
+    DWORD elapsed_ms);
 
 static int pc_movie_audio_open_output(
     PcMoviePlayback *movie,
@@ -2669,6 +3066,7 @@ static int pc_movie_audio_start(PcMoviePlayback *movie)
         !movie->audioOutputPaused) {
         return 1;
     }
+    movie->playbackStartTicks = GetTickCount();
     if (waveOutRestart(movie->audioOutput) != MMSYSERR_NOERROR) {
         pc_movie_copy_error(
             movie,
@@ -2681,29 +3079,173 @@ static int pc_movie_audio_start(PcMoviePlayback *movie)
     return 1;
 }
 
-static int pc_movie_audio_find_buffer(PcMoviePlayback *movie)
+static int pc_movie_thread_cpu_ticks(uint64_t *ticks)
 {
-    for (;;) {
-        unsigned index;
-
-        if (movie == NULL || movie->decoder == NULL) {
-            return -1;
-        }
-        for (index = 0; index < PC_MOVIE_AUDIO_BUFFER_COUNT; ++index) {
-            WAVEHDR *header = &movie->audioHeaders[index];
-
-            if ((header->dwFlags & WHDR_PREPARED) == 0) {
-                return (int)index;
-            }
-            if ((header->dwFlags & WHDR_DONE) != 0) {
-                (void)waveOutUnprepareHeader(
-                    movie->audioOutput, header, sizeof(*header));
-                memset(header, 0, sizeof(*header));
-                return (int)index;
-            }
-        }
-        Sleep(2);
+    FILETIME created, exited, kernel, user;
+    if (!GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user)) {
+        return 0;
     }
+    *ticks = (((uint64_t)kernel.dwHighDateTime << 32) | kernel.dwLowDateTime) +
+             (((uint64_t)user.dwHighDateTime << 32) | user.dwLowDateTime);
+    return 1;
+}
+
+static void pc_movie_report_timing(PcMoviePlayback *movie, int final)
+{
+    MMTIME position;
+    MMRESULT result;
+    DWORD elapsed_ms;
+    double audio_ms = -1.0;
+    double queued_ms;
+    unsigned pending = 0;
+    PcMovieAudioBuffer *buffer;
+    DWORD deadline_late = 0;
+
+    if (!movie->timingProbe || movie->audioOutput == NULL) return;
+    elapsed_ms = GetTickCount() - movie->playbackStartTicks;
+    memset(&position, 0, sizeof(position));
+    position.wType = TIME_SAMPLES;
+    result = waveOutGetPosition(movie->audioOutput, &position, sizeof(position));
+    if (result == MMSYSERR_NOERROR && position.wType == TIME_SAMPLES) {
+        audio_ms = 1000.0 * position.u.sample / movie->audioSampleRate;
+        if (!final) {
+            double skew = fabs((double)elapsed_ms - audio_ms);
+            if (skew > movie->timingMaxClockSkewMs) {
+                movie->timingMaxClockSkewMs = skew;
+            }
+        }
+    } else {
+        ++movie->timingClockErrors;
+    }
+    if (movie->nextVideo != NULL && movie->nextVideo->playms < elapsed_ms) {
+        deadline_late = elapsed_ms - movie->nextVideo->playms;
+    }
+    if (deadline_late > movie->timingMaxDeadlineLateMs) {
+        movie->timingMaxDeadlineLateMs = deadline_late;
+    }
+    if (deadline_late > 100) {
+        ++movie->timingDeadlineMisses;
+        if (!final && movie->timingFrameCpuValid) {
+            uint64_t cpu_now;
+            LARGE_INTEGER now, frequency;
+            QueryPerformanceCounter(&now);
+            QueryPerformanceFrequency(&frequency);
+            if (pc_movie_thread_cpu_ticks(&cpu_now)) {
+                printf("movie_timing_stall=(wall_ms=%lu,frame_wall_ms=%.3f,"
+                       "frame_cpu_ms=%.3f,audio_ms=%.3f,video_ms=%.3f,"
+                       "blit_ms=%.3f,present_ms=%.3f,deadline_late_ms=%lu)\n",
+                       (unsigned long)elapsed_ms,
+                       1000.0 * (now.QuadPart - movie->timingFrameStart.QuadPart) /
+                           frequency.QuadPart,
+                       (double)(cpu_now - movie->timingFrameCpuStart) / 10000.0,
+                       1000.0 * (movie->timingAfterAudio.QuadPart -
+                           movie->timingFrameStart.QuadPart) / frequency.QuadPart,
+                       1000.0 * (movie->timingAfterVideo.QuadPart -
+                           movie->timingAfterAudio.QuadPart) / frequency.QuadPart,
+                       1000.0 * (movie->timingAfterBlit.QuadPart -
+                           movie->timingAfterVideo.QuadPart) / frequency.QuadPart,
+                       1000.0 * (now.QuadPart - movie->timingAfterBlit.QuadPart) /
+                           frequency.QuadPart,
+                       (unsigned long)deadline_late);
+            }
+        }
+    }
+    ++movie->timingSamples;
+    if (!final && elapsed_ms < movie->nextTimingReportMs) return;
+    movie->nextTimingReportMs = elapsed_ms + 1000;
+    queued_ms = 1000.0 * movie->audioBytesQueued /
+        (movie->audioSampleRate * movie->audioChannels * movie->audioBytesPerSample);
+    for (buffer = movie->audioBuffers; buffer != NULL; buffer = buffer->next) {
+        if ((buffer->header.dwFlags & WHDR_PREPARED) != 0 &&
+            (buffer->header.dwFlags & WHDR_DONE) == 0) ++pending;
+    }
+    printf("movie_timing=(wall_ms=%lu,audio_ms=%.3f,video_ms=%lu,"
+           "queued_ms=%.3f,pending=%u,position_result=%u,position_type=%u,"
+           "decoded=%u,presented=%u,final=%d)\n",
+           (unsigned long)elapsed_ms, audio_ms,
+           movie->currentVideo != NULL ? (unsigned long)movie->currentVideo->playms : 0,
+           queued_ms, pending, (unsigned)result, (unsigned)position.wType,
+           movie->framesDecoded, movie->framesPresented, final);
+    fflush(stdout);
+    if (final) {
+        printf("movie_timing_summary=(samples=%u,clock_errors=%u,"
+               "max_clock_skew_ms=%.3f,deadline_misses=%u,"
+               "max_deadline_late_ms=%lu,stall_ms=%u)\n",
+               movie->timingSamples, movie->timingClockErrors,
+               movie->timingMaxClockSkewMs, movie->timingDeadlineMisses,
+               (unsigned long)movie->timingMaxDeadlineLateMs,
+               movie->timingStallDone ? movie->timingStallMs : 0);
+        fflush(stdout);
+    }
+}
+
+enum PcMovieAudioQueueResult {
+    PC_MOVIE_AUDIO_QUEUE_FAILED,
+    PC_MOVIE_AUDIO_QUEUE_QUEUED,
+    PC_MOVIE_AUDIO_QUEUE_FULL
+};
+
+static LARGE_INTEGER pc_movie_audio_wait_begin(const PcMoviePlayback *movie)
+{
+    LARGE_INTEGER started = {0};
+    if (movie->timingProbe) QueryPerformanceCounter(&started);
+    return started;
+}
+
+static void pc_movie_audio_wait_end(
+    const PcMoviePlayback *movie, const char *operation, LARGE_INTEGER started)
+{
+    LARGE_INTEGER ended, frequency;
+    double elapsed;
+    if (!movie->timingProbe) return;
+    QueryPerformanceCounter(&ended);
+    QueryPerformanceFrequency(&frequency);
+    elapsed = 1000.0 * (ended.QuadPart - started.QuadPart) / frequency.QuadPart;
+    if (elapsed > 20.0) {
+        printf("movie_audio_wait=(operation=%s,elapsed_ms=%.3f)\n", operation, elapsed);
+    }
+}
+
+static const THEORAPLAY_AudioPacket *pc_movie_get_audio(PcMoviePlayback *movie)
+{
+    LARGE_INTEGER started = pc_movie_audio_wait_begin(movie);
+    const THEORAPLAY_AudioPacket *packet = THEORAPLAY_getAudio(movie->decoder);
+    pc_movie_audio_wait_end(movie, "decoder_get", started);
+    return packet;
+}
+
+static PcMovieAudioBuffer *pc_movie_audio_find_buffer(
+    PcMoviePlayback *movie)
+{
+    PcMovieAudioBuffer *buffer;
+
+    if (movie == NULL || movie->decoder == NULL) {
+        return NULL;
+    }
+    for (buffer = movie->audioBuffers;
+         buffer != NULL;
+         buffer = buffer->next) {
+        if ((buffer->header.dwFlags & WHDR_PREPARED) == 0) {
+            return buffer;
+        }
+        if ((buffer->header.dwFlags & WHDR_DONE) != 0) {
+            LARGE_INTEGER started = pc_movie_audio_wait_begin(movie);
+            (void)waveOutUnprepareHeader(
+                movie->audioOutput,
+                &buffer->header,
+                sizeof(buffer->header));
+            pc_movie_audio_wait_end(movie, "unprepare", started);
+            memset(&buffer->header, 0, sizeof(buffer->header));
+            return buffer;
+        }
+    }
+    buffer = (PcMovieAudioBuffer *)calloc(1, sizeof(*buffer));
+    if (buffer == NULL) {
+        return NULL;
+    }
+    buffer->next = movie->audioBuffers;
+    movie->audioBuffers = buffer;
+    return buffer;
 }
 
 static int pc_movie_audio_queue(
@@ -2711,52 +3253,66 @@ static int pc_movie_audio_queue(
     const uint8_t *bytes,
     DWORD byte_count)
 {
-    int index;
+    PcMovieAudioBuffer *buffer;
     WAVEHDR *header;
+    LARGE_INTEGER started;
+    MMRESULT result;
 
     if (movie == NULL || movie->audioOutput == NULL ||
         bytes == NULL || byte_count == 0) {
         return 0;
     }
-    index = pc_movie_audio_find_buffer(movie);
-    if (index < 0) {
-        return 0;
+    if (byte_count > PC_MOVIE_AUDIO_BUFFER_BYTES) {
+        return PC_MOVIE_AUDIO_QUEUE_FAILED;
     }
-    memcpy(movie->audioBuffers[index], bytes, byte_count);
-    header = &movie->audioHeaders[index];
+    started = pc_movie_audio_wait_begin(movie);
+    buffer = pc_movie_audio_find_buffer(movie);
+    pc_movie_audio_wait_end(movie, "buffer_reuse", started);
+    if (buffer == NULL) {
+        return PC_MOVIE_AUDIO_QUEUE_FAILED;
+    }
+    memcpy(buffer->bytes, bytes, byte_count);
+    header = &buffer->header;
     memset(header, 0, sizeof(*header));
-    header->lpData = (LPSTR)movie->audioBuffers[index];
+    header->lpData = (LPSTR)buffer->bytes;
     header->dwBufferLength = byte_count;
-    if (waveOutPrepareHeader(
-            movie->audioOutput, header, sizeof(*header)) !=
-        MMSYSERR_NOERROR) {
+    started = pc_movie_audio_wait_begin(movie);
+    result = waveOutPrepareHeader(movie->audioOutput, header, sizeof(*header));
+    pc_movie_audio_wait_end(movie, "prepare", started);
+    if (result != MMSYSERR_NOERROR) {
         memset(header, 0, sizeof(*header));
-        return 0;
+        return PC_MOVIE_AUDIO_QUEUE_FAILED;
     }
-    if (waveOutWrite(movie->audioOutput, header, sizeof(*header)) !=
-        MMSYSERR_NOERROR) {
+    started = pc_movie_audio_wait_begin(movie);
+    result = waveOutWrite(movie->audioOutput, header, sizeof(*header));
+    pc_movie_audio_wait_end(movie, "write", started);
+    if (result != MMSYSERR_NOERROR) {
         (void)waveOutUnprepareHeader(
             movie->audioOutput, header, sizeof(*header));
         memset(header, 0, sizeof(*header));
-        return 0;
+        return PC_MOVIE_AUDIO_QUEUE_FAILED;
     }
     InterlockedExchangeAdd(
         (volatile LONG *)&movie->audioBytesQueued,
         (LONG)byte_count);
     InterlockedIncrement(
         (volatile LONG *)&movie->audioChunksQueued);
-    return 1;
+    return PC_MOVIE_AUDIO_QUEUE_QUEUED;
 }
 
 static int16_t pc_movie_float_to_s16(float sample)
 {
+    const float gain =
+        (float)OptionStruct.musicVolume * 0.0078125f * VideoVolume;
+
+    sample *= gain;
     if (sample >= 1.0f) {
         return INT16_MAX;
     }
     if (sample <= -1.0f) {
         return INT16_MIN;
     }
-    return (int16_t)lrintf(sample * 32767.0f);
+    return (int16_t)(int)(sample * 32767.0f);
 }
 
 static int pc_movie_consume_audio(
@@ -2766,18 +3322,25 @@ static int pc_movie_consume_audio(
     int16_t converted[
         PC_MOVIE_AUDIO_BUFFER_BYTES / sizeof(int16_t)];
     size_t sample_count;
-    size_t offset = 0;
+    size_t offset;
 
     if (movie == NULL || packet == NULL || packet->frames < 0 ||
         packet->channels <= 0 || packet->samples == NULL) {
         THEORAPLAY_freeAudio(packet);
-        return 0;
+        return PC_MOVIE_AUDIO_QUEUE_FAILED;
     }
     sample_count = (size_t)packet->frames * (size_t)packet->channels;
+    offset = movie->nextAudioSampleOffset;
+    if (offset > sample_count) {
+        THEORAPLAY_freeAudio(packet);
+        movie->nextAudioSampleOffset = 0;
+        return PC_MOVIE_AUDIO_QUEUE_FAILED;
+    }
     while (offset < sample_count) {
         size_t chunk_samples = sample_count - offset;
         DWORD chunk_bytes;
         size_t index;
+        int queue_result = PC_MOVIE_AUDIO_QUEUE_QUEUED;
 
         if (chunk_samples > sizeof(converted) / sizeof(converted[0])) {
             chunk_samples = sizeof(converted) / sizeof(converted[0]);
@@ -2787,47 +3350,64 @@ static int pc_movie_consume_audio(
                 packet->samples[offset + index]);
         }
         chunk_bytes = (DWORD)(chunk_samples * sizeof(converted[0]));
+        if (movie->audioOutput != NULL) {
+            queue_result = pc_movie_audio_queue(
+                movie, (const uint8_t *)converted, chunk_bytes);
+            if (queue_result == PC_MOVIE_AUDIO_QUEUE_FULL) {
+                movie->nextAudioSampleOffset = offset;
+                return PC_MOVIE_AUDIO_QUEUE_FULL;
+            }
+            if (queue_result != PC_MOVIE_AUDIO_QUEUE_QUEUED) {
+                THEORAPLAY_freeAudio(packet);
+                movie->nextAudioSampleOffset = 0;
+                return PC_MOVIE_AUDIO_QUEUE_FAILED;
+            }
+        }
         InterlockedExchangeAdd(
             (volatile LONG *)&movie->audioBytesDecoded,
             (LONG)chunk_bytes);
         InterlockedIncrement(
             (volatile LONG *)&movie->audioChunksDecoded);
-        if (movie->audioOutput != NULL &&
-            !pc_movie_audio_queue(
-                movie, (const uint8_t *)converted, chunk_bytes)) {
-            THEORAPLAY_freeAudio(packet);
-            return 0;
-        }
         offset += chunk_samples;
     }
-    THEORAPLAY_freeAudio(packet);
-    return 1;
+    {
+        LARGE_INTEGER started = pc_movie_audio_wait_begin(movie);
+        THEORAPLAY_freeAudio(packet);
+        pc_movie_audio_wait_end(movie, "packet_free", started);
+    }
+    movie->nextAudioSampleOffset = 0;
+    return PC_MOVIE_AUDIO_QUEUE_QUEUED;
 }
 
 static int pc_movie_pump_audio(
     PcMoviePlayback *movie,
     DWORD elapsed_ms)
 {
+    (void)elapsed_ms;
     if (movie == NULL || movie->decoder == NULL) {
         return 0;
     }
     if (movie->nextAudio == NULL) {
-        movie->nextAudio = THEORAPLAY_getAudio(movie->decoder);
+        movie->nextAudio = pc_movie_get_audio(movie);
+        movie->nextAudioSampleOffset = 0;
     }
     if (movie->nextAudio != NULL && movie->audioSampleRate == 0) {
         movie->audioSampleRate = (unsigned)movie->nextAudio->freq;
         movie->audioChannels = (unsigned)movie->nextAudio->channels;
     }
-    while (movie->nextAudio != NULL &&
-           (movie->audioOutput == NULL ||
-            movie->nextAudio->playms <= elapsed_ms + 250U)) {
+    while (movie->nextAudio != NULL) {
         const THEORAPLAY_AudioPacket *packet = movie->nextAudio;
+        int queue_result = pc_movie_consume_audio(movie, packet);
 
+        if (queue_result == PC_MOVIE_AUDIO_QUEUE_FULL) {
+            return 1;
+        }
         movie->nextAudio = NULL;
-        if (!pc_movie_consume_audio(movie, packet)) {
+        if (queue_result != PC_MOVIE_AUDIO_QUEUE_QUEUED) {
             return 0;
         }
-        movie->nextAudio = THEORAPLAY_getAudio(movie->decoder);
+        movie->nextAudio = pc_movie_get_audio(movie);
+        movie->nextAudioSampleOffset = 0;
     }
     return 1;
 }
@@ -2836,6 +3416,9 @@ static void pc_movie_playback_shutdown(PcMoviePlayback *movie)
 {
     if (movie == NULL) {
         return;
+    }
+    if (movie->active) {
+        pc_movie_report_timing(movie, 1);
     }
     movie->active = 0;
     pc_movie_audio_close_output(movie);
@@ -2851,6 +3434,7 @@ static void pc_movie_playback_shutdown(PcMoviePlayback *movie)
         THEORAPLAY_freeAudio(movie->nextAudio);
         movie->nextAudio = NULL;
     }
+    movie->nextAudioSampleOffset = 0;
     if (movie->decoder != NULL) {
         THEORAPLAY_stopDecode(movie->decoder);
         movie->decoder = NULL;
@@ -2879,13 +3463,22 @@ static int pc_movie_playback_start(
     pc_movie_playback_shutdown(movie);
     movie->framesDecoded = 0;
     movie->framesPresented = 0;
+    movie->nextTimingReportMs = 0;
+    movie->timingSamples = 0;
+    movie->timingClockErrors = 0;
+    movie->timingDeadlineMisses = 0;
+    movie->timingMaxClockSkewMs = 0.0;
+    movie->timingMaxDeadlineLateMs = 0;
+    movie->timingStallDone = 0;
     InterlockedExchange((volatile LONG *)&movie->audioBytesDecoded, 0);
     InterlockedExchange((volatile LONG *)&movie->audioBytesQueued, 0);
     InterlockedExchange((volatile LONG *)&movie->audioChunksDecoded, 0);
     InterlockedExchange((volatile LONG *)&movie->audioChunksQueued, 0);
+    movie->audioBytesQueuedAtStart = 0;
     movie->audioSampleRate = 0;
     movie->audioChannels = 0;
     movie->audioBytesPerSample = 2;
+    movie->nextAudioSampleOffset = 0;
     movie->audioOutputEnabled = audio_output_enabled;
     movie->path[0] = '\0';
     movie->error[0] = '\0';
@@ -2910,6 +3503,13 @@ static int pc_movie_playback_start(
     while (!THEORAPLAY_isInitialized(movie->decoder) &&
            THEORAPLAY_isDecoding(movie->decoder) &&
            waited_ms < 10000U) {
+        if (!pc_pump_window_messages()) {
+            pc_movie_copy_error(
+                movie, error, error_capacity,
+                "movie preload canceled while waiting for decoder");
+            pc_movie_playback_shutdown(movie);
+            return 0;
+        }
         Sleep(5);
         waited_ms += 5;
     }
@@ -2929,6 +3529,13 @@ static int pc_movie_playback_start(
            waited_ms < 10000U) {
         movie->nextVideo = THEORAPLAY_getVideo(movie->decoder);
         if (movie->nextVideo == NULL) {
+            if (!pc_pump_window_messages()) {
+                pc_movie_copy_error(
+                    movie, error, error_capacity,
+                    "movie preload canceled while waiting for video");
+                pc_movie_playback_shutdown(movie);
+                return 0;
+            }
             Sleep(5);
             waited_ms += 5;
         }
@@ -2947,6 +3554,13 @@ static int pc_movie_playback_start(
            THEORAPLAY_hasAudioStream(movie->decoder) &&
            THEORAPLAY_isDecoding(movie->decoder) &&
            waited_ms < 10000U) {
+        if (!pc_pump_window_messages()) {
+            pc_movie_copy_error(
+                movie, error, error_capacity,
+                "movie preload canceled while waiting for audio");
+            pc_movie_playback_shutdown(movie);
+            return 0;
+        }
         Sleep(5);
         waited_ms += 5;
         movie->nextAudio = THEORAPLAY_getAudio(movie->decoder);
@@ -2968,15 +3582,54 @@ static int pc_movie_playback_start(
         pc_movie_playback_shutdown(movie);
         return 0;
     }
+    if (movie->audioOutput != NULL) {
+        DWORD prebuffer_started = GetTickCount();
+        LONG queued_bytes;
+
+        while (GetTickCount() - prebuffer_started <
+               PC_MOVIE_AUDIO_PREBUFFER_MS) {
+            if (!pc_pump_window_messages()) {
+                pc_movie_copy_error(
+                    movie,
+                    error,
+                    error_capacity,
+                    "movie preload canceled while buffering audio");
+                pc_movie_playback_shutdown(movie);
+                return 0;
+            }
+            Sleep(10);
+        }
+        if (!pc_movie_pump_audio(
+                movie, PC_MOVIE_AUDIO_PREBUFFER_MS)) {
+            pc_movie_copy_error(
+                movie,
+                error,
+                error_capacity,
+                "could not prebuffer movie audio");
+            pc_movie_playback_shutdown(movie);
+            return 0;
+        }
+        queued_bytes = InterlockedCompareExchange(
+            (volatile LONG *)&movie->audioBytesQueued, 0, 0);
+        if (queued_bytes <= 0) {
+            pc_movie_copy_error(
+                movie,
+                error,
+                error_capacity,
+                "movie audio prebuffer was empty");
+            pc_movie_playback_shutdown(movie);
+            return 0;
+        }
+        movie->audioBytesQueuedAtStart = (unsigned)queued_bytes;
+        jpb_PCLog(
+            "movie audio prebuffer bytes=%u chunks=%ld wait_ms=%u",
+            movie->audioBytesQueuedAtStart,
+            InterlockedCompareExchange(
+                (volatile LONG *)&movie->audioChunksQueued, 0, 0),
+            (unsigned)PC_MOVIE_AUDIO_PREBUFFER_MS);
+    }
     movie->playbackStartTicks = GetTickCount();
     movie->active = 1;
-    if (!pc_movie_pump_audio(movie, 0)) {
-        pc_movie_copy_error(
-            movie, error, error_capacity,
-            "could not queue decoded movie audio");
-        pc_movie_playback_shutdown(movie);
-        return 0;
-    }
     pc_movie_copy_error(movie, error, error_capacity, "none");
     return 1;
 }
@@ -3005,20 +3658,33 @@ static int pc_movie_present_frame(
 {
     DWORD elapsed_ms;
     int audio_pending = 0;
-    unsigned index;
+    PcMovieAudioBuffer *audio_buffer;
 
     (void)first_frame_wait_ms;
     if (movie == NULL || !movie->active || framebuffer == NULL ||
         framebuffer->pixels == NULL || movie->decoder == NULL) {
         return 0;
     }
+    if (movie->timingProbe) {
+        QueryPerformanceCounter(&movie->timingFrameStart);
+        movie->timingFrameCpuValid =
+            pc_movie_thread_cpu_ticks(&movie->timingFrameCpuStart);
+    }
+    if (movie->timingProbe && movie->timingStallMs != 0 &&
+        !movie->timingStallDone && !movie->audioOutputPaused &&
+        GetTickCount() - movie->playbackStartTicks >= 5000) {
+        movie->timingStallDone = 1;
+        Sleep(movie->timingStallMs);
+    }
     elapsed_ms = GetTickCount() - movie->playbackStartTicks;
-    if (!pc_movie_pump_audio(movie, elapsed_ms)) {
+    if (!movie->audioOutputPaused &&
+        !pc_movie_pump_audio(movie, elapsed_ms)) {
         pc_movie_copy_error(
             movie, NULL, 0, "could not queue decoded movie audio");
         pc_movie_playback_shutdown(movie);
         return 0;
     }
+    if (movie->timingProbe) QueryPerformanceCounter(&movie->timingAfterAudio);
     if (movie->nextVideo == NULL) {
         movie->nextVideo = THEORAPLAY_getVideo(movie->decoder);
         if (movie->nextVideo != NULL) {
@@ -3037,6 +3703,7 @@ static int pc_movie_present_frame(
             ++movie->framesDecoded;
         }
     }
+    if (movie->timingProbe) QueryPerformanceCounter(&movie->timingAfterVideo);
     pc_movie_fill_black(framebuffer);
     if (movie->currentVideo != NULL &&
         movie->currentVideo->pixels != NULL &&
@@ -3082,10 +3749,13 @@ static int pc_movie_present_frame(
         movie->lastPresentedFrame = movie->framesDecoded;
         ++movie->framesPresented;
     }
+    if (movie->timingProbe) QueryPerformanceCounter(&movie->timingAfterBlit);
     if (movie->audioOutput != NULL) {
-        for (index = 0; index < PC_MOVIE_AUDIO_BUFFER_COUNT; ++index) {
-            if ((movie->audioHeaders[index].dwFlags & WHDR_PREPARED) != 0 &&
-                (movie->audioHeaders[index].dwFlags & WHDR_DONE) == 0) {
+        for (audio_buffer = movie->audioBuffers;
+             audio_buffer != NULL;
+             audio_buffer = audio_buffer->next) {
+            if ((audio_buffer->header.dwFlags & WHDR_PREPARED) != 0 &&
+                (audio_buffer->header.dwFlags & WHDR_DONE) == 0) {
                 audio_pending = 1;
                 break;
             }
@@ -3139,6 +3809,8 @@ static void pc_movie_sync_input_counts(PcInput *input)
         audio_queued_bytes > 0 ? (unsigned)audio_queued_bytes : 0;
     input->movieAudioQueuedChunkCount =
         audio_queued_chunks > 0 ? (unsigned)audio_queued_chunks : 0;
+    input->movieAudioPrebufferByteCount =
+        input->moviePlayback->audioBytesQueuedAtStart;
     bytes_per_sample_frame =
         input->moviePlayback->audioChannels *
         input->moviePlayback->audioBytesPerSample;
@@ -3167,6 +3839,19 @@ static void pc_trigger_movie(
     if (input == NULL) {
         return;
     }
+    /* Retail PlayVideo blocks: menu_demoMovie requests 9, 8, 0 in order.
+     * Keep those requests and their individual gains across async playback. */
+    if (input->moviePending ||
+        (input->moviePlayback != NULL && input->moviePlayback->active)) {
+        unsigned queued = input->movieQueueCount;
+        if (queued < 8) {
+            input->movieQueueIndex[queued] = movie;
+            input->movieQueueFlags[queued] = flags;
+            input->movieQueueVolume[queued] = VideoVolume;
+            ++input->movieQueueCount;
+        }
+        return;
+    }
     ++input->movieRequestCount;
     input->movieLastIndex = movie;
     input->movieLastFlags = flags;
@@ -3186,6 +3871,10 @@ static void pc_trigger_movie(
             "%s",
             path);
         input->moviePending = 1;
+        input->moviePendingVolume = VideoVolume;
+        vibration_stop(0);
+        vibration_stop(1);
+        jpb_PCAudioSetMoviePlayback(input->currentAudio, 1);
     }
     jpb_PCLog(
         "movie trigger index=%u flags=%d resolved=%d queued=%d "
@@ -3211,6 +3900,10 @@ static int pc_start_pending_movie(PcInput *input)
         return 0;
     }
     input->moviePending = 0;
+    VideoVolume = input->moviePendingVolume;
+    vibration_stop(0);
+    vibration_stop(1);
+    jpb_PCAudioSetMoviePlayback(input->currentAudio, 1);
     started = pc_movie_playback_start(
         input->moviePlayback,
         input->movieLastPath,
@@ -3223,6 +3916,7 @@ static int pc_start_pending_movie(PcInput *input)
         ++input->movieLaunchCount;
     } else {
         ++input->movieStartFailureCount;
+        jpb_PCAudioSetMoviePlayback(input->currentAudio, 0);
     }
     jpb_PCLog(
         "movie launch index=%u started=%d path=%s error=%s",
@@ -3235,6 +3929,30 @@ static int pc_start_pending_movie(PcInput *input)
     return started;
 }
 
+static void pc_end_movie_playback(PcInput *input)
+{
+    if (input == NULL) {
+        return;
+    }
+    if (input->moviePlayback != NULL && input->moviePlayback->active) {
+        pc_movie_playback_shutdown(input->moviePlayback);
+    }
+    jpb_PCAudioSetMoviePlayback(input->currentAudio, 0);
+    if (input->movieQueueCount != 0) {
+        unsigned movie = input->movieQueueIndex[0];
+        int flags = input->movieQueueFlags[0];
+        unsigned i;
+        VideoVolume = input->movieQueueVolume[0];
+        --input->movieQueueCount;
+        for (i = 0; i < input->movieQueueCount; ++i) {
+            input->movieQueueIndex[i] = input->movieQueueIndex[i + 1];
+            input->movieQueueFlags[i] = input->movieQueueFlags[i + 1];
+            input->movieQueueVolume[i] = input->movieQueueVolume[i + 1];
+        }
+        pc_trigger_movie(movie, flags, input);
+    }
+}
+
 static void pc_trigger_auto_intro_movie(
     PcInput *input,
     unsigned movie,
@@ -3242,6 +3960,13 @@ static void pc_trigger_auto_intro_movie(
 {
     if (input == NULL) {
         return;
+    }
+    /* menu_demoMovie establishes this before the title film, and the same
+     * value remains in force when menu_initLoadBar owns the FED film. The
+     * host invokes those two films after their asynchronous ownership
+     * boundaries, so carry forward the PDB-matched movie gain explicitly. */
+    if (movie == 0 || movie == 1) {
+        VideoVolume = 0.45f;
     }
     pc_trigger_movie(movie, 0, input);
     jpb_PCLog(
@@ -3556,6 +4281,111 @@ static void pc_store_cached_live_pad_state(
     input->livePadCacheValid |= (uint8_t)(1u << pad_index);
 }
 
+static int pc_keyboard_player(PcInput *input)
+{
+    uint16_t menu_mode;
+
+    if (input == NULL) {
+        return 0;
+    }
+
+    menu_mode = menuVars.menuMode[menuVars.menuModeSP & 7u];
+    if ((menu_mode == 0x0d || menu_mode == 0x0e) &&
+        GameStruct.NumPlayers == 2) {
+        if (!input->twoPlayerInputSessionActive) {
+            /* Lock the device that entered two-player character selection
+             * to P1, for both co-op and Versus. Before this boundary either
+             * device may own P1; afterward keyboard can join P2 immediately. */
+            input->playerOneUsesKeyboard = lastUsedInputType == 0;
+            input->playerTwoUsesKeyboard = 0;
+            input->playerTwoControllerSlot = 0;
+            input->twoPlayerInputSessionActive = 1;
+        }
+    } else if (GameStruct.NumPlayers != 2) {
+        if (input->twoPlayerInputSessionActive) {
+            input->playerOneUsesKeyboard = 0;
+            input->playerTwoUsesKeyboard = 0;
+            input->playerTwoControllerSlot = 0;
+            input->gameplayHandoffReleaseMask = 0;
+            p2Connected = 0;
+            p2Disconnected = 0;
+        }
+        input->twoPlayerInputSessionActive = 0;
+    }
+
+    if (GameStruct.NumPlayers != 2) {
+        if (input != NULL) {
+            input->playerTwoUsesKeyboard = 0;
+        }
+        return 0;
+    }
+    if (input->playerTwoUsesKeyboard) {
+        return 1;
+    }
+    if (input->playerOneUsesKeyboard) {
+        return 0;
+    }
+
+    if (input->twoPlayerInputSessionActive) {
+        return 1;
+    }
+    return 0;
+}
+
+static uint32_t pc_read_live_keyboard(
+    const PcInput *input,
+    float *keyboard_x,
+    float *keyboard_y)
+{
+    JPBPCGameplayKeyboardState keyboard;
+
+    memset(&keyboard, 0, sizeof(keyboard));
+    if (pc_keyboard_has_focus(input)) {
+        keyboard.moveUp =
+            (GetAsyncKeyState('W') & 0x8000) != 0 ||
+            (GetAsyncKeyState(VK_UP) & 0x8000) != 0;
+        keyboard.moveLeft =
+            (GetAsyncKeyState('A') & 0x8000) != 0 ||
+            (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0;
+        keyboard.moveDown =
+            (GetAsyncKeyState('S') & 0x8000) != 0 ||
+            (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0;
+        keyboard.moveRight =
+            (GetAsyncKeyState('D') & 0x8000) != 0 ||
+            (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0;
+        keyboard.walkModifier =
+            (GetAsyncKeyState(VK_LCONTROL) & 0x8000) != 0;
+        keyboard.zoomIn = (GetAsyncKeyState('T') & 0x8000) != 0;
+        keyboard.comboSouth = (GetAsyncKeyState('J') & 0x8000) != 0;
+        keyboard.comboWest = (GetAsyncKeyState('K') & 0x8000) != 0;
+        keyboard.comboNorth = (GetAsyncKeyState('L') & 0x8000) != 0;
+        keyboard.lockOn = (GetAsyncKeyState('H') & 0x8000) != 0;
+        keyboard.jumpBlockChord =
+            (GetAsyncKeyState('U') & 0x8000) != 0;
+        keyboard.northBlockChord =
+            (GetAsyncKeyState('I') & 0x8000) != 0;
+        keyboard.southBlockChord =
+            (GetAsyncKeyState('O') & 0x8000) != 0;
+        keyboard.westBlockChord =
+            (GetAsyncKeyState('Y') & 0x8000) != 0;
+        keyboard.block =
+            (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0 ||
+            (GetAsyncKeyState(VK_RSHIFT) & 0x8000) != 0;
+        keyboard.space =
+            (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
+        keyboard.enter =
+            (GetAsyncKeyState(VK_RETURN) & 0x8000) != 0;
+        keyboard.escape =
+            (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+    }
+    return jpb_PCMapKeyboard(
+        &keyboard,
+        GameStruct.inMenuFlag,
+        GameStruct.gameMode,
+        keyboard_x,
+        keyboard_y);
+}
+
 static uint32_t pc_read_pad_uncached(int32_t pad_index, void *user_data)
 {
     PcInput *input = (PcInput *)user_data;
@@ -3568,6 +4398,7 @@ static uint32_t pc_read_pad_uncached(int32_t pad_index, void *user_data)
     unsigned controller_user = 0;
     int read_controller;
     int controller_connected;
+    int keyboard_player;
 
     if (pad_index < 0 || pad_index > 1) {
         return 0;
@@ -3601,22 +4432,34 @@ static uint32_t pc_read_pad_uncached(int32_t pad_index, void *user_data)
                 headless_bits = input->headlessPhasePlayerTwoBits;
             }
         }
-        if (pad_index == 0 &&
-            (input->headlessPhaseKeyboardMask & UINT8_C(1)) != 0) {
+        keyboard_player = pc_keyboard_player(input);
+        if (pad_index == keyboard_player &&
+            input->headlessPhaseKeyboardMask != 0) {
             headless_bits = jpb_PCMapKeyboard(
                 &input->headlessPhaseKeyboard,
                 GameStruct.inMenuFlag,
                 GameStruct.gameMode,
                 &headless_x,
                 &headless_y);
-            input->playerOneUsesKeyboard = 1;
-            player1InputType = 0;
-            lastUsedInputType = 0;
-            g_p1X = headless_x;
-            g_p1Y = headless_y;
+            if (headless_bits != 0) {
+                input->playerOneUsesKeyboard = pad_index == 0;
+                input->playerTwoUsesKeyboard = pad_index == 1;
+                lastUsedInputType = 0;
+            }
+            if (pad_index == 0) {
+                player1InputType = 0;
+                g_p1X = headless_x;
+                g_p1Y = headless_y;
+            } else {
+                player2InputType = 0;
+                p2Connected = 1;
+                g_p2X = headless_x;
+                g_p2Y = headless_y;
+            }
         } else if ((input->headlessPhaseXInputMask &
              (uint8_t)(1u << (unsigned)pad_index)) != 0) {
-            if (pad_index == 0 && input->playerOneUsesKeyboard) {
+            if (pad_index == 0 && GameStruct.NumPlayers == 2 &&
+                input->playerOneUsesKeyboard) {
                 player1InputType = 0;
                 g_p1X = 0.0f;
                 g_p1Y = 0.0f;
@@ -3639,7 +4482,22 @@ static uint32_t pc_read_pad_uncached(int32_t pad_index, void *user_data)
                 g_p2X = headless_x;
                 g_p2Y = headless_y;
             }
-            lastUsedInputType = 1;
+            if (headless_bits != 0) {
+                lastUsedInputType = 1;
+                if (pad_index == 0 && GameStruct.NumPlayers != 2) {
+                    input->playerOneUsesKeyboard = 0;
+                }
+            }
+        } else if (input->headlessPhaseKeyboardMask != 0 ||
+                   input->headlessPhaseXInputMask != 0) {
+            if (pad_index == 0) {
+                g_p1X = 0.0f;
+                g_p1Y = 0.0f;
+            } else {
+                g_p2X = 0.0f;
+                g_p2Y = 0.0f;
+            }
+            return 0;
         } else {
             if (input->phaseCount != 0 && !input->headlessActive) {
                 if (pad_index == 0) {
@@ -3656,14 +4514,15 @@ static uint32_t pc_read_pad_uncached(int32_t pad_index, void *user_data)
             if ((headless_bits & JPB_PAD_UP) != 0) headless_y -= 1.0f;
             if ((headless_bits & JPB_PAD_DOWN) != 0) headless_y += 1.0f;
             if (pad_index == 0) {
-                input->playerOneUsesKeyboard = 1;
-                player1InputType = 0;
-                lastUsedInputType = 0;
+                if (headless_bits != 0 && !input->twoPlayerInputSessionActive) {
+                    input->playerOneUsesKeyboard = 1;
+                    lastUsedInputType = 0;
+                }
+                player1InputType = input->playerOneUsesKeyboard ? 0 : 1;
                 g_p1X = headless_x;
                 g_p1Y = headless_y;
             } else {
-                /* The matched PC owner never assigns P2 to the keyboard. */
-                player2InputType = 1;
+                player2InputType = input->playerTwoUsesKeyboard ? 0 : 1;
                 g_p2X = headless_x;
                 g_p2Y = headless_y;
             }
@@ -3693,12 +4552,12 @@ static uint32_t pc_read_pad_uncached(int32_t pad_index, void *user_data)
         return 0;
     }
     /*
-     * Device ownership follows the recovered Windows arrangement: keyboard
-     * is P1-only. Once a two-player flow has assigned P1 to keyboard, the
+     * Once a two-player flow has assigned P1 to keyboard, the
      * first connected controller belongs to P2 instead of being silently
      * reserved as P1's controller.
      */
     (void)jpb_PCXInputConnectedCount(&input->xinput);
+    keyboard_player = pc_keyboard_player(input);
     pc_refresh_controller_ownership(input);
     read_controller = jpb_PCControllerUserForPlayer(
         (unsigned)pad_index,
@@ -3731,6 +4590,29 @@ static uint32_t pc_read_pad_uncached(int32_t pad_index, void *user_data)
         g_p2Y = controller_y;
     }
     if (pad_index == 1) {
+        if (keyboard_player == 1) {
+            bits = pc_read_live_keyboard(
+                input, &keyboard_x, &keyboard_y);
+            if (bits != 0) {
+                input->playerTwoUsesKeyboard = 1;
+                input->playerOneUsesKeyboard = 0;
+                lastUsedInputType = 0;
+                player2InputType = 0;
+                p2Connected = 1;
+                padExist |= UINT8_C(2);
+                g_p2X = keyboard_x;
+                g_p2Y = keyboard_y;
+                return pc_filter_gameplay_handoff_input(input, 1u, bits);
+            }
+            if (input->playerTwoUsesKeyboard) {
+                player2InputType = 0;
+                p2Connected = 1;
+                padExist |= UINT8_C(2);
+                g_p2X = 0.0f;
+                g_p2Y = 0.0f;
+                return 0;
+            }
+        }
         controller_bits = pc_filter_gameplay_handoff_input(
             input, 1u, controller_bits);
         if (controller_bits == 0) {
@@ -3743,74 +4625,29 @@ static uint32_t pc_read_pad_uncached(int32_t pad_index, void *user_data)
         }
         return controller_bits;
     }
-    {
-        JPBPCGameplayKeyboardState keyboard;
-
-        memset(&keyboard, 0, sizeof(keyboard));
-        if (pc_keyboard_has_focus(input)) {
-            keyboard.moveUp =
-                (GetAsyncKeyState('W') & 0x8000) != 0 ||
-                (GetAsyncKeyState(VK_UP) & 0x8000) != 0;
-            keyboard.moveLeft =
-                (GetAsyncKeyState('A') & 0x8000) != 0 ||
-                (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0;
-            keyboard.moveDown =
-                (GetAsyncKeyState('S') & 0x8000) != 0 ||
-                (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0;
-            keyboard.moveRight =
-                (GetAsyncKeyState('D') & 0x8000) != 0 ||
-                (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0;
-            keyboard.walkModifier =
-                (GetAsyncKeyState(VK_LCONTROL) & 0x8000) != 0;
-            keyboard.zoomIn = (GetAsyncKeyState('T') & 0x8000) != 0;
-            keyboard.comboSouth = (GetAsyncKeyState('J') & 0x8000) != 0;
-            keyboard.comboWest = (GetAsyncKeyState('K') & 0x8000) != 0;
-            keyboard.comboNorth = (GetAsyncKeyState('L') & 0x8000) != 0;
-            keyboard.lockOn = (GetAsyncKeyState('H') & 0x8000) != 0;
-            keyboard.jumpBlockChord =
-                (GetAsyncKeyState('U') & 0x8000) != 0;
-            keyboard.northBlockChord =
-                (GetAsyncKeyState('I') & 0x8000) != 0;
-            keyboard.southBlockChord =
-                (GetAsyncKeyState('O') & 0x8000) != 0;
-            keyboard.westBlockChord =
-                (GetAsyncKeyState('Y') & 0x8000) != 0;
-            keyboard.block =
-                (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0 ||
-                (GetAsyncKeyState(VK_RSHIFT) & 0x8000) != 0;
-            keyboard.space =
-                (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
-            keyboard.enter =
-                (GetAsyncKeyState(VK_RETURN) & 0x8000) != 0;
-            keyboard.escape =
-                (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
-        }
-        bits = jpb_PCMapKeyboard(
-            &keyboard,
-            GameStruct.inMenuFlag,
-            GameStruct.gameMode,
-            &keyboard_x,
-            &keyboard_y);
-    }
+    bits = keyboard_player == 0
+        ? pc_read_live_keyboard(input, &keyboard_x, &keyboard_y)
+        : 0;
     if (bits != 0) {
         input->playerOneUsesKeyboard = 1;
+        input->playerTwoUsesKeyboard = 0;
         pc_refresh_controller_ownership(input);
         lastUsedInputType = 0;
         player1InputType = 0;
         g_p1X = keyboard_x;
         g_p1Y = keyboard_y;
     } else if (controller_bits != 0) {
-        if (input->playerOneUsesKeyboard) {
-            player1InputType = 0;
-            g_p1X = 0.0f;
-            g_p1Y = 0.0f;
-            controller_bits = 0;
-        } else if (GameStruct.NumPlayers != 2) {
+        if (GameStruct.NumPlayers != 2) {
             input->playerOneUsesKeyboard = 0;
             lastUsedInputType = 1;
             player1InputType = 1;
             g_p1X = controller_x;
             g_p1Y = controller_y;
+        } else if (input->playerOneUsesKeyboard) {
+            player1InputType = 0;
+            g_p1X = 0.0f;
+            g_p1Y = 0.0f;
+            controller_bits = 0;
         } else {
             lastUsedInputType = 1;
             player1InputType = 1;
@@ -3853,6 +4690,76 @@ static uint32_t pc_read_pad(int32_t pad_index, void *user_data)
             input, (unsigned)pad_index, bits);
     }
     return bits;
+}
+
+/* Process-local regression: exercises the same pad reader as scripted/live
+ * flows without creating a window, polling hardware, or loading game data. */
+static int pc_test_two_player_input_lifecycle(void)
+{
+    PcInput probe = {0};
+    unsigned cases = 0;
+    int mode;
+    int keyboard_first;
+    int pass;
+
+#define PC_INPUT_CHECK(condition) do { if (!(condition)) { \
+    fprintf(stderr, "two-player input check failed line=%d mode=%d keyboard=%d pass=%d\n", \
+        __LINE__, mode, keyboard_first, pass); return 1; } } while (0)
+    OptionStruct = defaultOptionStruct;
+    probe.headless = 1;
+    probe.headlessActive = 1;
+    GameStruct.inMenuFlag = 1;
+    menuVars.menuModeSP = 0;
+    for (mode = 0x0d; mode <= 0x0e; ++mode) {
+        for (keyboard_first = 0; keyboard_first <= 1; ++keyboard_first) {
+            for (pass = 0; pass < 2; ++pass) {
+                /* The second pass starts with the preceding session's
+                 * ownership intact, as it does on Quit or selector abort. */
+                GameStruct.NumPlayers = 1;
+                GameStruct.gameMode = 0;
+                menuVars.menuMode[0] = 0;
+                probe.headlessPhaseXInputMask = 0;
+                probe.headlessPhaseKeyboardMask = 1;
+                probe.headlessPhaseKeyboard.space = 1;
+                PC_INPUT_CHECK(pc_read_pad(0, &probe) & (JPB_PAD_COMBO_SOUTH | JPB_PAD_START));
+                PC_INPUT_CHECK(!probe.twoPlayerInputSessionActive);
+                PC_INPUT_CHECK(probe.playerTwoControllerSlot == 0);
+                probe.headlessPhaseKeyboardMask = 0;
+                probe.headlessPhaseXInputMask = 1;
+                probe.headlessPhaseGamepads[0].buttons = JPB_PC_XINPUT_A;
+                PC_INPUT_CHECK(pc_read_pad(0, &probe) & (JPB_PAD_COMBO_SOUTH | JPB_PAD_START));
+                PC_INPUT_CHECK(!probe.playerOneUsesKeyboard);
+                if (keyboard_first) {
+                    probe.headlessPhaseXInputMask = 0;
+                    probe.headlessPhaseKeyboardMask = 1;
+                    PC_INPUT_CHECK(pc_read_pad(0, &probe) & (JPB_PAD_COMBO_SOUTH | JPB_PAD_START));
+                }
+                GameStruct.NumPlayers = 2;
+                menuVars.menuMode[0] = (uint16_t)mode;
+                (void)pc_keyboard_player(&probe);
+                PC_INPUT_CHECK(probe.twoPlayerInputSessionActive);
+                PC_INPUT_CHECK(probe.playerOneUsesKeyboard == keyboard_first);
+                /* P2 can confirm first without stealing P1's device. */
+                probe.headlessPhaseKeyboardMask = keyboard_first ? 0 : 1;
+                probe.headlessPhaseXInputMask = keyboard_first ? 2 : 0;
+                probe.headlessPhaseGamepads[1].buttons = JPB_PC_XINPUT_A;
+                PC_INPUT_CHECK(pc_read_pad(0, &probe) == 0);
+                PC_INPUT_CHECK(pc_read_pad(1, &probe) & (JPB_PAD_COMBO_SOUTH | JPB_PAD_START));
+                PC_INPUT_CHECK(probe.playerOneUsesKeyboard == keyboard_first);
+                probe.headlessPhaseKeyboardMask = keyboard_first ? 1 : 0;
+                probe.headlessPhaseXInputMask = keyboard_first ? 0 : 1;
+                PC_INPUT_CHECK(pc_read_pad(0, &probe) & (JPB_PAD_COMBO_SOUTH | JPB_PAD_START));
+                PC_INPUT_CHECK(pc_read_pad(1, &probe) == 0);
+                GameStruct.gameMode = 6;
+                menuVars.menuMode[0] = 0x2a;
+                PC_INPUT_CHECK(pc_keyboard_player(&probe) == (keyboard_first ? 0 : 1));
+                ++cases;
+            }
+        }
+    }
+#undef PC_INPUT_CHECK
+    printf("two_player_input_lifecycle=(cases=%u,valid=1)\n", cases);
+    return 0;
 }
 
 static uint32_t pc_read_brainutl_cheat_chords(void *user_data)
@@ -3974,8 +4881,17 @@ static LRESULT CALLBACK pc_window_proc(
         pc_running = 0;
         PostQuitMessage(0);
         return 0;
-    case WM_ERASEBKGND:
+    case WM_ERASEBKGND: {
+        RECT client;
+
+        if (GetClientRect(window, &client)) {
+            FillRect(
+                (HDC)wparam,
+                &client,
+                (HBRUSH)GetStockObject(BLACK_BRUSH));
+        }
         return 1;
+    }
     default:
         return DefWindowProcA(window, message, wparam, lparam);
     }
@@ -3998,6 +4914,8 @@ static HWND pc_create_window(
     window_class.lpfnWndProc = pc_window_proc;
     window_class.hInstance = instance;
     window_class.hCursor = LoadCursorA(NULL, IDC_ARROW);
+    window_class.hbrBackground =
+        (HBRUSH)GetStockObject(BLACK_BRUSH);
     window_class.lpszClassName = "JediPowerBattlesPC";
     if (!RegisterClassA(&window_class) &&
         GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
@@ -4029,6 +4947,7 @@ static int pc_set_window_resolution(
     int width,
     int height,
     unsigned window_mode,
+    int visible,
     int *exclusive_fullscreen_active)
 {
     HMONITOR monitor = MonitorFromWindow(
@@ -4049,11 +4968,11 @@ static int pc_set_window_resolution(
         mode.dmPelsWidth = (DWORD)width;
         mode.dmPelsHeight = (DWORD)height;
         mode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
-        if (ChangeDisplaySettingsA(&mode, CDS_FULLSCREEN) !=
+        if (visible && ChangeDisplaySettingsA(&mode, CDS_FULLSCREEN) !=
             DISP_CHANGE_SUCCESSFUL) {
             return 0;
         }
-        *exclusive_fullscreen_active = 1;
+        *exclusive_fullscreen_active = visible;
         style = WS_POPUP;
         x = monitor_info.rcMonitor.left;
         y = monitor_info.rcMonitor.top;
@@ -4103,7 +5022,7 @@ static int pc_set_window_resolution(
                y,
                width,
                height,
-               SWP_FRAMECHANGED | SWP_SHOWWINDOW) != 0;
+               SWP_FRAMECHANGED | SWP_NOACTIVATE | (visible ? SWP_SHOWWINDOW : 0)) != 0;
 }
 
 static int pc_apply_pending_resolution(
@@ -4154,6 +5073,7 @@ static int pc_apply_pending_resolution(
             width,
             height,
             input->resolutionWindowMode,
+            !input->hiddenWindow,
             &input->exclusiveFullscreenActive)) {
         free(new_title_pixels);
         free(new_pixels);
@@ -4172,10 +5092,12 @@ static int pc_apply_pending_resolution(
     input->movieFramebufferWidth = width;
     input->movieFramebufferHeight = height;
     jpb_PCLog(
-        "resolution applied source=%dx%d window_mode=%u",
+        "resolution applied source=%dx%d window_mode=%u style=%08lx visible=%d",
         width,
         height,
-        input->resolutionWindowMode);
+        input->resolutionWindowMode,
+        (unsigned long)GetWindowLongPtrA(window, GWL_STYLE),
+        IsWindowVisible(window) != 0);
     return 1;
 }
 
@@ -4305,6 +5227,7 @@ static int pc_set_hardware_render_hooks(
     JPBSoftwareOwnedLevelMesh *jpx_hardware_level,
     int require_level_mesh)
 {
+    jpb_PCD3D11PresenterResetLevelResources(presenter);
     if (runtime->levelRenderMesh != &jpx_hardware_level->mesh) {
         jpb_SoftwareFreeOwnedLevelMesh(jpx_hardware_level);
     }
@@ -4441,6 +5364,9 @@ static int pc_prewarm_hardware_level(
             runtime->levelRenderMesh,
             pc_resolve_level_texture,
             runtime)) {
+        jpb_PCLog(
+            "D3D11 level prewarm failed stage=textures HRESULT=0x%08lx",
+            (unsigned long)jpb_PCD3D11PresenterLastError(presenter));
         return 0;
     }
     depth_values = (float *)malloc(
@@ -4478,6 +5404,10 @@ static int pc_prewarm_hardware_level(
             "D3D11 level draw prewarm completed source=%dx%d",
             framebuffer->width,
             framebuffer->height);
+    } else {
+        jpb_PCLog(
+            "D3D11 level prewarm failed stage=draw HRESULT=0x%08lx",
+            (unsigned long)jpb_PCD3D11PresenterLastError(presenter));
     }
     return result;
 }
@@ -5929,8 +6859,8 @@ static size_t pc_count_screen_polys_without_recovered_hud_owner(
         return 0;
     }
     captured_count = runtime->screenPolyDrawCount;
-    if (captured_count > JPB_GAME_RUNTIME_SCREEN_POLY_CAPACITY) {
-        captured_count = JPB_GAME_RUNTIME_SCREEN_POLY_CAPACITY;
+    if (captured_count > runtime->screenPolyCapacity) {
+        captured_count = runtime->screenPolyCapacity;
     }
     for (draw_index = 0; draw_index < captured_count; ++draw_index) {
         const JPBGameRuntimeScreenPolyDraw *draw =
@@ -6000,8 +6930,8 @@ static size_t pc_count_screen_polys_matching(
         return 0;
     }
     captured_count = runtime->screenPolyDrawCount;
-    if (captured_count > JPB_GAME_RUNTIME_SCREEN_POLY_CAPACITY) {
-        captured_count = JPB_GAME_RUNTIME_SCREEN_POLY_CAPACITY;
+    if (captured_count > runtime->screenPolyCapacity) {
+        captured_count = runtime->screenPolyCapacity;
     }
     for (draw_index = 0; draw_index < captured_count; ++draw_index) {
         if (predicate(&runtime->screenPolyDraws[draw_index])) {
@@ -8062,8 +8992,8 @@ static void pc_print_screen_poly_trace(
         return;
     }
     captured_count = runtime->screenPolyDrawCount;
-    if (captured_count > JPB_GAME_RUNTIME_SCREEN_POLY_CAPACITY) {
-        captured_count = JPB_GAME_RUNTIME_SCREEN_POLY_CAPACITY;
+    if (captured_count > runtime->screenPolyCapacity) {
+        captured_count = runtime->screenPolyCapacity;
     }
     for (draw_index = 0; draw_index < captured_count; ++draw_index) {
         const JPBGameRuntimeScreenPolyDraw *draw =
@@ -8380,6 +9310,7 @@ static int pc_fbx_sidecar_path(
     }
     memcpy(fbx_path, level_path, stem_length);
     memcpy(fbx_path + stem_length, ".fbx", sizeof(".fbx"));
+    (void)jpb_ModsResolvePath(fbx_path, fbx_path, capacity);
     return 1;
 }
 
@@ -8427,7 +9358,7 @@ static int pc_attach_fbx_level(
     }
     *fbx_level_loaded = 1;
     jpb_GameRuntimeSetLevelRenderMesh(runtime, &fbx_level->mesh);
-    printf(
+    jpb_PCLog(
         "level_fbx=%s batches=%zu vertices=%zu triangles=%zu\n",
         fbx_path,
         fbx_level->mesh.batchCount,
@@ -8865,7 +9796,8 @@ static int pc_fed_traversal_target(
     int *target_placement)
 {
     enum {
-        FED_TRAVERSAL_BLOCKING_ENEMY_RANGE = 1280
+        FED_TRAVERSAL_BLOCKING_ENEMY_RANGE = 1280,
+        FED_TRAVERSAL_TARGET_GATE_RANGE = 1536
     };
     const FVECTOR *player_position;
     FVECTOR placement_target = {0.0f, 0.0f, 0.0f};
@@ -8897,9 +9829,77 @@ static int pc_fed_traversal_target(
         if (placement == NULL) {
             return 0;
         }
-        target->vx = (float)placement->loc.vx;
-        target->vy = (float)placement->loc.vy;
-        target->vz = (float)placement->loc.vz;
+        if (!input->fedProjectileSoakHarness) {
+            for (index = 0; index < 20; ++index) {
+                wsl_ENEMY *enemy = &aEnemyListNodes[index];
+                VECTOR *position;
+                float delta_x;
+                float delta_z;
+                float trigger_delta_x;
+                float trigger_delta_z;
+                float distance_squared;
+
+                if (enemy->active == 0 || enemy->ownerType != 2 ||
+                    enemy->pPlayer == NULL ||
+                    game_gGetEnergy(enemy->pPlayer->playernum) <= 0) {
+                    continue;
+                }
+                position = physics_gGetPosition(
+                    &enemy->pPlayer->playerRoot);
+                if (position == NULL) {
+                    continue;
+                }
+                delta_x = (float)position->vx - player_position->vx;
+                delta_z = (float)position->vz - player_position->vz;
+                trigger_delta_x =
+                    (float)position->vx - (float)placement->loc.vx;
+                trigger_delta_z =
+                    (float)position->vz - (float)placement->loc.vz;
+                if (trigger_delta_x * trigger_delta_x +
+                        trigger_delta_z * trigger_delta_z >
+                    (float)(FED_TRAVERSAL_TARGET_GATE_RANGE *
+                            FED_TRAVERSAL_TARGET_GATE_RANGE)) {
+                    continue;
+                }
+                distance_squared = delta_x * delta_x + delta_z * delta_z;
+                if (distance_squared < best_enemy_distance_squared) {
+                    best_enemy_distance_squared = distance_squared;
+                    enemy_target.vx = (float)position->vx;
+                    enemy_target.vy = (float)position->vy;
+                    enemy_target.vz = (float)position->vz;
+                    enemy_index = enemy->enemyID;
+                }
+            }
+            if (enemy_index >= 0 &&
+                best_enemy_distance_squared <=
+                    (float)(FED_TRAVERSAL_BLOCKING_ENEMY_RANGE *
+                            FED_TRAVERSAL_BLOCKING_ENEMY_RANGE)) {
+                *target = enemy_target;
+                *target_enemy = enemy_index;
+                return 1;
+            }
+        }
+        if (input->fedProjectileSoakHarness) {
+            wsl_ENEMY *enemy = pc_enemy_for_placement(runtime, requested);
+            VECTOR *position =
+                enemy != NULL && enemy->pPlayer != NULL
+                    ? physics_gGetPosition(&enemy->pPlayer->playerRoot)
+                    : NULL;
+
+            if (position != NULL) {
+                target->vx = (float)position->vx;
+                target->vy = (float)position->vy;
+                target->vz = (float)position->vz;
+            } else {
+                target->vx = (float)placement->loc.vx;
+                target->vy = (float)placement->loc.vy;
+                target->vz = (float)placement->loc.vz;
+            }
+        } else {
+            target->vx = (float)placement->loc.vx;
+            target->vy = (float)placement->loc.vy;
+            target->vz = (float)placement->loc.vz;
+        }
         *target_placement = requested;
         return 1;
     }
@@ -8996,9 +9996,269 @@ static int pc_fed_traversal_target(
     return 0;
 }
 
+static void pc_report_fed_first_door_gate(
+    const PcInput *input,
+    const JPBGameRuntime *runtime,
+    int active_frame)
+{
+    enum {
+        FED_FIRST_DOOR_CONTROLLER_PLACEMENT = 123,
+        FED_FIRST_DOOR_TRIGGER_PLACEMENT = 157,
+        FED_FIRST_DOOR_OWNER_CLEAR_RANGE = 1536
+    };
+    const wsl_BAP_PLACEMENT *trigger_placement;
+    wsl_ENEMY *trigger;
+    const wsl_BAP_PLACEMENT *door_placement;
+    wsl_ENEMY *door;
+    JPBGameRuntimeEnemyPlacementState door_state;
+    physicsObject *door_physics = NULL;
+    modelObject *door_model = NULL;
+    _solid *door_solid = NULL;
+    _svector door_solid_min = {0, 0, 0, 0};
+    _svector door_solid_max = {0, 0, 0, 0};
+    int door_solid_vertices = 0;
+    int door_state_valid;
+    int player_range = 0x1fffe;
+    int owner_range = 0x1fffe;
+    int nearest_owner_placement = -1;
+    int nearest_owner_energy = -1;
+    int nearest_owner_active = 0;
+    int nearest_owner_exit = 0;
+    int nearest_owner_status = -1;
+    uint32_t nearest_owner_flags = 0;
+    int owners_inside_gate = 0;
+    int enemy_index;
+    char report[1400];
+
+    if (input == NULL || !input->fedTraversalHarness ||
+        runtime == NULL || runtime->world == NULL ||
+        runtime->world->apEnemy == NULL || active_frame < 0 ||
+        (active_frame >= 10 && active_frame % 30 != 0) ||
+        runtime->world->nEnemy <= FED_FIRST_DOOR_TRIGGER_PLACEMENT) {
+        return;
+    }
+    trigger_placement = runtime->world->apEnemy[
+        FED_FIRST_DOOR_TRIGGER_PLACEMENT];
+    trigger = pc_enemy_for_placement(
+        runtime, FED_FIRST_DOOR_TRIGGER_PLACEMENT);
+    door_placement = runtime->world->apEnemy[
+        FED_FIRST_DOOR_CONTROLLER_PLACEMENT];
+    door = pc_enemy_for_placement(
+        runtime, FED_FIRST_DOOR_CONTROLLER_PLACEMENT);
+    memset(&door_state, 0, sizeof(door_state));
+    door_state_valid = jpb_GameRuntimeGetEnemyPlacementState(
+        runtime,
+        FED_FIRST_DOOR_CONTROLLER_PLACEMENT,
+        &door_state);
+    if (door != NULL && door->pPlayer != NULL &&
+        door->pPlayer->playerRoot.pParent != NULL) {
+        sceneObject *door_scene;
+
+        door_scene = (sceneObject *)door->pPlayer->playerRoot.pParent;
+        door_physics = (physicsObject *)door_scene->pPhysics;
+        door_model = (modelObject *)door_scene->pModel;
+    } else if (door_state_valid && door_state.objectId >= 0 &&
+               door_state.objectId < 20) {
+        sceneObject *door_scene;
+
+        door_physics = &maPhysicsData[door_state.objectId];
+        door_solid = door_physics->solid;
+        door_scene = (sceneObject *)door_physics->physicsRoot.pParent;
+        if (door_scene != NULL) {
+            door_model = (modelObject *)door_scene->pModel;
+        }
+    }
+    if (door_physics != NULL) {
+        door_solid = door_physics->solid;
+    }
+    if (door_solid != NULL && door_solid->geometry != NULL &&
+        door_solid->coords != NULL) {
+        int vertex_index;
+
+        door_solid_vertices = door_solid->geometry->numVerts * 3;
+        if (door_solid_vertices > 0) {
+            door_solid_min = door_solid->coords[0];
+            door_solid_max = door_solid->coords[0];
+        }
+        for (vertex_index = 1;
+             vertex_index < door_solid_vertices;
+             ++vertex_index) {
+            const _svector *vertex = &door_solid->coords[vertex_index];
+
+            if (vertex->vx < door_solid_min.vx) door_solid_min.vx = vertex->vx;
+            if (vertex->vy < door_solid_min.vy) door_solid_min.vy = vertex->vy;
+            if (vertex->vz < door_solid_min.vz) door_solid_min.vz = vertex->vz;
+            if (vertex->vx > door_solid_max.vx) door_solid_max.vx = vertex->vx;
+            if (vertex->vy > door_solid_max.vy) door_solid_max.vy = vertex->vy;
+            if (vertex->vz > door_solid_max.vz) door_solid_max.vz = vertex->vz;
+        }
+    }
+    if (trigger != NULL && trigger->pPlayer != NULL) {
+        if (runtime->player != NULL) {
+            player_range = physics_gGetRange(
+                &trigger->pPlayer->playerRoot,
+                &runtime->player->playerRoot);
+        }
+        owner_range = physics_FindNearestEnemy(
+            &trigger->pPlayer->playerRoot, 2);
+        for (enemy_index = 0; enemy_index < 20; ++enemy_index) {
+            wsl_ENEMY *enemy = &aEnemyListNodes[enemy_index];
+            int range;
+            int placement_index;
+
+            if (enemy->active == 0 || enemy->ownerType != 2 ||
+                enemy->pPlayer == NULL || enemy == trigger) {
+                continue;
+            }
+            range = physics_gGetRange(
+                &trigger->pPlayer->playerRoot,
+                &enemy->pPlayer->playerRoot);
+            if (range <= FED_FIRST_DOOR_OWNER_CLEAR_RANGE) {
+                ++owners_inside_gate;
+            }
+            if (range != owner_range) {
+                continue;
+            }
+            nearest_owner_energy = game_gGetEnergy(
+                enemy->pPlayer->playernum);
+            nearest_owner_active = enemy->active;
+            nearest_owner_exit = enemy->exit_flag;
+            nearest_owner_flags = enemy->pPlayer->pFlags;
+            nearest_owner_status = enemy->pPlace != NULL
+                ? enemy->pPlace->status
+                : -1;
+            for (placement_index = 0;
+                 placement_index < runtime->world->nEnemy;
+                 ++placement_index) {
+                if (runtime->world->apEnemy[placement_index] ==
+                    enemy->pPlace) {
+                    nearest_owner_placement = placement_index;
+                    break;
+                }
+            }
+        }
+    }
+    (void)snprintf(
+        report,
+        sizeof(report),
+        "FED first-door gate frame=%d status=%d active=%d "
+        "global108=%u global110=%u global113=%u "
+        "player_range=%d owner2_range=%d "
+        "nearest_owner=%d/energy:%d/active:%d/exit:%d/status:%d/flags:%08x "
+        "owners_inside_1536=%d "
+        "door=status:%d/handle:%u/enemy:%d/active:%d/exit:%d/"
+        "flags:%08x/force:%08x/observer:%d/object:%d/motion:%d/"
+        "ai:%d/%d/%d/"
+        "model:%08x/physics:%08x/"
+        "solid:%d/solid_flags:%08x/node:%d/faces:%d/vertices:%d/"
+        "bounds:%d,%d,%d:%d,%d,%d "
+        "player=%.1f/%.1f/%.1f "
+        "p0_absent=%d p1_absent=%d p0pos=%d/%d/%d p1pos=%d/%d/%d\n",
+        active_frame,
+        trigger_placement != NULL ? trigger_placement->status : -1,
+        trigger != NULL,
+        (unsigned)((abGlobalBits[108 >> 3] >> (108 & 7)) & 1U),
+        (unsigned)((abGlobalBits[110 >> 3] >> (110 & 7)) & 1U),
+        (unsigned)((abGlobalBits[113 >> 3] >> (113 & 7)) & 1U),
+        player_range,
+        owner_range,
+        nearest_owner_placement,
+        nearest_owner_energy,
+        nearest_owner_active,
+        nearest_owner_exit,
+        nearest_owner_status,
+        (unsigned)nearest_owner_flags,
+        owners_inside_gate,
+        door_placement != NULL ? door_placement->status : -1,
+        door_placement != NULL ? door_placement->pLastEnemy : UINT32_MAX,
+        door != NULL,
+        door != NULL ? door->active : -1,
+        door != NULL ? door->exit_flag : -1,
+        door != NULL && door->pPlayer != NULL
+            ? (unsigned)door->pPlayer->pFlags
+            : 0U,
+        door != NULL && door->pPlayer != NULL
+            ? (unsigned)door->pPlayer->forceFlags
+            : 0U,
+        door_state_valid,
+        door != NULL && door->pPlayer != NULL
+            ? door->pPlayer->playerRoot.objectID
+            : (door_state_valid ? door_state.objectId : -1),
+        door != NULL && door->pPlayer != NULL
+            ? door->pPlayer->currentMotion
+            : (door_state_valid ? door_state.currentMotion : -1),
+        door != NULL ? door->currAIMode
+            : (door_state_valid ? door_state.currentAiMode : -1),
+        door != NULL ? door->aiLocation
+            : (door_state_valid ? door_state.aiLocation : -1),
+        door != NULL && door->pAI != NULL && door->pAINode != NULL
+            ? (int)(door->pAINode - door->pAI->aiNodes)
+            : (door_state_valid ? door_state.aiNodeIndex : -1),
+        door_model != NULL ? (unsigned)door_model->flags : 0U,
+        door_physics != NULL ? (unsigned)door_physics->flags : 0U,
+        door_solid != NULL,
+        door_solid != NULL ? (unsigned)door_solid->flags : 0U,
+        door_solid != NULL ? door_solid->node : -1,
+        door_solid != NULL && door_solid->geometry != NULL
+            ? door_solid->geometry->numFaces
+            : -1,
+        door_solid_vertices,
+        (int)door_solid_min.vx,
+        (int)door_solid_min.vy,
+        (int)door_solid_min.vz,
+        (int)door_solid_max.vx,
+        (int)door_solid_max.vy,
+        (int)door_solid_max.vz,
+        runtime->physics != NULL ? runtime->physics->pos.vx : 0.0f,
+        runtime->physics != NULL ? runtime->physics->pos.vy : 0.0f,
+        runtime->physics != NULL ? runtime->physics->pos.vz : 0.0f,
+        runtime->world->player0 != NULL
+            ? obj_gCheckObjectFlag(
+                  &runtime->world->player0->playerRoot,
+                  0,
+                  UINT32_C(0x20))
+            : -1,
+        runtime->world->player1 != NULL
+            ? obj_gCheckObjectFlag(
+                  &runtime->world->player1->playerRoot,
+                  0,
+                  UINT32_C(0x20))
+            : -1,
+        runtime->world->player0 != NULL
+            ? physics_gGetPosition(
+                  &runtime->world->player0->playerRoot)->vx
+            : 0,
+        runtime->world->player0 != NULL
+            ? physics_gGetPosition(
+                  &runtime->world->player0->playerRoot)->vy
+            : 0,
+        runtime->world->player0 != NULL
+            ? physics_gGetPosition(
+                  &runtime->world->player0->playerRoot)->vz
+            : 0,
+        runtime->world->player1 != NULL
+            ? physics_gGetPosition(
+                  &runtime->world->player1->playerRoot)->vx
+            : 0,
+        runtime->world->player1 != NULL
+            ? physics_gGetPosition(
+                  &runtime->world->player1->playerRoot)->vy
+            : 0,
+        runtime->world->player1 != NULL
+            ? physics_gGetPosition(
+                  &runtime->world->player1->playerRoot)->vz
+            : 0);
+    puts(report);
+    jpb_PCLog("%s", report);
+}
+
 static void pc_select_fed_traversal_input(
     PcInput *input, const JPBGameRuntime *runtime, int active_frame)
 {
+    enum {
+        FED_PROJECTILE_SOAK_MIN_DISTANCE = 650,
+        FED_PROJECTILE_SOAK_MAX_DISTANCE = 900
+    };
     FVECTOR target;
     FVECTOR actual_target;
     FVECTOR direction;
@@ -9019,6 +10279,7 @@ static void pc_select_fed_traversal_input(
         runtime->physics == NULL || runtime->player->pEnemy != NULL) {
         return;
     }
+    pc_report_fed_first_door_gate(input, runtime, active_frame);
     if (!pc_fed_traversal_target(
             input,
             runtime,
@@ -9063,11 +10324,19 @@ static void pc_select_fed_traversal_input(
         direction.vz * direction.vz);
     (void)vec_RotFromNormalF(&rotation, &direction);
 
-    if (target_enemy < 0 || actual_distance > 160.0f ||
-        navigation_path_nodes > 2) {
+    if (input->fedProjectileSoakHarness) {
+        if (actual_distance > FED_PROJECTILE_SOAK_MAX_DISTANCE) {
+            bits |= pc_fed_traversal_direction(rotation.vy);
+        } else if (actual_distance < FED_PROJECTILE_SOAK_MIN_DISTANCE) {
+            rotation.vy = (int16_t)(rotation.vy + 0x800);
+            bits |= pc_fed_traversal_direction(rotation.vy);
+        }
+    } else if (target_enemy < 0 || actual_distance > 160.0f ||
+               navigation_path_nodes > 2) {
         bits |= pc_fed_traversal_direction(rotation.vy);
     }
-    if (target_enemy >= 0 && actual_distance <= 900.0f &&
+    if (!input->fedProjectileSoakHarness &&
+        target_enemy >= 0 && actual_distance <= 900.0f &&
         (navigation_path_nodes == 0 ||
          navigation_path_nodes <= 4)) {
         if (input->fedTraversalAttackCooldown <= 0) {
@@ -9089,6 +10358,8 @@ static void pc_select_fed_traversal_input(
         input->fedTraversalAttackCooldown = 0;
     }
     if (target_enemy < 0 &&
+        (!input->fedProjectileSoakHarness ||
+         actual_distance > FED_PROJECTILE_SOAK_MAX_DISTANCE) &&
         (target.vy > runtime->physics->pos.vy + 64.0f ||
          (active_frame > 0 && active_frame % 180 == 0))) {
         bits |= JPB_PAD_JUMP;
@@ -9909,7 +11180,11 @@ static void pc_print_usage(const char *program)
         "[--player-two-cad actor.cad] [--player-two-bmd actor.bmd] "
         "[--player-two-cmb actor.cmb] [--player-two-model id] "
         "[--enemy-cad enemy.cad] [--enemy-bmd enemy.bmd] "
-        "[--headless] [--hidden-window] [--control-harness] "
+        "[--headless] [--hidden-window] [--control-harness] [--review-fighter-audio] "
+        "[--review-menu ID] "
+        "[--review-level-complete | --review-level-complete-two-player] "
+        "[--review-score points] "
+        "[--review-fed-ending | --review-fed-ending-two-player] "
         "[--enemy-placement-diagnostics] "
         "[--profile-runtime] "
         "[--mute | --silent-audio] "
@@ -9973,8 +11248,11 @@ static void pc_print_usage(const char *program)
         "[--validate-hud-debug-labels3-1080] "
         "[--validate-hud-owner-coverage] "
         "[--validate-teleport] [--validate-death-restart] "
+        "[--validate-palace-lifecycle] "
         "[--validate-camera-follow] "
         "[--validate-title-audio] [--validate-title-movie N] "
+        "[--movie-timing-probe] "
+        "[--movie-timing-stall-ms N] "
         "[--validate-player-saber] "
         "[--validate-player-projectile] "
         "[--validate-presentation-handoff] "
@@ -9984,17 +11262,22 @@ static void pc_print_usage(const char *program)
         "[--validate-player-two-sound name] "
         "[--headless-maximum-progression] "
         "[--fed-traversal-harness] "
+        "[--fed-projectile-soak-harness] "
         "[--fed-traversal-target-placement N] "
         "[--require-fbx-level] "
         "[--spawn-position x y z] "
         "[--force-enemy-placement id] [--force-enemy-energy value] "
         "[--validate-enemy-class-placement id] "
+        "[--validate-enemy-death-placement id] "
+        "[--validate-fed-hover-boss-intro] "
         "[--camera-dolly N] "
         "[--camera-diagnostics] "
         "[--collision-diagnostics] "
+        "[--review-disable-ai] "
         "[--camera-region-sweep path.csv] "
         "[--record-input-trail path.csv] "
         "[--replay-retail-input retail-trail.csv] "
+        "[--load-screen-output frame.ppm] "
         "[--framebuffer-size width height] "
         "[--frames N] [--output frame.ppm]\n"
         "with no world path, the installed front end is shown and its "
@@ -11032,7 +12315,7 @@ static int pc_record_headless_input_trail_frame(
             "player_motion,motion_flags,anim_frame,anim_frame_raw,"
             "anim_acc,anim_rate,anim_lock,action_lock,"
             "seq_first,seq_last,seq_cutout,queued_motions,"
-            "free_motion_nodes,player_root_flags,player_flags\n",
+            "free_motion_nodes,player_root_flags,player_flags,facing,reverse,air_x,air_y,air_z,air_ground\n",
             *file);
         *armed = 1;
         *start_frame = frame;
@@ -11074,7 +12357,7 @@ static int pc_record_headless_input_trail_frame(
         "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
         "%d,%d,%u,%u,%u,%u,"
         "%d,%d,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%08x,%08x,"
-        "%d,%08x,%d,%d,%d,%d,%u,%u,%d,%d,%u,%d,%d,%08x,%08x\n",
+        "%d,%08x,%d,%d,%d,%d,%u,%u,%d,%d,%u,%d,%d,%08x,%08x,%d,%d,%.3f,%.3f,%.3f,%.3f\n",
         frame,
         frame - *start_frame,
         totalframes,
@@ -11168,7 +12451,13 @@ static int pc_record_headless_input_trail_frame(
         queued_motions,
         free_motion_nodes,
         (unsigned)runtime->player->playerRoot.flags,
-        (unsigned)runtime->player->pFlags);
+        (unsigned)runtime->player->pFlags,
+        runtime->physics->angle.vy,
+        runtime->physics->reversoi,
+        runtime->physics->airmov.vx,
+        runtime->physics->airmov.vy,
+        runtime->physics->airmov.vz,
+        runtime->physics->airGround);
     if ((frame - *start_frame) % 60 == 0) {
         fflush(*file);
     }
@@ -11689,6 +12978,14 @@ static void pc_print_enemy_placement_diagnostics(
 
             if (jpb_GameRuntimeGetEnemyPlacementState(
                     runtime, index, &state)) {
+                wsl_ENEMY *owner = pc_enemy_for_placement(runtime, index);
+                sceneObject *owner_scene = owner != NULL && owner->pPlayer != NULL
+                    ? (sceneObject *)owner->pPlayer->playerRoot.pParent : NULL;
+                modelObject *owner_model = owner_scene != NULL
+                    ? (modelObject *)owner_scene->pModel : NULL;
+                printf("enemy_visibility=(id=%d,scene=0x%08x,model=0x%08x)\n",
+                    index, owner_scene != NULL ? owner_scene->sceneRoot.flags : 0,
+                    owner_model != NULL ? owner_model->flags : 0);
                 printf(
                     "enemy_placement_runtime=(id=%d,object=%d,enemy=%d/%d,"
                     "model=%d,active=%d,energy=%d/%d,mode=%d,location=%d,"
@@ -11763,6 +13060,64 @@ static void pc_print_enemy_placement_diagnostics(
             }
         }
     }
+}
+
+static int pc_validate_palace_lifecycle(
+    const JPBGameRuntime *runtime)
+{
+    const wsl_BAP_PLACEMENT *trigger;
+    const wsl_BAP_PLACEMENT *controller;
+    const wsl_BAP_PLACEMENT *first_guard;
+    const wsl_BAP_PLACEMENT *second_guard;
+    int valid;
+
+    if (runtime == NULL || runtime->world == NULL ||
+        runtime->world->apEnemy == NULL ||
+        runtime->world->nEnemy <= 183) {
+        return 0;
+    }
+    trigger = runtime->world->apEnemy[113];
+    first_guard = runtime->world->apEnemy[163];
+    second_guard = runtime->world->apEnemy[164];
+    controller = runtime->world->apEnemy[183];
+    if (trigger == NULL || controller == NULL ||
+        first_guard == NULL || second_guard == NULL) {
+        return 0;
+    }
+    valid =
+        trigger->actorNum == 3 &&
+        trigger->aiNum == 60 &&
+        trigger->aiDf.ownerType == 3 &&
+        (trigger->aiDf.activeFlags & UINT32_C(1)) != 0 &&
+        trigger->aiDf.enemyExt[2] == 163 &&
+        trigger->aiDf.enemyExt[3] == 164 &&
+        trigger->aiDf.enemyExt[4] == 183 &&
+        trigger->status == 2 &&
+        controller->actorNum == 3 &&
+        controller->aiNum == 11 &&
+        controller->aiDf.ownerType == 0 &&
+        controller->aiDf.enemyExt[1] == 163 &&
+        controller->aiDf.enemyExt[2] == 164 &&
+        controller->status == 1 &&
+        first_guard->actorNum == 13 &&
+        first_guard->aiNum == 58 &&
+        first_guard->aiDf.ownerType == 2 &&
+        first_guard->aiDf.activeFlags == 0 &&
+        first_guard->status == 1 &&
+        second_guard->actorNum == 13 &&
+        second_guard->aiNum == 58 &&
+        second_guard->aiDf.ownerType == 2 &&
+        second_guard->aiDf.activeFlags == 0 &&
+        second_guard->status == 1;
+    printf(
+        "palace_lifecycle=(trigger=113:%d/ai60,controller=183:%d/ai11,"
+        "guards=163:%d/ai58,164:%d/ai58,valid=%d)\n",
+        trigger->status,
+        controller->status,
+        first_guard->status,
+        second_guard->status,
+        valid);
+    return valid;
 }
 
 static int pc_position_for_enemy_placement_validation(
@@ -11880,6 +13235,141 @@ static int pc_force_enemy_placement(
     return 1;
 }
 
+static wsl_ENEMY *pc_enemy_for_placement(
+    const JPBGameRuntime *runtime,
+    int placement_index)
+{
+    wsl_BAP_PLACEMENT *placement;
+    wsl_ENEMY *enemy;
+
+    if (runtime == NULL || runtime->world == NULL ||
+        runtime->world->apEnemy == NULL || placement_index < 0 ||
+        placement_index >= runtime->world->nEnemy) {
+        return NULL;
+    }
+    placement = runtime->world->apEnemy[placement_index];
+    if (placement == NULL || placement->status != 1 ||
+        placement->pLastEnemy == UINT32_MAX) {
+        return NULL;
+    }
+    enemy = (wsl_ENEMY *)getPtr(
+        (int)placement->pLastEnemy,
+        JPB_POINTER_ARRAY_ENEMY);
+    return enemy != NULL && enemy->pPlace == placement
+        ? enemy
+        : NULL;
+}
+
+static void pc_report_fed_hover_boss_state(
+    const JPBGameRuntime *runtime,
+    int frame)
+{
+    static const int placements[] = {143, 87, 124, 177, 178};
+    char report[2048];
+    size_t used;
+    size_t index;
+
+    if (runtime == NULL || runtime->world == NULL ||
+        runtime->world->apEnemy == NULL || frame < 0 ||
+        (frame >= 180 && frame % 30 != 0)) {
+        return;
+    }
+    used = (size_t)snprintf(
+        report,
+        sizeof(report),
+        "FED boss-intro frame=%d dolly=%d override=%d lock=%d "
+        "pflags=%08x global126=%u global127=%u",
+        frame,
+        runtime->world->currentDolly,
+        runtime->world->overRideDolly,
+        runtime->player != NULL &&
+            (runtime->player->pFlags & UINT32_C(2)) != 0,
+        runtime->player != NULL
+            ? (unsigned)runtime->player->pFlags
+            : 0U,
+        (unsigned)((abGlobalBits[126 >> 3] >> (126 & 7)) & 1U),
+        (unsigned)((abGlobalBits[127 >> 3] >> (127 & 7)) & 1U));
+    for (index = 0;
+         index < sizeof(placements) / sizeof(placements[0]) &&
+         used < sizeof(report);
+         ++index) {
+        int placement_index = placements[index];
+        const wsl_BAP_PLACEMENT *placement =
+            placement_index < runtime->world->nEnemy
+                ? runtime->world->apEnemy[placement_index]
+                : NULL;
+        JPBGameRuntimeEnemyPlacementState state;
+        wsl_ENEMY *enemy;
+        int valid;
+        int written;
+
+        memset(&state, 0, sizeof(state));
+        enemy = pc_enemy_for_placement(runtime, placement_index);
+        valid = jpb_GameRuntimeGetEnemyPlacementState(
+            runtime, placement_index, &state);
+        written = snprintf(
+            report + used,
+            sizeof(report) - used,
+            " p%d=%d/%d/a%d/m%d/l%d/n%d/mot%d/c0:%u/pos:%d,%d,%d",
+            placement_index,
+            placement != NULL ? placement->status : -1,
+            valid,
+            valid ? state.active : -1,
+            valid ? state.currentAiMode : -1,
+            valid ? state.aiLocation : -1,
+            valid ? state.aiNodeIndex : -1,
+            valid ? state.currentMotion : -1,
+            enemy != NULL ? (unsigned)enemy->counter[0] : 0U,
+            valid ? (int)state.positionX : 0,
+            valid ? (int)state.positionY : 0,
+            valid ? (int)state.positionZ : 0);
+        if (written < 0) {
+            break;
+        }
+        if ((size_t)written >= sizeof(report) - used) {
+            used = sizeof(report);
+            break;
+        }
+        used += (size_t)written;
+    }
+    if (used < sizeof(report) - 1) {
+        report[used++] = '\n';
+        report[used] = '\0';
+    } else {
+        report[sizeof(report) - 1] = '\0';
+    }
+    puts(report);
+    jpb_PCLog("%s", report);
+}
+
+static void pc_isolate_fed_hover_boss_intro(
+    JPBGameRuntime *runtime)
+{
+    playerObject *players[2];
+    size_t index;
+
+    if (runtime == NULL || runtime->world == NULL) {
+        return;
+    }
+    players[0] = runtime->player;
+    players[1] = runtime->inactivePlayer;
+    for (index = 0; index < 2; ++index) {
+        playerObject *player = players[index];
+
+        if (player == NULL) {
+            continue;
+        }
+        if (player->pEnemy != NULL) {
+            player->pEnemy->exit_flag = 1;
+            player->pEnemy = NULL;
+        }
+        player->pFlags &= ~UINT32_C(0x12);
+    }
+    runtime->world->overRideDolly = 0;
+    game_clearLetterBox();
+    GameStruct.screenShotFlag = 0;
+}
+
 static int pc_enemy_is_active(const wsl_ENEMY *target)
 {
     const Node *node;
@@ -11898,7 +13388,8 @@ static int pc_enemy_is_active(const wsl_ENEMY *target)
 }
 
 static int pc_position_for_combat_validation(
-    JPBGameRuntime *runtime)
+    JPBGameRuntime *runtime,
+    wsl_ENEMY *preferred_enemy)
 {
     wsl_ENEMY *enemy;
     playerObject *target_player = NULL;
@@ -11910,7 +13401,27 @@ static int pc_position_for_combat_validation(
         runtime->physics == NULL) {
         return 0;
     }
-    for (enemy = (wsl_ENEMY *)enemyList[mCurEnemyList].head;
+    if (preferred_enemy != NULL &&
+        preferred_enemy->ownerType == 2 &&
+        preferred_enemy->active == 1 &&
+        preferred_enemy->pPlayer != NULL &&
+        preferred_enemy->pPlayer->playerRoot.pParent != NULL) {
+        target_player = preferred_enemy->pPlayer;
+        target_physics = (physicsObject *)((sceneObject *)
+            target_player->playerRoot.pParent)->pPhysics;
+    } else if (runtime->player != NULL &&
+        runtime->player->target != NULL &&
+        runtime->player->target->pEnemy != NULL &&
+        runtime->player->target->pEnemy->ownerType == 2 &&
+        runtime->player->target->pEnemy->active == 1 &&
+        runtime->player->target->playerRoot.pParent != NULL) {
+        target_player = runtime->player->target;
+        target_physics = (physicsObject *)((sceneObject *)
+            target_player->playerRoot.pParent)->pPhysics;
+    }
+    for (enemy = target_player == NULL
+             ? (wsl_ENEMY *)enemyList[mCurEnemyList].head
+             : NULL;
          enemy != NULL;
          enemy = (wsl_ENEMY *)enemy->node.next) {
         sceneObject *scene;
@@ -11995,6 +13506,7 @@ int main(int argc, char **argv)
     JPBSoftwareFramebuffer framebuffer;
     JPBSoftwareRenderStats stats = {0};
     JPBPCAudio *audio = NULL;
+    JPBPCAudioStats audio_stats = {0};
     PcInput input = {0};
     PcMoviePlayback movie_playback = {0};
     JPBMenuPlatformHooks menu_hooks = {0};
@@ -12031,6 +13543,7 @@ int main(int argc, char **argv)
         PC_PLAYER_SABER_COLOR_CURRENT;
     int player_two_model = 1;
     const char *output_path = NULL;
+    const char *load_screen_output_path = NULL;
     int frame_limit = 0;
     int frame_count = 0;
     int index;
@@ -12072,6 +13585,12 @@ int main(int argc, char **argv)
     int framebuffer_height = PC_FRAMEBUFFER_HEIGHT;
     int framebuffer_size_explicit = 0;
     int title_level_select = 0;
+    int review_level_complete = 0;
+    int review_fed_ending = 0;
+    int review_fighter_audio = 0;
+    int review_score = 20000;
+    int review_disable_ai = 0;
+    int review_menu = -1;
     int title_main_select = -1;
     int title_valid_save = 0;
     int synthetic_input_requested = 0;
@@ -12085,9 +13604,24 @@ int main(int argc, char **argv)
     int force_enemy_placement = -1;
     int force_enemy_energy = -1;
     int validate_enemy_class_placement = -1;
+    int validate_enemy_death_placement = -1;
+    int validate_fed_hover_boss_intro = 0;
+    int enemy_death_saw_active = 0;
+    int enemy_death_identity_mismatch = 0;
+    int enemy_death_initial_energy = -1;
+    int enemy_death_min_energy = INT_MAX;
+    int enemy_death_saw_retired = 0;
+    uint32_t fed_hover_boss_dolly_mask = 0;
+    int fed_hover_boss_saw_lock = 0;
+    int fed_hover_boss_saw_release = 0;
+    int fed_hover_boss_saw_active = 0;
+    int fed_hover_boss_saw_controller_protected = 0;
+    int fed_hover_boss_complete_frame = -1;
+    int enemy_death_complete_frame = -1;
     int overlay_mode_override = -1;
     unsigned presentation_frame_count = 0;
     unsigned gameplay_handoff_count = 0;
+    PcLoadScreenPresentation load_screen_presentation = {0};
     int presentation_hardware = 0;
     char presentation_backend[160] = "headless";
     long presentation_error = 0;
@@ -12103,11 +13637,36 @@ int main(int argc, char **argv)
     int fbx_level_loaded = 0;
 #endif
 
+    if (argc == 2 && strcmp(argv[1], "--test-two-player-input-lifecycle") == 0) {
+        return pc_test_two_player_input_lifecycle();
+    }
     input.controllerConfigOverride[0] = -1;
     input.controllerConfigOverride[1] = -1;
     input.fedTraversalTargetPlacement = -1;
     jpb_PCLogStart(argc, argv);
     pc_configure_failure_mode();
+    {
+        char mod_root[JPB_MOD_PATH];
+        char mod_error[1024];
+        int no_mods = 0, arg;
+        if (argc > 1 && argv[1][0] != '-') pc_set_asset_root_from_world_path(argv[1]);
+        if (!pc_get_asset_directory(mod_root, sizeof(mod_root))) return 2;
+        for (arg = 1; arg < argc; ++arg) {
+            if (strcmp(argv[arg], "--no-mods") == 0) no_mods = 1;
+            else if (strcmp(argv[arg], "--mods-root") == 0 && arg + 1 < argc) {
+                if (strlen(argv[arg + 1]) >= sizeof(mod_root)) return 2;
+                strcpy(mod_root, argv[++arg]);
+            }
+        }
+        if (!no_mods && !jpb_ModsLoad(mod_root, mod_error, sizeof(mod_error))) {
+            jpb_PCLog("mods rejected: %s", mod_error);
+            fprintf(stderr, "mods rejected: %s\n", mod_error);
+            return 2;
+        }
+        jpb_PCLog("mods loaded: characters=%zu root=%s", jpb_ModsCount(), mod_root);
+        if (!pc_get_asset_directory(mod_root, sizeof(mod_root)) ||
+            !jpb_ModsSetAssetRoot(mod_root)) return 2;
+    }
     jpb_GameRuntimeSetImageHooks(
         jpb_PCInspectImageWIC, jpb_PCLoadImageWIC);
     jpb_PCLog("startup: resolving assets");
@@ -12142,7 +13701,11 @@ int main(int argc, char **argv)
         index = 2;
     }
     for (; index < argc; ++index) {
-        if (strcmp(argv[index], "--headless") == 0) {
+        if (strcmp(argv[index], "--no-mods") == 0) {
+            /* Applied before resolving startup assets. */
+        } else if (strcmp(argv[index], "--mods-root") == 0 && index + 1 < argc) {
+            ++index;
+        } else if (strcmp(argv[index], "--headless") == 0) {
             input.headless = 1;
         } else if (strcmp(argv[index], "--hidden-window") == 0) {
             input.hiddenWindow = 1;
@@ -12171,6 +13734,37 @@ int main(int argc, char **argv)
                 pc_print_usage(argv[0]);
                 return 2;
             }
+        } else if (strcmp(argv[index], "--review-disable-ai") == 0) {
+            review_disable_ai = 1;
+            synthetic_input_requested = 1;
+        } else if (strcmp(argv[index], "--review-fed-ending") == 0 ||
+                   strcmp(argv[index], "--review-fed-ending-two-player") == 0) {
+            review_fed_ending = 1;
+            review_level_complete =
+                strcmp(argv[index], "--review-fed-ending-two-player") == 0 ? 2 : 1;
+            force_enemy_placement = 166;
+            spawn_position_explicit = 1;
+            spawn_position = (FVECTOR){-22656, 5376, -9856};
+            synthetic_input_requested = 1;
+            title_active = 1;
+            front_end_flow = 1;
+        } else if (strcmp(argv[index], "--review-fighter-audio") == 0) {
+            review_fighter_audio = 1;
+        } else if (strcmp(argv[index], "--review-menu") == 0 && index + 1 < argc) {
+            review_menu = (int)strtoul(argv[++index], NULL, 0);
+            title_active = 1;
+            title_diagnostic = 1;
+            synthetic_input_requested = 1;
+        } else if (strcmp(argv[index], "--review-level-complete") == 0 ||
+                   strcmp(argv[index], "--review-level-complete-two-player") == 0) {
+            review_level_complete =
+                strcmp(argv[index], "--review-level-complete-two-player") == 0 ? 2 : 1;
+            synthetic_input_requested = 1;
+            title_active = 1;
+            front_end_flow = 1;
+        } else if (strcmp(argv[index], "--review-score") == 0 && index + 1 < argc) {
+            review_score = atoi(argv[++index]);
+            if (review_score < 0 || review_score > 999999) return 2;
         } else if (strcmp(argv[index], "--title") == 0) {
             title_active = 1;
             title_diagnostic = 1;
@@ -12236,6 +13830,13 @@ int main(int argc, char **argv)
             mute = 1;
         } else if (strcmp(argv[index], "--silent-audio") == 0) {
             audio_output_enabled = 0;
+        } else if (strcmp(argv[index], "--movie-timing-probe") == 0) {
+            movie_playback.timingProbe = 1;
+        } else if (strcmp(argv[index], "--movie-timing-stall-ms") == 0 &&
+                   index + 1 < argc) {
+            int stall_ms = atoi(argv[++index]);
+            if (stall_ms < 1 || stall_ms > 2000) return 2;
+            movie_playback.timingStallMs = (unsigned)stall_ms;
         } else if (strcmp(
                        argv[index],
                        "--persistence-directory") == 0 &&
@@ -12495,6 +14096,10 @@ int main(int argc, char **argv)
             input.validateDeathRestart = 1;
         } else if (strcmp(
                        argv[index],
+                       "--validate-palace-lifecycle") == 0) {
+            input.validatePalaceLifecycle = 1;
+        } else if (strcmp(
+                       argv[index],
                        "--validate-camera-follow") == 0) {
             input.validateCameraFollow = 1;
         } else if (strcmp(
@@ -12546,6 +14151,12 @@ int main(int argc, char **argv)
                        "--fed-traversal-harness") == 0) {
             synthetic_input_requested = 1;
             input.fedTraversalHarness = 1;
+        } else if (strcmp(
+                       argv[index],
+                       "--fed-projectile-soak-harness") == 0) {
+            synthetic_input_requested = 1;
+            input.fedTraversalHarness = 1;
+            input.fedProjectileSoakHarness = 1;
         } else if (strcmp(
                        argv[index],
                        "--fed-traversal-target-placement") == 0 &&
@@ -12605,6 +14216,22 @@ int main(int argc, char **argv)
                 return 2;
             }
             force_enemy_placement = validate_enemy_class_placement;
+        } else if (strcmp(
+                       argv[index],
+                       "--validate-enemy-death-placement") == 0 &&
+                   index + 1 < argc) {
+            validate_enemy_death_placement = atoi(argv[++index]);
+            if (validate_enemy_death_placement < 0) {
+                pc_print_usage(argv[0]);
+                return 2;
+            }
+            synthetic_input_requested = 1;
+            input.validateCombat = 1;
+        } else if (strcmp(
+                       argv[index],
+                       "--validate-fed-hover-boss-intro") == 0) {
+            validate_fed_hover_boss_intro = 1;
+            synthetic_input_requested = 1;
         } else if (strcmp(argv[index], "--camera-dolly") == 0 &&
                    index + 1 < argc) {
             camera_dolly_override = atoi(argv[++index]);
@@ -12831,7 +14458,7 @@ int main(int argc, char **argv)
             player_model = atoi(argv[++index]);
             player_model_override = 1;
             if (player_model < 0 ||
-                player_model >= JPB_MODEL_NAME_COUNT) {
+                (player_model >= JPB_MODEL_NAME_COUNT && !jpb_ModCharacterById(player_model))) {
                 pc_print_usage(argv[0]);
                 return 2;
             }
@@ -12855,7 +14482,7 @@ int main(int argc, char **argv)
                    index + 1 < argc) {
             player_two_model = atoi(argv[++index]);
             if (player_two_model < 0 ||
-                player_two_model >= JPB_MODEL_NAME_COUNT) {
+                (player_two_model >= JPB_MODEL_NAME_COUNT && !jpb_ModCharacterById(player_two_model))) {
                 pc_print_usage(argv[0]);
                 return 2;
             }
@@ -12875,6 +14502,10 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[index], "--output") == 0 &&
                    index + 1 < argc) {
             output_path = argv[++index];
+        } else if (strcmp(
+                       argv[index], "--load-screen-output") == 0 &&
+                   index + 1 < argc) {
+            load_screen_output_path = argv[++index];
         } else if (strcmp(argv[index], "--framebuffer-size") == 0 &&
                    index + 2 < argc) {
             framebuffer_size_explicit = 1;
@@ -12895,7 +14526,7 @@ int main(int argc, char **argv)
     jpb_PhysicsSetCollisionDiagnosticsObject(
         collision_diagnostics ? 0 : -1);
     if (quickload_level != NULL) {
-        if (title_diagnostic) {
+        if (title_diagnostic && review_menu < 0) {
             fputs(
                 "--quickload cannot be combined with a title "
                 "diagnostic switch\n",
@@ -12915,7 +14546,7 @@ int main(int argc, char **argv)
             return 2;
         }
         mesh_path = default_assets.mesh;
-        title_active = 0;
+        title_active = review_menu >= 0;
         front_end_flow = 0;
     }
     if (player_model_override && using_installed_assets) {
@@ -12933,6 +14564,7 @@ int main(int argc, char **argv)
     }
     if ((quickload_level != NULL &&
          jpb_LevelIndexFromPath(mesh_path) == 25) ||
+        review_level_complete == 2 ||
         input.validateHudP2Core ||
         input.validateHudP2Core1080 ||
         input.validateHudDamageP2 ||
@@ -12942,7 +14574,7 @@ int main(int argc, char **argv)
         if (player_two_cad_path == NULL &&
             !pc_configure_player_assets(
                 &validation_player_two_assets,
-                1)) {
+                player_two_model)) {
             fputs(
                 "two-player runtime could not resolve installed P2 assets\n",
                 stderr);
@@ -12952,8 +14584,13 @@ int main(int argc, char **argv)
             player_two_cad_path = validation_player_two_assets.cad;
             player_two_bmd_path = validation_player_two_assets.bmd;
             player_two_cmb_path = validation_player_two_assets.cmb;
-            player_two_model = 1;
         }
+    }
+    if (jpb_ModCharacterById(player_two_model) != NULL && player_two_cad_path == NULL) {
+        if (!pc_configure_player_assets(&validation_player_two_assets, player_two_model)) return 2;
+        player_two_cad_path = validation_player_two_assets.cad;
+        player_two_bmd_path = validation_player_two_assets.bmd;
+        player_two_cmb_path = validation_player_two_assets.cmb;
     }
     jpb_EnemySetFrameProfileEnabled(input.profileRuntime);
     jpb_AnimSetForceProfileEnabled(input.profileRuntime);
@@ -12967,10 +14604,21 @@ int main(int argc, char **argv)
             stderr);
         return 2;
     }
+    if (review_fed_ending &&
+        (quickload_level == NULL || strcmp(quickload_level, "fed") != 0 ||
+         force_enemy_placement != 166)) {
+        fputs("FED ending review requires --quickload fed and controller 166\n", stderr);
+        return 2;
+    }
+    if (review_fighter_audio && (!input.scriptedInput || quickload_level == NULL ||
+        strcmp(quickload_level, "fed") != 0 || force_enemy_placement != 128)) {
+        fputs("fighter audio review requires --control-harness --quickload fed --force-enemy-placement 128\n", stderr);
+        return 2;
+    }
     if (force_enemy_energy >= 0 &&
-        (!input.headless || force_enemy_placement < 0)) {
+        (!input.scriptedInput || force_enemy_placement < 0)) {
         fputs(
-            "--force-enemy-energy requires a headless forced placement "
+            "--force-enemy-energy requires a scripted forced placement "
             "with --control-harness\n",
             stderr);
         return 2;
@@ -13011,6 +14659,16 @@ int main(int argc, char **argv)
             stderr);
         return 2;
     }
+    if (input.fedProjectileSoakHarness &&
+        (input.fedTraversalTargetPlacement < 0 ||
+         force_enemy_placement < 0)) {
+        fputs(
+            "--fed-projectile-soak-harness requires "
+            "--fed-traversal-target-placement and "
+            "--force-enemy-placement\n",
+            stderr);
+        return 2;
+    }
     if (input.validateDeathRestart &&
         (!input.headless || !input.scriptedInput ||
          jpb_LevelIndexFromPath(mesh_path) != 1 || frame_limit < 2)) {
@@ -13031,7 +14689,16 @@ int main(int argc, char **argv)
         return 2;
     }
     input.movieAudioOutputEnabled =
-        !input.headless && !mute && audio_output_enabled;
+        (!input.headless || movie_playback.timingProbe) && !mute && audio_output_enabled;
+    if (movie_playback.timingProbe &&
+        (!input.scriptedInput || !input.movieAudioOutputEnabled)) {
+        fputs("--movie-timing-probe requires --control-harness and audio output\n", stderr);
+        return 2;
+    }
+    if (movie_playback.timingStallMs != 0 && !movie_playback.timingProbe) {
+        fputs("--movie-timing-stall-ms requires --movie-timing-probe\n", stderr);
+        return 2;
+    }
     if (input.validatePresentationHandoff &&
         (input.headless || !input.scriptedInput || frame_limit == 0)) {
         fputs(
@@ -13129,7 +14796,7 @@ int main(int argc, char **argv)
             "continuing without persistence\n",
             stderr);
     }
-    if (!input.headless) {
+    if (!input.headless && !input.scriptedInput) {
         unsigned controller_count;
 
         (void)jpb_PCXInputInit(&input.xinput);
@@ -13364,6 +15031,17 @@ int main(int argc, char **argv)
          (int)(uint8_t)GameStruct.CurrentLevel != 12)) {
         fputs(
             "--validate-hud-kadu requires headless Mini2/Mini2 quickload\n",
+            stderr);
+        jpb_GameRuntimeShutdown(&runtime);
+        free(pixels);
+        return 4;
+    }
+    if (input.validatePalaceLifecycle &&
+        (!input.headless ||
+         (int)(uint8_t)GameStruct.CurrentLevel != 4)) {
+        fputs(
+            "--validate-palace-lifecycle requires headless Palace "
+            "gameplay\n",
             stderr);
         jpb_GameRuntimeShutdown(&runtime);
         free(pixels);
@@ -13689,6 +15367,19 @@ int main(int argc, char **argv)
         runtime.targetX = runtime.physics->pos.vx;
         runtime.targetY = runtime.physics->pos.vy;
         runtime.targetZ = runtime.physics->pos.vz;
+        if (camera_dolly_override < 0) {
+            int camera_index = pc_camera_index_at_world_position(
+                &runtime,
+                runtime.physics->vpos.vx,
+                runtime.physics->vpos.vy,
+                runtime.physics->vpos.vz);
+
+            if (camera_index >= 0 && camera_index < 256) {
+                runtime.world->currentDolly = (int16_t)camera_index;
+                runtime.world->overRideDolly = 0;
+                newcameraflag = 1;
+            }
+        }
         if (jpb_PhysicsUpdateSceneObject(runtime.physics) !=
             JPB_PHYSICS_RESULT_OK) {
             fprintf(
@@ -13721,6 +15412,9 @@ int main(int argc, char **argv)
         jpb_GameRuntimeShutdown(&runtime);
         free(pixels);
         return 4;
+    }
+    if (validate_fed_hover_boss_intro) {
+        pc_isolate_fed_hover_boss_intro(&runtime);
     }
     if (force_enemy_placement >= 0 &&
         !pc_force_enemy_placement(
@@ -13800,7 +15494,57 @@ int main(int argc, char **argv)
 #endif
     }
 
-    if (title_active) {
+    /* Load options before front-end constructors publish text/music or save
+     * settings. Campaign state must still be loaded after GameStruct reset. */
+    if (input.persistenceEnabled) {
+        JPBSaveResult options_result =
+            jpb_SaveOptionsReadFile(input.optionsPath);
+        if (options_result == JPB_SAVE_OK) {
+            generateAllText(OptionStruct.Language);
+        } else if (options_result != JPB_SAVE_NOT_FOUND) {
+            jpb_PCLog(
+                "options load failed result=%s path=%s",
+                pc_save_result_name(options_result),
+                input.optionsPath);
+            fprintf(
+                stderr,
+                "options load failed (%s): %s\n",
+                pc_save_result_name(options_result),
+                input.optionsPath);
+        }
+        jpb_PCLog("options loaded result=%s music=%u volume=%u sfx=%u source=%ux%u mode=%u",
+            pc_save_result_name(options_result), (unsigned)OptionStruct.Music,
+            (unsigned)OptionStruct.musicVolume, (unsigned)OptionStruct.SFXVolume,
+            (unsigned)OptionStruct.ScreenWidth, (unsigned)OptionStruct.ScreenHeight,
+            (unsigned)OptionStruct.WindowMode);
+    }
+    /* Resolution indices are machine-dependent. Match persisted dimensions
+     * to the current descending retail mode table, not the saved index. */
+    {
+        int selected = -1;
+        int width = framebuffer_size_explicit ? framebuffer.width : (int)OptionStruct.ScreenWidth;
+        int height = framebuffer_size_explicit ? framebuffer.height : (int)OptionStruct.ScreenHeight;
+        for (int i = 0; i < g_resolutionsCount; ++i) {
+            if (g_resolutions[i].width == width && g_resolutions[i].height == height) {
+                selected = i;
+                break;
+            }
+        }
+        if (selected < 0 && !framebuffer_size_explicit && g_resolutionsCount > 0) selected = 0;
+        if (selected >= 0) {
+            OptionStruct.ResolutionChanged = (uint32_t)selected;
+            OptionStruct.ScreenWidth = (uint32_t)g_resolutions[selected].width;
+            OptionStruct.ScreenHeight = (uint32_t)g_resolutions[selected].height;
+        }
+        if (OptionStruct.WindowMode > 2) OptionStruct.WindowMode = defaultOptionStruct.WindowMode;
+        if (!input.headless && (!input.hiddenWindow || input.persistenceEnabled)) {
+            UpdateResolution(selected >= 0 ? (int)OptionStruct.ScreenWidth : framebuffer.width,
+                selected >= 0 ? (int)OptionStruct.ScreenHeight : framebuffer.height,
+                (int)OptionStruct.WindowMode);
+        }
+    }
+
+    if (title_active || review_level_complete) {
         const char *title_path = resource_getPath(
             "JPB_SplashV3_Sharpened.png",
             JPB_RESOURCE_FRONT);
@@ -13835,7 +15579,14 @@ int main(int argc, char **argv)
          */
         jpb_TextureSetPlatformHooks(
             pc_load_menu_texture, NULL, menu_texture_cache);
-        menu_mainInitMenu(0);
+        {
+            /* The ending fixture starts with live gameplay actors; menu
+             * resource initialization must not erase their health/state. */
+            gamestruct gameplay_before_menu = GameStruct;
+            menu_mainInitMenu(0);
+            if (review_fed_ending || (review_menu >= 0 && quickload_level != NULL))
+                GameStruct = gameplay_before_menu;
+        }
         if (menuTexLoaded == 0) {
             fputs(
                 "title presentation could not load the original menu bank\n",
@@ -13852,13 +15603,9 @@ int main(int argc, char **argv)
             (unsigned)menuVars.menuMode[menuVars.menuModeSP & 7u],
             (unsigned)menuVars.menuModeSP,
             menu_texture_cache->count);
-        /*
-         * The retail state-1 path owns EULA and attract-movie resources
-         * that are not part of this installed PC data set. Enter its
-         * ordinary title state explicitly; subsequent frames stay in the
-         * PDB-named menu_mainLoop owner.
-         */
-        menuVars.menuMode[0] = 0;
+        /* Normal boot retains the canonical prompt/EULA/intro owner.
+         * Explicit selector diagnostics still start at the expanded menu. */
+        menuVars.menuMode[0] = title_diagnostic ? 0 : 1;
         menuVars.mmSelect1[0] = 0;
         if (title_main_select >= 0) {
             menuVars.mmSelect1[0] = (uint8_t)title_main_select;
@@ -13885,16 +15632,42 @@ int main(int argc, char **argv)
             GameStruct.ModelSelect[0] = (int16_t)player_model;
             newMenu_currentModelSelectBaseP1 = player_model;
         }
+        if (jpb_ModCharacterById(player_two_model) != NULL) {
+            GameStruct.ModelSelect[1] = (int16_t)player_two_model;
+            newMenu_currentModelSelectBaseP2 = player_two_model;
+        }
         if (input.validateTitleMovie) {
             pc_trigger_movie(
                 input.validateTitleMovieIndex,
                 0,
                 &input);
-        } else if (!input.headless && quickload_level == NULL) {
-            input.autoIntroMovieStarted = 1;
-            pc_trigger_auto_intro_movie(
-                &input, 0, "startup-title");
         }
+    }
+
+    if (review_disable_ai) {
+        pc_isolate_fed_hover_boss_intro(&runtime);
+        jpb_EnemySetAiSuspended(1);
+        jpb_PCLog("diagnostic: AI suspended for collision review");
+    }
+    if (review_level_complete) {
+        /* Process-local fixture using the normal gameplay completion owner. */
+        menu_setNumPlayers((unsigned)review_level_complete);
+        GameStruct.continueAble = 1;
+        GameStruct.CurrentLevel = 1;
+        LevelSelect = 1;
+        GameStruct.aCharacterData[0].Score = review_score;
+        GameStruct.aCharacterData[1].Score = review_score;
+        GameStruct.ModelSelect[0] = (int16_t)jpb_ModDonor(player_model);
+        GameStruct.ModelSelect[1] = (int16_t)jpb_ModDonor(player_two_model);
+        GameStruct.gameMode = 6;
+        GameStruct.inMenuFlag = 0;
+        nextLevel = review_fed_ending ? 0 : 2;
+        if (review_fed_ending && review_level_complete == 2) {
+            physics_gSetPosition(&runtime.inactivePlayer->playerRoot,
+                -22912, 5376, -9856);
+            (void)jpb_PhysicsUpdateSceneObject(runtime.inactivePlayerPhysics);
+        }
+        title_active = 0;
     }
 
     /* menu_mainInitMenu clears GameStruct as its retail owner does. Load
@@ -13904,27 +15677,11 @@ int main(int argc, char **argv)
      * state here would restore saved transient powerups after player refresh
      * cleared them. Keep options, but leave quickload gameplay state fresh. */
     if (input.persistenceEnabled) {
-        JPBSaveResult options_result =
-            jpb_SaveOptionsReadFile(input.optionsPath);
         JPBSaveResult game_result = quickload_level == NULL
             ? jpb_SaveGameReadFile(input.saveGamePath)
             : JPB_SAVE_NOT_FOUND;
-
         input.noValidGameSave = game_result != JPB_SAVE_OK;
 
-        if (options_result == JPB_SAVE_OK) {
-            generateAllText(OptionStruct.Language);
-        } else if (options_result != JPB_SAVE_NOT_FOUND) {
-            jpb_PCLog(
-                "options load failed result=%s path=%s",
-                pc_save_result_name(options_result),
-                input.optionsPath);
-            fprintf(
-                stderr,
-                "options load failed (%s): %s\n",
-                pc_save_result_name(options_result),
-                input.optionsPath);
-        }
         if (game_result != JPB_SAVE_OK &&
             game_result != JPB_SAVE_NOT_FOUND) {
             jpb_PCLog(
@@ -13936,6 +15693,10 @@ int main(int argc, char **argv)
                 "game load failed (%s): %s\n",
                 pc_save_result_name(game_result),
                 input.saveGamePath);
+            if (jpb_ModSaveError()[0] != '\0') {
+                jpb_PCLog("mod save detail: %s", jpb_ModSaveError());
+                fprintf(stderr, "mod save detail: %s\n", jpb_ModSaveError());
+            }
         }
     }
     if (title_valid_save) {
@@ -13943,6 +15704,18 @@ int main(int argc, char **argv)
         GameStruct.difficulty = 0;
         input.noValidGameSave = 0;
         jpb_PCLog("title diagnostic forcing valid-save menu branch");
+    }
+    if (review_menu >= 0) {
+        if (review_menu == 14) menu_setNumPlayers(1);
+        if (review_menu == 13) menu_setNumPlayers(2);
+        introPlayed = 1;
+        OptionStruct.EULAaccepted = 1;
+        menuVars.menuModeSP = 0;
+        menuVars.menuMode[0] = (uint16_t)review_menu;
+        GameStruct.inMenuFlag = 1;
+        GameStruct.gameMode = quickload_level != NULL ? 6 : 0;
+        title_active = quickload_level == NULL;
+        menu_initNewMenu();
     }
     /* A command-line scheme is a deterministic diagnostic override. Apply it
      * after persisted options so it is authoritative for this process only;
@@ -13970,7 +15743,17 @@ int main(int argc, char **argv)
                 "warning: PC audio bank paths could not be initialized; "
                 "continuing without sound\n",
                 stderr);
+        } else {
+            input.currentAudio = audio;
+            if (input.moviePending || movie_playback.active) {
+                jpb_PCAudioSetMoviePlayback(audio, 1);
+            }
         }
+    }
+
+    if (review_fighter_audio && audio != NULL && OptionStruct.Music) {
+        /* The forced placement skips the encounter's music trigger. */
+        playXA(5, (int)OptionStruct.musicVolume * 2, 1);
     }
 
     if (input.headless) {
@@ -13987,18 +15770,34 @@ int main(int argc, char **argv)
             pc_select_fed_traversal_input(
                 &input, &runtime, frame_count - 1);
             if (movie_playback.active) {
+                /* Probe the real audio device at a paced service interval;
+                 * ordinary headless decode tests intentionally run unpaced. */
+                if (movie_playback.timingProbe) Sleep(16);
                 if (pc_movie_skip_requested(&input, 0)) {
                     ++input.movieSkipCount;
                     jpb_PCLog(
                         "movie skipped frame=%d index=%u",
                         frame_count,
                         input.movieLastIndex);
-                    pc_movie_playback_shutdown(&movie_playback);
+                    pc_end_movie_playback(&input);
                 } else {
+                    if (!pc_movie_audio_start(&movie_playback)) {
+                        jpb_PCLog(
+                            "movie audio start failed frame=%d index=%u "
+                            "error=%s",
+                            frame_count,
+                            input.movieLastIndex,
+                            movie_playback.error);
+                        result = JPB_GAME_RUNTIME_RENDER_FAILED;
+                        break;
+                    }
                     (void)pc_movie_present_frame(
                         &movie_playback,
                         &framebuffer,
                         input.validateTitleMovie ? 2000 : 250);
+                    if (!movie_playback.active) {
+                        pc_end_movie_playback(&input);
+                    }
                 }
                 pc_movie_sync_input_counts(&input);
                 result = JPB_GAME_RUNTIME_OK;
@@ -14008,6 +15807,13 @@ int main(int argc, char **argv)
                     &framebuffer, title_pixels);
                 result = jpb_GameRuntimeTitleFrame(
                     &runtime, &framebuffer);
+                /* Retail movie calls block inside the menu owner. Our queue
+                 * resumes next iteration: never present the title frame that
+                 * requested a movie before the queued legal/intro video. */
+                if (result == JPB_GAME_RUNTIME_OK && input.moviePending) {
+                    jpb_PCLog("title presentation deferred for movie index=%u", input.movieLastIndex);
+                    continue;
+                }
             } else {
                 if (front_end_playable_handoff &&
                     pc_release_front_end_gameplay_control(
@@ -14084,6 +15890,27 @@ int main(int argc, char **argv)
                     front_end_playable_handoff = 0;
                 }
                 if (result == JPB_GAME_RUNTIME_OK &&
+                    (pc_gameplay_enters_score_mode() ||
+                     pc_gameplay_requests_title())) {
+                    if (!pc_ensure_return_menu_resources(&menu_texture_cache, &title_pixels, &framebuffer))
+                        result = JPB_GAME_RUNTIME_LOAD_FAILED;
+                    title_active = result == JPB_GAME_RUNTIME_OK;
+                    front_end_flow = 1;
+                    front_end_playable_handoff = 0;
+                    input.gameplayRumbleEnabled = 0;
+                    memset(
+                        input.observedPlayerBits,
+                        0,
+                        sizeof(input.observedPlayerBits));
+                    jpb_PCLog(
+                        "gameplay returned front-end ownership "
+                        "mode=%u stack=%u game_mode=%d",
+                        (unsigned)menuVars.menuMode[
+                            menuVars.menuModeSP & 7u],
+                        (unsigned)menuVars.menuModeSP,
+                        (int)GameStruct.gameMode);
+                }
+                if (result == JPB_GAME_RUNTIME_OK &&
                     death_restart_injected &&
                     !death_restart_observed) {
                     int restart_valid =
@@ -14152,7 +15979,94 @@ int main(int argc, char **argv)
                         (unsigned)(uint16_t)
                             death_restart_powerup->pos.pad);
                 }
+                if (result == JPB_GAME_RUNTIME_OK &&
+                    validate_fed_hover_boss_intro) {
+                    int dolly = runtime.world != NULL
+                        ? runtime.world->currentDolly
+                        : -1;
+                    JPBGameRuntimeEnemyPlacementState boss_state;
+                    wsl_ENEMY *controller =
+                        pc_enemy_for_placement(&runtime, 87);
+
+                    pc_report_fed_hover_boss_state(
+                        &runtime, frame_count + 1);
+
+                    if (dolly >= 136 && dolly <= 140) {
+                        fed_hover_boss_dolly_mask |=
+                            UINT32_C(1) << (unsigned)(dolly - 136);
+                    }
+                    if (runtime.player != NULL &&
+                        (runtime.player->pFlags & UINT32_C(2)) != 0) {
+                        fed_hover_boss_saw_lock = 1;
+                    }
+                    if (fed_hover_boss_saw_lock &&
+                        dolly == 37 && runtime.world != NULL &&
+                        runtime.world->overRideDolly == 0 &&
+                        runtime.player != NULL &&
+                        (runtime.player->pFlags & UINT32_C(2)) == 0) {
+                        fed_hover_boss_saw_release = 1;
+                    }
+                    if (jpb_GameRuntimeGetEnemyPlacementState(
+                            &runtime, 124, &boss_state) &&
+                        boss_state.modelId == 30 && boss_state.active == 1) {
+                        fed_hover_boss_saw_active = 1;
+                    }
+                    if (controller != NULL && controller->pPlayer != NULL &&
+                        (controller->pPlayer->forceFlags &
+                         UINT32_C(0x10)) != 0) {
+                        fed_hover_boss_saw_controller_protected = 1;
+                    }
+                    if (fed_hover_boss_complete_frame < 0 &&
+                        (fed_hover_boss_dolly_mask & UINT32_C(0x1f)) ==
+                            UINT32_C(0x1f) &&
+                        fed_hover_boss_saw_lock &&
+                        fed_hover_boss_saw_release &&
+                        fed_hover_boss_saw_active &&
+                        fed_hover_boss_saw_controller_protected) {
+                        fed_hover_boss_complete_frame = frame_count + 1;
+                    }
+                }
+                if (result == JPB_GAME_RUNTIME_OK &&
+                    validate_enemy_death_placement >= 0) {
+                    JPBGameRuntimeEnemyPlacementState enemy_state;
+                    wsl_BAP_PLACEMENT *placement =
+                        runtime.world != NULL &&
+                        runtime.world->apEnemy != NULL &&
+                        validate_enemy_death_placement <
+                            runtime.world->nEnemy
+                            ? runtime.world->apEnemy[
+                                  validate_enemy_death_placement]
+                            : NULL;
+
+                    if (placement != NULL && placement->status == 2) {
+                        enemy_death_saw_retired = 1;
+                        if (enemy_death_complete_frame < 0 &&
+                            enemy_death_saw_active &&
+                            !enemy_death_identity_mismatch &&
+                            enemy_death_initial_energy > 0 &&
+                            runtime.enemyDamageProcessedCount != 0) {
+                            enemy_death_complete_frame = frame_count + 1;
+                        }
+                    }
+                    if (jpb_GameRuntimeGetEnemyPlacementState(
+                            &runtime,
+                            validate_enemy_death_placement,
+                            &enemy_state) &&
+                        enemy_state.active == 1) {
+                        enemy_death_saw_active = 1;
+                        if (enemy_state.objectId != enemy_state.playerNum) {
+                            enemy_death_identity_mismatch = 1;
+                        }
+                        if (enemy_death_initial_energy < 0) {
+                            enemy_death_initial_energy = enemy_state.energy;
+                        }
+                        if (enemy_state.energy < enemy_death_min_energy) {
+                            enemy_death_min_energy = enemy_state.energy;
+                        }
+                    }
+                }
             }
+            if (review_level_complete) pc_review_score_trace(frame_count);
             if (camera_diagnostics && !title_active &&
                 !presented_movie_frame &&
                 result == JPB_GAME_RUNTIME_OK) {
@@ -14176,7 +16090,15 @@ int main(int argc, char **argv)
             if (result != JPB_GAME_RUNTIME_OK) {
                 break;
             }
+            if (fed_hover_boss_complete_frame >= 0 ||
+                enemy_death_complete_frame >= 0) {
+                ++frame_count;
+                break;
+            }
             if (presented_movie_frame) {
+                if (movie_playback.active) {
+                    pc_movie_report_timing(&movie_playback, 0);
+                }
                 ++frame_count;
                 continue;
             }
@@ -14202,7 +16124,12 @@ int main(int argc, char **argv)
                     enemy_bmd_path,
                     selected_front_end_level,
                     selected_front_end_game_mode,
-                    &input
+                    &input,
+                    NULL,
+                    menu_texture_cache,
+                    NULL,
+                    audio_output_enabled,
+                    &audio_generation_count
 #if defined(JPB_PC_HAS_UFBX)
                     , &fbx_level,
                     &fbx_level_loaded
@@ -14259,7 +16186,12 @@ int main(int argc, char **argv)
                         NULL,
                         selected_level,
                         2,
-                        &input
+                        &input,
+                        NULL,
+                        menu_texture_cache,
+                        NULL,
+                        audio_output_enabled,
+                        &audio_generation_count
 #if defined(JPB_PC_HAS_UFBX)
                         , &fbx_level,
                         &fbx_level_loaded
@@ -14311,7 +16243,12 @@ int main(int argc, char **argv)
                         NULL,
                         selected_level,
                         2,
-                        &input
+                        &input,
+                        NULL,
+                        menu_texture_cache,
+                        NULL,
+                        audio_output_enabled,
+                        &audio_generation_count
 #if defined(JPB_PC_HAS_UFBX)
                         , &fbx_level,
                         &fbx_level_loaded
@@ -14367,14 +16304,20 @@ int main(int argc, char **argv)
                 ++jump_airborne_frames;
             }
             if (input.validateCombat &&
+                (input.headlessPhaseBits & JPB_PAD_COMBO_NORTH) != 0 &&
                 (frame_count == 2 ||
-                 ((input.headlessPhaseBits & JPB_PAD_COMBO_NORTH) != 0 &&
-                  frame_count > 2 && frame_count % 4 == 2)) &&
+                 (frame_count > 2 && frame_count % 4 == 2)) &&
                 runtime.enemy != NULL &&
                 pc_enemy_is_active(runtime.enemy) &&
                 runtime.enemy->active == 1 &&
                 runtime.enemy->ownerType == 2 &&
-                !pc_position_for_combat_validation(&runtime)) {
+                !pc_position_for_combat_validation(
+                    &runtime,
+                    pc_enemy_for_placement(
+                        &runtime,
+                        validate_enemy_death_placement >= 0
+                            ? validate_enemy_death_placement
+                            : force_enemy_placement))) {
                 result = JPB_GAME_RUNTIME_LOAD_FAILED;
                 break;
             }
@@ -14388,13 +16331,12 @@ int main(int argc, char **argv)
         HINSTANCE instance = GetModuleHandleA(NULL);
         HWND window = pc_create_window(
             instance,
-            !input.hiddenWindow,
-            !input.hiddenWindow,
+            0,
+            0,
             framebuffer.width,
             framebuffer.height);
         JPBPCD3D11Presenter *presenter = NULL;
         HANDLE frame_timer = NULL;
-        MSG message;
         PcGameplayLogState gameplay_log_states[2];
         uint32_t previous_menu_key_bits = 0;
         uint16_t logged_menu_mode = title_active
@@ -14444,6 +16386,10 @@ int main(int argc, char **argv)
             }
         }
         if (presenter != NULL) {
+            load_screen_presentation.presenter = presenter;
+            load_screen_presentation.framebuffer = &framebuffer;
+            load_screen_presentation.capturePath =
+                load_screen_output_path;
             presentation_hardware = 1;
             snprintf(
                 presentation_backend,
@@ -14508,12 +16454,7 @@ int main(int argc, char **argv)
                         &input, frame_count - 1);
                 }
 
-                while (PeekMessageA(
-                           &message, NULL, 0, 0, PM_REMOVE)) {
-                    TranslateMessage(&message);
-                    DispatchMessageA(&message);
-                }
-                if (!pc_running) {
+                if (!pc_pump_window_messages()) {
                     break;
                 }
                 if (resolutionUpdated != 0) {
@@ -14606,10 +16547,23 @@ int main(int argc, char **argv)
                             "movie skipped frame=%d index=%u",
                             frame_count,
                             input.movieLastIndex);
-                        pc_movie_playback_shutdown(&movie_playback);
+                        pc_end_movie_playback(&input);
                     } else {
+                        if (!pc_movie_audio_start(&movie_playback)) {
+                            jpb_PCLog(
+                                "movie audio start failed frame=%d index=%u "
+                                "error=%s",
+                                frame_count,
+                                input.movieLastIndex,
+                                movie_playback.error);
+                            result = JPB_GAME_RUNTIME_RENDER_FAILED;
+                            break;
+                        }
                         (void)pc_movie_present_frame(
                             &movie_playback, &framebuffer, 250);
+                        if (!movie_playback.active) {
+                            pc_end_movie_playback(&input);
+                        }
                     }
                     pc_movie_sync_input_counts(&input);
                     result = JPB_GAME_RUNTIME_OK;
@@ -14628,6 +16582,12 @@ int main(int argc, char **argv)
                         &framebuffer, title_pixels);
                     result = jpb_GameRuntimeTitleFrame(
                         &runtime, &framebuffer);
+                    /* Match the blocking retail movie boundary: the queued
+                     * video must precede this title frame on screen. */
+                    if (result == JPB_GAME_RUNTIME_OK && input.moviePending) {
+                        jpb_PCLog("title presentation deferred for movie index=%u", input.movieLastIndex);
+                        continue;
+                    }
                 } else {
                     jpb_PCLogSetCheckpoint(
                         "interactive gameplay frame=%d level=%d model=%d motion=%d",
@@ -14655,7 +16615,30 @@ int main(int argc, char **argv)
                             &runtime, GameStruct.NumPlayers)) {
                         front_end_playable_handoff = 0;
                     }
+                    if (result == JPB_GAME_RUNTIME_OK &&
+                        (pc_gameplay_enters_score_mode() ||
+                         pc_gameplay_requests_title())) {
+                        if (!pc_ensure_return_menu_resources(&menu_texture_cache, &title_pixels, &framebuffer))
+                            result = JPB_GAME_RUNTIME_LOAD_FAILED;
+                        title_active = result == JPB_GAME_RUNTIME_OK;
+                        front_end_flow = 1;
+                        front_end_playable_handoff = 0;
+                        input.gameplayRumbleEnabled = 0;
+                        previous_menu_key_bits = 0;
+                        memset(
+                            input.observedPlayerBits,
+                            0,
+                            sizeof(input.observedPlayerBits));
+                        jpb_PCLog(
+                            "gameplay returned front-end ownership "
+                            "mode=%u stack=%u game_mode=%d",
+                            (unsigned)menuVars.menuMode[
+                                menuVars.menuModeSP & 7u],
+                            (unsigned)menuVars.menuModeSP,
+                            (int)GameStruct.gameMode);
+                    }
                 }
+                if (review_level_complete) pc_review_score_trace(frame_count);
                 if (camera_diagnostics && !title_active &&
                     result == JPB_GAME_RUNTIME_OK) {
                     pc_log_camera_ai_event(
@@ -14706,9 +16689,6 @@ int main(int argc, char **argv)
                             "screen_poly=%.3fms hud=%.3fms "
                             "hud_replay=%.3fms "
                             "composite=%.3f/%.3fms "
-                            "enemy_create=(total=%.3fms,pool=%.3fms,"
-                            "ai=%.3fms,model=%.3fms,anim=%.3fms,"
-                            "player=%.3fms,refresh=%.3fms) "
                             "player_frame=(total=%.3fms,"
                             "collisions=%.3fms,global=%.3fms,"
                             "triggers=%.3fms,life=%.3fms,debug=%.3fms,"
@@ -14757,20 +16737,6 @@ int main(int argc, char **argv)
                             runtime.profileLastCompositeUploadSeconds *
                                 1000.0,
                             runtime.profileLastCompositeFinishSeconds *
-                                1000.0,
-                            runtime.profileLastEnemyCreateTotalSeconds *
-                                1000.0,
-                            runtime.profileLastEnemyCreatePoolSeconds *
-                                1000.0,
-                            runtime.profileLastEnemyCreateAiSeconds *
-                                1000.0,
-                            runtime.profileLastEnemyCreateModelSeconds *
-                                1000.0,
-                            runtime.profileLastEnemyCreateAnimSeconds *
-                                1000.0,
-                            runtime.profileLastEnemyCreatePlayerSeconds *
-                                1000.0,
-                            runtime.profileLastEnemyCreateRefreshSeconds *
                                 1000.0,
                             player_profile.lastTotalSeconds * 1000.0,
                             player_profile.lastCollisionsSeconds * 1000.0,
@@ -14863,8 +16829,6 @@ int main(int argc, char **argv)
                     pc_front_end_requests_gameplay(
                         &selected_front_end_level,
                         &selected_front_end_game_mode)) {
-                    jpb_PCAudioDestroy(audio);
-                    audio = NULL;
                     if (!pc_configure_level_asset(
                             default_assets.mesh,
                             sizeof(default_assets.mesh),
@@ -14888,7 +16852,12 @@ int main(int argc, char **argv)
                         enemy_bmd_path,
                         selected_front_end_level,
                         selected_front_end_game_mode,
-                        &input
+                        &input,
+                        &load_screen_presentation,
+                        menu_texture_cache,
+                        mute ? NULL : &audio,
+                        audio_output_enabled,
+                        &audio_generation_count
 #if defined(JPB_PC_HAS_UFBX)
                         , &fbx_level,
                         &fbx_level_loaded
@@ -14945,21 +16914,11 @@ int main(int argc, char **argv)
                         &input,
                         selected_front_end_level,
                         "front-end-level-load");
-                    if (!mute) {
-                        audio = pc_create_current_game_audio(
-                            mesh_path,
-                            cad_path,
-                            jpb_LevelIndexFromPath(mesh_path),
-                            audio_output_enabled,
-                            &audio_generation_count);
-                    }
                 } else if (!presented_movie_frame &&
                            title_active && front_end_flow) {
                     int selected_level;
 
                     if (pc_front_end_requests_training(&selected_level)) {
-                        jpb_PCAudioDestroy(audio);
-                        audio = NULL;
                         GameStruct.NumPlayers = 1;
                         if (!pc_configure_level_asset(
                                 default_assets.mesh,
@@ -14979,7 +16938,12 @@ int main(int argc, char **argv)
                             NULL,
                             selected_level,
                             2,
-                            &input
+                            &input,
+                            &load_screen_presentation,
+                            menu_texture_cache,
+                            mute ? NULL : &audio,
+                            audio_output_enabled,
+                            &audio_generation_count
 #if defined(JPB_PC_HAS_UFBX)
                             , &fbx_level,
                             &fbx_level_loaded
@@ -15026,18 +16990,8 @@ int main(int argc, char **argv)
                             "training gameplay initialized level=%d name=%s",
                             selected_level,
                             sLevelNames[selected_level]);
-                        if (!mute) {
-                            audio = pc_create_current_game_audio(
-                                mesh_path,
-                                cad_path,
-                                selected_level,
-                                audio_output_enabled,
-                                &audio_generation_count);
-                        }
                     } else if (pc_front_end_requests_versus(
                                    &selected_level)) {
-                        jpb_PCAudioDestroy(audio);
-                        audio = NULL;
                         if (!pc_configure_level_asset(
                                 default_assets.mesh,
                                 sizeof(default_assets.mesh),
@@ -15056,7 +17010,12 @@ int main(int argc, char **argv)
                             NULL,
                             selected_level,
                             2,
-                            &input
+                            &input,
+                            &load_screen_presentation,
+                            menu_texture_cache,
+                            mute ? NULL : &audio,
+                            audio_output_enabled,
+                            &audio_generation_count
 #if defined(JPB_PC_HAS_UFBX)
                             , &fbx_level,
                             &fbx_level_loaded
@@ -15106,16 +17065,11 @@ int main(int argc, char **argv)
                             sLevelNames[selected_level],
                             (int)GameStruct.ModelSelect[0],
                             (int)GameStruct.ModelSelect[1]);
-                        if (!mute) {
-                            audio = pc_create_current_game_audio(
-                                mesh_path,
-                                cad_path,
-                                selected_level,
-                                audio_output_enabled,
-                                &audio_generation_count);
-                        }
                     }
                 }
+                input.gameplayRumbleEnabled =
+                    !title_active && GameStruct.inMenuFlag == 0 &&
+                    !input.moviePending && !movie_playback.active;
                 if (!presented_movie_frame && !title_active) {
                     if (runtime.physics != NULL) {
                         double camera_dx =
@@ -15195,7 +17149,10 @@ int main(int argc, char **argv)
                               (frame_count - input_trail_start_frame) % 60 ==
                                   0) ||
                              (input_trail_path == NULL &&
-                              frame_count % 60 == 0))) {
+                              (frame_count % 60 == 0 ||
+                               (GameStruct.CurrentLevel == 1 &&
+                                frame_count >= 30 &&
+                                frame_count <= 70))))) {
                             const physicsObject *second_physics =
                                 runtime.inactivePlayerPhysics;
                             const playerObject *second_player =
@@ -15225,6 +17182,72 @@ int main(int argc, char **argv)
                             int camera_step_x = 0;
                             int camera_step_y = 0;
                             int camera_step_z = 0;
+                            const physicsObject *standee =
+                                runtime.physics->standee;
+                            const physicsObject *solidgrabbed =
+                                runtime.physics->solidgrabbed;
+                            const wsl_ENEMY *fed_lift_enemy =
+                                GameStruct.CurrentLevel == 1
+                                    ? pc_enemy_for_placement(&runtime, 150)
+                                    : NULL;
+                            const sceneObject *fed_lift_scene =
+                                fed_lift_enemy != NULL &&
+                                fed_lift_enemy->pPlayer != NULL
+                                    ? (const sceneObject *)
+                                          fed_lift_enemy->pPlayer
+                                              ->playerRoot.pParent
+                                    : NULL;
+                            const physicsObject *fed_lift_physics =
+                                fed_lift_scene != NULL
+                                    ? (const physicsObject *)
+                                          fed_lift_scene->pPhysics
+                                    : NULL;
+                            const animObject *fed_lift_animation =
+                                fed_lift_scene != NULL
+                                    ? (const animObject *)fed_lift_scene->pAnim
+                                    : NULL;
+                            const _animFrame *fed_lift_frame =
+                                fed_lift_scene != NULL
+                                    ? fed_lift_scene->pKeyFrameModel
+                                    : NULL;
+                            const modelObject *fed_lift_model =
+                                fed_lift_scene != NULL
+                                    ? (const modelObject *)fed_lift_scene->pModel
+                                    : NULL;
+                            const Mnode *fed_lift_root =
+                                fed_lift_model != NULL
+                                    ? fed_lift_model->pRootNode
+                                    : NULL;
+                            int fed_lift_min_y = 0;
+                            int fed_lift_max_y = 0;
+                            if (fed_lift_physics != NULL &&
+                                fed_lift_physics->solid != NULL &&
+                                fed_lift_physics->solid->coords != NULL &&
+                                fed_lift_physics->solid->geometry != NULL) {
+                                int coordinate_count =
+                                    fed_lift_physics->solid->geometry->numVerts *
+                                    3;
+                                int coordinate_index;
+
+                                if (coordinate_count > 0) {
+                                    fed_lift_min_y =
+                                        fed_lift_physics->solid->coords[0].vy;
+                                    fed_lift_max_y = fed_lift_min_y;
+                                }
+                                for (coordinate_index = 1;
+                                     coordinate_index < coordinate_count;
+                                     ++coordinate_index) {
+                                    int y = fed_lift_physics->solid
+                                                ->coords[coordinate_index]
+                                                .vy;
+                                    if (y < fed_lift_min_y) {
+                                        fed_lift_min_y = y;
+                                    }
+                                    if (y > fed_lift_max_y) {
+                                        fed_lift_max_y = y;
+                                    }
+                                }
+                            }
 
                             if (camera_pulse_initialized) {
                                 player_dx = runtime.physics->pos.vx -
@@ -15252,6 +17275,16 @@ int main(int argc, char **argv)
                                 "player_vpos=(%d,%d,%d) "
                                 "player_delta=(%.1f,%.1f,%.1f) "
                                 "movement=(%.1f,%.1f,%.1f) "
+                                "player_flags=%08x/%08x "
+                                "ground=%.1f/%.1f "
+                                "solidgrabbed=(%d,%.1f/%.1f/%.1f) "
+                                "standee=(%d,%.1f/%.1f/%.1f,"
+                                "%.1f/%.1f/%.1f) "
+                                "fed_lift=(%d,%.1f/%.1f/%.1f,"
+                                "%.1f/%.1f/%.1f,solid:%d/%08x,y:%d/%d) "
+                                "lift_anim=(motion:%d,index:%d,acc:%d,rate:%d,"
+                                "tween:%u/%u/%u,root:%d/%d/%d,prev:%d/%d/%d,"
+                                "node:%d/%d/%d,snapshot:%d/%d/%d) "
                                 "input=%08x/%08x/%08x "
                                 "player1=(%.1f,%.1f,%.1f) "
                                 "player1_movement=(%.1f,%.1f,%.1f) "
@@ -15293,6 +17326,102 @@ int main(int argc, char **argv)
                                 runtime.physics->mov.vx,
                                 runtime.physics->mov.vy,
                                 runtime.physics->mov.vz,
+                                (unsigned)runtime.player->playerRoot.flags,
+                                (unsigned)runtime.player->pFlags,
+                                runtime.physics->airGround,
+                                runtime.physics->validairground,
+                                solidgrabbed != NULL
+                                    ? solidgrabbed->physicsRoot.objectID : -1,
+                                solidgrabbed != NULL
+                                    ? solidgrabbed->pos.vx : 0.0f,
+                                solidgrabbed != NULL
+                                    ? solidgrabbed->pos.vy : 0.0f,
+                                solidgrabbed != NULL
+                                    ? solidgrabbed->pos.vz : 0.0f,
+                                standee != NULL
+                                    ? standee->physicsRoot.objectID : -1,
+                                standee != NULL ? standee->pos.vx : 0.0f,
+                                standee != NULL ? standee->pos.vy : 0.0f,
+                                standee != NULL ? standee->pos.vz : 0.0f,
+                                standee != NULL ? standee->mov.vx : 0.0f,
+                                standee != NULL ? standee->mov.vy : 0.0f,
+                                standee != NULL ? standee->mov.vz : 0.0f,
+                                fed_lift_physics != NULL
+                                    ? fed_lift_physics->physicsRoot.objectID
+                                    : -1,
+                                fed_lift_physics != NULL
+                                    ? fed_lift_physics->pos.vx : 0.0f,
+                                fed_lift_physics != NULL
+                                    ? fed_lift_physics->pos.vy : 0.0f,
+                                fed_lift_physics != NULL
+                                    ? fed_lift_physics->pos.vz : 0.0f,
+                                fed_lift_physics != NULL
+                                    ? fed_lift_physics->mov.vx : 0.0f,
+                                fed_lift_physics != NULL
+                                    ? fed_lift_physics->mov.vy : 0.0f,
+                                fed_lift_physics != NULL
+                                    ? fed_lift_physics->mov.vz : 0.0f,
+                                fed_lift_physics != NULL &&
+                                    fed_lift_physics->solid != NULL,
+                                fed_lift_physics != NULL &&
+                                        fed_lift_physics->solid != NULL
+                                    ? (unsigned)fed_lift_physics->solid->flags
+                                    : 0U,
+                                fed_lift_min_y,
+                                fed_lift_max_y,
+                                fed_lift_enemy != NULL &&
+                                        fed_lift_enemy->pPlayer != NULL
+                                    ? fed_lift_enemy->pPlayer->currentMotion
+                                    : -1,
+                                fed_lift_animation != NULL
+                                    ? fed_lift_animation->animFrameIndex : -1,
+                                fed_lift_animation != NULL
+                                    ? fed_lift_animation->animFrameAcc : -1,
+                                fed_lift_animation != NULL
+                                    ? fed_lift_animation->animFrameRate : -1,
+                                fed_lift_animation != NULL &&
+                                        fed_lift_animation->pMotion != NULL
+                                    ? (unsigned)fed_lift_animation->pMotion->twin
+                                    : 0U,
+                                fed_lift_animation != NULL
+                                    ? (unsigned)fed_lift_animation->tweenLevel
+                                    : 0U,
+                                fed_lift_animation != NULL
+                                    ? (unsigned)fed_lift_animation->tweenFramesLeft
+                                    : 0U,
+                                fed_lift_frame != NULL
+                                    ? fed_lift_frame->v3RootTranslation.vx : 0,
+                                fed_lift_frame != NULL
+                                    ? fed_lift_frame->v3RootTranslation.vy : 0,
+                                fed_lift_frame != NULL
+                                    ? fed_lift_frame->v3RootTranslation.vz : 0,
+                                fed_lift_animation != NULL &&
+                                        fed_lift_animation->pPreviousAnimFrame != NULL
+                                    ? fed_lift_animation->pPreviousAnimFrame
+                                          ->v3RootTranslation.vx
+                                    : 0,
+                                fed_lift_animation != NULL &&
+                                        fed_lift_animation->pPreviousAnimFrame != NULL
+                                    ? fed_lift_animation->pPreviousAnimFrame
+                                          ->v3RootTranslation.vy
+                                    : 0,
+                                fed_lift_animation != NULL &&
+                                        fed_lift_animation->pPreviousAnimFrame != NULL
+                                    ? fed_lift_animation->pPreviousAnimFrame
+                                          ->v3RootTranslation.vz
+                                    : 0,
+                                fed_lift_root != NULL
+                                    ? fed_lift_root->v3RotCenter.vx : 0,
+                                fed_lift_root != NULL
+                                    ? fed_lift_root->v3RotCenter.vy : 0,
+                                fed_lift_root != NULL
+                                    ? fed_lift_root->v3RotCenter.vz : 0,
+                                fed_lift_scene != NULL
+                                    ? fed_lift_scene->v3SnapShotPosition.vx : 0,
+                                fed_lift_scene != NULL
+                                    ? fed_lift_scene->v3SnapShotPosition.vy : 0,
+                                fed_lift_scene != NULL
+                                    ? fed_lift_scene->v3SnapShotPosition.vz : 0,
                                 (unsigned)runtime.player->playerPad.cpad[0],
                                 (unsigned)runtime.player->playerPad.cpad[1],
                                 (unsigned)runtime.player->heldMask,
@@ -15445,18 +17574,10 @@ int main(int argc, char **argv)
                     result = JPB_GAME_RUNTIME_RENDER_FAILED;
                     break;
                 }
-                if (presented_movie_frame &&
-                    movie_playback.framesPresented != 0 &&
-                    !pc_movie_audio_start(&movie_playback)) {
-                    jpb_PCLog(
-                        "movie audio start failed frame=%d index=%u error=%s",
-                        frame_count,
-                        input.movieLastIndex,
-                        movie_playback.error);
-                    result = JPB_GAME_RUNTIME_RENDER_FAILED;
-                    break;
-                }
                 QueryPerformanceCounter(&present_submitted);
+                if (presented_movie_frame && movie_playback.active) {
+                    pc_movie_report_timing(&movie_playback, 0);
+                }
                 pc_cap_frame_rate(frame_timer, current, frequency);
                 QueryPerformanceCounter(&cap_finished);
                 {
@@ -15730,17 +17851,6 @@ int main(int argc, char **argv)
                     runtime.profileMaxSceneBackdropSeconds * 1000.0,
                     runtime.profileMaxScenePhysicsSeconds * 1000.0,
                     runtime.profileMaxSceneLevelOwnerSeconds * 1000.0);
-                printf(
-                    "runtime_enemy_create_max=(total_ms=%.3f,"
-                    "pool_ms=%.3f,ai_ms=%.3f,model_ms=%.3f,"
-                    "anim_ms=%.3f,player_ms=%.3f,refresh_ms=%.3f)\n",
-                    runtime.profileMaxEnemyCreateTotalSeconds * 1000.0,
-                    runtime.profileMaxEnemyCreatePoolSeconds * 1000.0,
-                    runtime.profileMaxEnemyCreateAiSeconds * 1000.0,
-                    runtime.profileMaxEnemyCreateModelSeconds * 1000.0,
-                    runtime.profileMaxEnemyCreateAnimSeconds * 1000.0,
-                    runtime.profileMaxEnemyCreatePlayerSeconds * 1000.0,
-                    runtime.profileMaxEnemyCreateRefreshSeconds * 1000.0);
                 if (input.profileRuntime) {
                     JPBEnemyFrameProfile enemy_profile;
                     JPBAnimForceProfile anim_profile;
@@ -15847,6 +17957,16 @@ int main(int argc, char **argv)
                     presenter, &framebuffer)) {
                 result = JPB_GAME_RUNTIME_RENDER_FAILED;
             }
+            if (review_menu >= 0) {
+                size_t draw_index;
+                for (draw_index = 0; draw_index < runtime.textDrawCount; ++draw_index) {
+                    const JPBGameRuntimeTextDraw *draw = &runtime.textDraws[draw_index];
+                    printf("review_text=(index=%zu,x=%d,y=%d,color=%08x,clip=%d:%d/%d/%d/%d,pixels=%zu)\n",
+                        draw_index, draw->x, draw->y, (unsigned)draw->color,
+                        draw->clipEnabled, draw->clipLeft, draw->clipTop,
+                        draw->clipRight, draw->clipBottom, draw->compositePixels);
+                }
+            }
             presentation_error =
                 jpb_PCD3D11PresenterLastError(presenter);
             jpb_GameRuntimeSetLevelRenderHook(&runtime, NULL, NULL);
@@ -15896,6 +18016,12 @@ int main(int argc, char **argv)
         (!presentation_hardware || title_active ||
          gameplay_handoff_count != 1 ||
          presentation_frame_count != (unsigned)frame_count ||
+         !input.gameplayRumbleEnabled ||
+         input.nonGameplayRumbleSuppressed == 0 ||
+         runtime.loadScreenPresentCount == 0 ||
+         runtime.loadScreenPresentCount !=
+             load_screen_presentation.presented ||
+         load_screen_presentation.failures != 0 ||
          input.movieRequestCount !=
              ((int)(uint8_t)GameStruct.CurrentLevel == 1 ? 2u : 1u) ||
          input.movieResolvedCount !=
@@ -15907,13 +18033,19 @@ int main(int argc, char **argv)
             stderr,
             "interactive presentation handoff validation failed "
             "(hardware=%d title=%d handoffs=%u presents=%u/%d "
-            "hidden=%d movies=%u/%u/%u failures=%u)\n",
+            "hidden=%d rumble=%d/%u loads=%zu/%u/%u "
+            "movies=%u/%u/%u failures=%u)\n",
             presentation_hardware,
             title_active,
             gameplay_handoff_count,
             presentation_frame_count,
             frame_count,
             input.hiddenWindow,
+            input.gameplayRumbleEnabled,
+            input.nonGameplayRumbleSuppressed,
+            runtime.loadScreenPresentCount,
+            load_screen_presentation.presented,
+            load_screen_presentation.failures,
             input.movieRequestCount,
             input.movieResolvedCount,
             input.movieLaunchCount,
@@ -15921,6 +18053,7 @@ int main(int argc, char **argv)
         jpb_PCLog(
             "presentation handoff validation failed hardware=%d "
             "title=%d handoffs=%u presents=%u/%d hidden=%d "
+            "rumble=%d/%u loads=%zu/%u/%u "
             "movies=%u/%u/%u failures=%u",
             presentation_hardware,
             title_active,
@@ -15928,32 +18061,61 @@ int main(int argc, char **argv)
             presentation_frame_count,
             frame_count,
             input.hiddenWindow,
+            input.gameplayRumbleEnabled,
+            input.nonGameplayRumbleSuppressed,
+            runtime.loadScreenPresentCount,
+            load_screen_presentation.presented,
+            load_screen_presentation.failures,
             input.movieRequestCount,
             input.movieResolvedCount,
             input.movieLaunchCount,
             input.movieStartFailureCount);
         result = JPB_GAME_RUNTIME_RENDER_FAILED;
     }
+    jpb_PCAudioGetStats(audio, &audio_stats);
     if (result == JPB_GAME_RUNTIME_OK && input.validateAudioHandoff &&
         (title_active || gameplay_handoff_count != 1 || audio == NULL ||
-         audio_generation_count != 2)) {
+         audio_generation_count != 2 ||
+         audio_stats.musicRequested == 0 ||
+         audio_stats.musicResolved == 0 ||
+         ((int)(uint8_t)GameStruct.CurrentLevel == 1 &&
+          (audio_stats.movieGateBegins == 0 ||
+           audio_stats.movieGateEnds == 0 ||
+           audio_stats.musicDeferred == 0 ||
+           audio_stats.musicDeferredReleased == 0)))) {
         fprintf(
             stderr,
             "interactive audio handoff validation failed "
-            "(title=%d handoffs=%u active=%d generations=%u output=%d)\n",
+            "(title=%d handoffs=%u active=%d generations=%u output=%d "
+            "music=%u/%u/%u deferred=%u/%u gate=%u/%u)\n",
             title_active,
             gameplay_handoff_count,
             audio != NULL,
             audio_generation_count,
-            audio_output_enabled);
+            audio_output_enabled,
+            audio_stats.musicRequested,
+            audio_stats.musicResolved,
+            audio_stats.musicStarted,
+            audio_stats.musicDeferred,
+            audio_stats.musicDeferredReleased,
+            audio_stats.movieGateBegins,
+            audio_stats.movieGateEnds);
         jpb_PCLog(
             "audio handoff validation failed title=%d handoffs=%u "
-            "active=%d generations=%u output=%d",
+            "active=%d generations=%u output=%d music=%u/%u/%u "
+            "deferred=%u/%u gate=%u/%u",
             title_active,
             gameplay_handoff_count,
             audio != NULL,
             audio_generation_count,
-            audio_output_enabled);
+            audio_output_enabled,
+            audio_stats.musicRequested,
+            audio_stats.musicResolved,
+            audio_stats.musicStarted,
+            audio_stats.musicDeferred,
+            audio_stats.musicDeferredReleased,
+            audio_stats.movieGateBegins,
+            audio_stats.movieGateEnds);
         result = JPB_GAME_RUNTIME_LOAD_FAILED;
     }
     if (result == JPB_GAME_RUNTIME_OK &&
@@ -16186,6 +18348,16 @@ int main(int argc, char **argv)
             scaleAdjustmentMM,
             (unsigned)frontRGBoff);
         printf(
+            "versus_state=(requested_players=%d,active=%d,level=%d,"
+            "game_mode=%d,runtime_players=%d,models=%d/%d)\n",
+            tempPlayersVs,
+            (int)GameStruct.versusModeFlag,
+            (int)(uint8_t)GameStruct.CurrentLevel,
+            (int)GameStruct.gameMode,
+            (int)GameStruct.NumPlayers,
+            (int)GameStruct.ModelSelect[0],
+            (int)GameStruct.ModelSelect[1]);
+        printf(
             "frames=%d mode=title title_menu=(%u,music=%u) "
             "running=%d "
             "video=(%u,%u) controls=(%u,%u) language=%u "
@@ -16228,6 +18400,7 @@ int main(int argc, char **argv)
             "movie_state=(requests=%u,resolved=%u,launched=%u,"
             "decoded=%u,presented=%u,audio_bytes=%u,"
             "audio_samples=%u,audio_chunks=%u,audio_queued=%u/%u,"
+            "audio_prebuffer=%u,"
             "audio_output=%d,skips=%u,failures=%u,last=%u,flags=%d,"
             "path=%s,error=%s)\n",
             input.movieRequestCount,
@@ -16240,6 +18413,7 @@ int main(int argc, char **argv)
             input.movieAudioChunkCount,
             input.movieAudioQueuedByteCount,
             input.movieAudioQueuedChunkCount,
+            input.movieAudioPrebufferByteCount,
             input.movieAudioOutputEnabled,
             input.movieSkipCount,
             input.movieStartFailureCount,
@@ -16790,6 +18964,63 @@ int main(int argc, char **argv)
                 runtime.enemyActiveClassPeakCount,
                 runtime.enemyActivatedClassCount,
                 runtime.enemyRenderedClassCount);
+            result = JPB_GAME_RUNTIME_RENDER_FAILED;
+        }
+    }
+    if (validate_fed_hover_boss_intro) {
+        int valid =
+            GameStruct.CurrentLevel == 1 &&
+            (fed_hover_boss_dolly_mask & UINT32_C(0x1f)) ==
+                UINT32_C(0x1f) &&
+            fed_hover_boss_saw_lock &&
+            fed_hover_boss_saw_release &&
+            fed_hover_boss_saw_active &&
+            fed_hover_boss_saw_controller_protected;
+
+        printf(
+            "fed_hover_boss_intro=(dollies=%02x,lock=%d,release=%d,"
+            "boss_active=%d,controller_protected=%d,complete_frame=%d,"
+            "final_dolly=%d,"
+            "final_override=%d,valid=%d)\n",
+            (unsigned)fed_hover_boss_dolly_mask,
+            fed_hover_boss_saw_lock,
+            fed_hover_boss_saw_release,
+            fed_hover_boss_saw_active,
+            fed_hover_boss_saw_controller_protected,
+            fed_hover_boss_complete_frame,
+            runtime.world != NULL ? runtime.world->currentDolly : -1,
+            runtime.world != NULL ? runtime.world->overRideDolly : -1,
+            valid);
+        if (result == JPB_GAME_RUNTIME_OK && !valid) {
+            fputs("FED hover-boss introduction validation failed\n", stderr);
+            result = JPB_GAME_RUNTIME_RENDER_FAILED;
+        }
+    }
+    if (validate_enemy_death_placement >= 0) {
+        int valid =
+            enemy_death_saw_active &&
+            !enemy_death_identity_mismatch &&
+            enemy_death_initial_energy > 0 &&
+            enemy_death_saw_retired &&
+            runtime.enemyDamageProcessedCount != 0;
+
+        printf(
+            "enemy_death_validation=(placement=%d,active=%d,"
+            "identity_mismatch=%d,initial=%d,min=%d,retired=%d,"
+            "damage=%u,complete_frame=%d,valid=%d)\n",
+            validate_enemy_death_placement,
+            enemy_death_saw_active,
+            enemy_death_identity_mismatch,
+            enemy_death_initial_energy,
+            enemy_death_min_energy == INT_MAX
+                ? -1
+                : enemy_death_min_energy,
+            enemy_death_saw_retired,
+            (unsigned)runtime.enemyDamageProcessedCount,
+            enemy_death_complete_frame,
+            valid);
+        if (result == JPB_GAME_RUNTIME_OK && !valid) {
+            fputs("enemy death placement validation failed\n", stderr);
             result = JPB_GAME_RUNTIME_RENDER_FAILED;
         }
     }
@@ -18221,6 +20452,15 @@ int main(int argc, char **argv)
         result = JPB_GAME_RUNTIME_LOAD_FAILED;
     }
     if (result == JPB_GAME_RUNTIME_OK &&
+        input.validatePalaceLifecycle &&
+        !pc_validate_palace_lifecycle(&runtime)) {
+        fputs(
+            "headless Palace authored activation lifecycle validation "
+            "failed\n",
+            stderr);
+        result = JPB_GAME_RUNTIME_LOAD_FAILED;
+    }
+    if (result == JPB_GAME_RUNTIME_OK &&
         input.validateTeleport &&
         (!input.headless ||
          tflag != 0 ||
@@ -18427,6 +20667,16 @@ int main(int argc, char **argv)
         scaleAdjustmentMM,
         (unsigned)frontRGBoff);
     printf(
+        "versus_state=(requested_players=%d,active=%d,level=%d,"
+        "game_mode=%d,runtime_players=%d,models=%d/%d)\n",
+        tempPlayersVs,
+        (int)GameStruct.versusModeFlag,
+        (int)(uint8_t)GameStruct.CurrentLevel,
+        (int)GameStruct.gameMode,
+        (int)GameStruct.NumPlayers,
+        (int)GameStruct.ModelSelect[0],
+        (int)GameStruct.ModelSelect[1]);
+    printf(
         "game_state=(level=%u,mode=%d,players=%d,versus=%d)\n",
         (unsigned)(uint8_t)GameStruct.CurrentLevel,
         (int)GameStruct.gameMode,
@@ -18567,12 +20817,59 @@ int main(int argc, char **argv)
     if (enemy_placement_diagnostics) {
         pc_print_enemy_placement_diagnostics(&runtime);
     }
+    if (force_enemy_placement >= 0 && runtime.world != NULL &&
+        runtime.world->apEnemy != NULL &&
+        force_enemy_placement < runtime.world->nEnemy) {
+        JPBGameRuntimeEnemyPlacementState placement_state;
+        wsl_BAP_PLACEMENT *placement =
+            runtime.world->apEnemy[force_enemy_placement];
+        int has_runtime_state =
+            jpb_GameRuntimeGetEnemyPlacementState(
+                &runtime,
+                force_enemy_placement,
+                &placement_state);
+
+        printf(
+            "forced_enemy_state=(placement=%d,status=%d,handle=%u,"
+            "runtime=%d,object=%d,player_num=%d,model=%d,"
+            "active=%d,energy=%d/%d,"
+            "mode=%d,node=%d,motion=%d,flags=%08x,"
+            "triangles=%zu,pixels=%zu)\n",
+            force_enemy_placement,
+            placement != NULL ? placement->status : -1,
+            placement != NULL ? placement->pLastEnemy : UINT32_MAX,
+            has_runtime_state,
+            has_runtime_state ? placement_state.objectId : -1,
+            has_runtime_state ? placement_state.playerNum : -1,
+            has_runtime_state ? placement_state.modelId : -1,
+            has_runtime_state ? placement_state.active : -1,
+            has_runtime_state ? placement_state.energy : -1,
+            has_runtime_state ? placement_state.maxEnergy : -1,
+            has_runtime_state ? placement_state.currentAiMode : -1,
+            has_runtime_state ? placement_state.aiNodeIndex : -1,
+            has_runtime_state ? placement_state.currentMotion : -1,
+            has_runtime_state
+                ? (unsigned)placement_state.playerFlags
+                : 0u,
+            has_runtime_state ? placement_state.renderedTriangles : 0,
+            has_runtime_state ? placement_state.renderedPixels : 0);
+    }
     printf(
         "presentation=(frames=%u,handoffs=%u,hidden=%d,scripted=%d)\n",
         presentation_frame_count,
         gameplay_handoff_count,
         input.hiddenWindow,
         input.scriptedInput);
+    printf(
+        "rumble_policy=(gameplay_enabled=%d,"
+        "non_gameplay_suppressed=%u)\n",
+        input.gameplayRumbleEnabled,
+        input.nonGameplayRumbleSuppressed);
+    printf(
+        "load_screen=(requests=%zu,presented=%u,failures=%u)\n",
+        runtime.loadScreenPresentCount,
+        load_screen_presentation.presented,
+        load_screen_presentation.failures);
     printf(
         "presentation_backend=(hardware=%d,name=%s,last_hresult=0x%08lx,"
         "source=%dx%d)\n",
@@ -18581,14 +20878,28 @@ int main(int argc, char **argv)
         (unsigned long)presentation_error,
         framebuffer.width,
         framebuffer.height);
+    jpb_PCAudioGetStats(audio, &audio_stats);
     printf(
         "audio_handoff=(active=%d,generations=%u,output=%d,"
-        "music=%u,volume=%u)\n",
+        "music=%u,volume=%u,requests=%u,resolved=%u,started=%u,"
+        "deferred=%u/%u,movie_gate=%u/%u,sfx_suppressed=%u,"
+        "pause=%u,resume=%u,stop=%u)\n",
         audio != NULL,
         audio_generation_count,
         audio_output_enabled,
         (unsigned)OptionStruct.Music,
-        (unsigned)OptionStruct.musicVolume);
+        (unsigned)OptionStruct.musicVolume,
+        audio_stats.musicRequested,
+        audio_stats.musicResolved,
+        audio_stats.musicStarted,
+        audio_stats.musicDeferred,
+        audio_stats.musicDeferredReleased,
+        audio_stats.movieGateBegins,
+        audio_stats.movieGateEnds,
+        audio_stats.movieSfxSuppressed,
+        audio_stats.musicPauseRequests,
+        audio_stats.musicResumeRequests,
+        audio_stats.musicStopRequests);
     printf(
         "player_two_audio=(requested=%s,resolved=%d,path=%s)\n",
         validate_player_two_sound != NULL
@@ -18630,6 +20941,36 @@ int main(int argc, char **argv)
         runtime.lastPlayerProjectileTarget[1].vx,
         runtime.lastPlayerProjectileTarget[1].vy,
         runtime.lastPlayerProjectileTarget[1].vz);
+    printf(
+        "enemy_projectiles=(count=%zu,last_frame=%u,type:%d,owner:%d/"
+        "start:%d,%d,%d/target:%d,%d,%d)\n",
+        runtime.enemyProjectileLaunchCount,
+        (unsigned)runtime.lastEnemyProjectileLaunchFrame,
+        (int)runtime.lastEnemyProjectileType,
+        (int)runtime.lastEnemyProjectileOwner,
+        runtime.lastEnemyProjectileStart.vx,
+        runtime.lastEnemyProjectileStart.vy,
+        runtime.lastEnemyProjectileStart.vz,
+        runtime.lastEnemyProjectileTarget.vx,
+        runtime.lastEnemyProjectileTarget.vy,
+        runtime.lastEnemyProjectileTarget.vz);
+    {
+        JPBBulletDiagnostics bullet_diagnostics = {0};
+
+        jpb_BulletGetDiagnostics(&bullet_diagnostics);
+        printf(
+            "projectile_lifecycle=(alloc=%zu,fail=%zu,"
+            "launch=%zu,free=%zu,outstanding=%zu)\n",
+            bullet_diagnostics.allocationAttempts,
+            bullet_diagnostics.allocationFailures,
+            bullet_diagnostics.successfulLaunches,
+            bullet_diagnostics.freeCount,
+            bullet_diagnostics.allocationAttempts >=
+                    bullet_diagnostics.freeCount
+                ? bullet_diagnostics.allocationAttempts -
+                      bullet_diagnostics.freeCount
+                : 0U);
+    }
     printf(
         "player_weapon=(model=%d,saber=%d,color=%08x,"
         "outer=%zu,trail=%zu,core=%zu,attached=%zu,unmatched=%zu,"
@@ -18855,7 +21196,7 @@ int main(int argc, char **argv)
         "player_hud=%zu/%zu/%zu "
         "screen_alpha=%zu/%zu/%zu/%zu "
         "saber_glow=%zu/%zu cylinders=%zu "
-        "screen_poly=%zu/%zu/%zu "
+        "screen_poly=%zu/%zu/%zu capacity=%zu "
         "water_poly=%zu/%zu "
         "powerups=%zu/%zu/%zu/models:%zu/%zu "
         "camera=(dolly=%d,flags=%08x,initial=%d,unique=%u,transitions=%u,"
@@ -18943,6 +21284,7 @@ int main(int argc, char **argv)
         runtime.screenPolyDrawCount,
         runtime.screenPolyDroppedCount,
         runtime.screenPolyCompositePixelCount,
+        runtime.screenPolyCapacity,
         runtime.waterPolyDrawCount,
         runtime.waterPolyCompositePixelCount,
         runtime.powerupCount,

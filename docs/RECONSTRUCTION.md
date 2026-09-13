@@ -1057,7 +1057,7 @@ Joy-Con, and Xbox Series X. The Win32 hook publishes native dimensions and
 opaque `JPBSoftwareTexture` resources. The exact post-table level-preview
 loop additionally loads the 15 `loadscreens/src/orig` images into
 `menuTextures[80..94]` and publishes their quarter-size records through
-`fontSpec[410..424]`, yielding 209 unique decoded images across the installed
+`fontSpec[410..424]`, yielding 210 unique decoded images across the installed
 front-end and controller banks.
 `jpb_GameRuntimeTitleFrame` composites the recovered menu
 commands through the existing caller-owned framebuffer and TrueType hook. It
@@ -1070,7 +1070,7 @@ draws; scripted real-asset gates additionally select New Game, navigate to
 Options, and enter Audio, verifying the resulting states and a real Music
 toggle. A separate `--title-character-select` diagnostic enters state `0x0E`
 without claiming to resolve the still-open retail handoff; its installed-asset
-gate verifies 19 P1 presentation draws, no drops, all 209 unique installed
+gate verifies 19 P1 presentation draws, no drops, all 210 unique installed
 frontend/controller images (including all 128 unique frontend-bank images),
 and a bright selected-character pixel after layer composition. The exact
 74-entry `modVars` table is rebound to recovered globals.

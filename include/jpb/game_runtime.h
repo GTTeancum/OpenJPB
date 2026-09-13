@@ -55,7 +55,7 @@ enum {
     JPB_GAME_RUNTIME_SCREEN_POLY_CAPACITY =
         JPB_GAME_RUNTIME_GLOW_DRAW_CAPACITY * 6 + 64,
     JPB_GAME_RUNTIME_TEXT_DRAW_CAPACITY = 64,
-    JPB_GAME_RUNTIME_TEXT_CAPACITY = 64,
+    JPB_GAME_RUNTIME_TEXT_CAPACITY = 1024,
     JPB_GAME_RUNTIME_DRAW3D_TEXT_CAPACITY = 64,
     JPB_GAME_RUNTIME_DRAW3D_TEXT_BYTES = 256,
     JPB_GAME_RUNTIME_SPRITE_DISPLAY_CAPACITY = 64,
@@ -70,6 +70,7 @@ typedef struct JPBGameRuntimeEnemyState
 typedef struct JPBGameRuntimeEnemyPlacementState {
     int placementIndex;
     int objectId;
+    int playerNum;
     int enemyId;
     int enemyNum;
     int modelId;
@@ -148,6 +149,7 @@ typedef int (*JPBGameRuntimeScreenDrawRenderHook)(
     const JPBGameRuntimeScreenDraw *draws,
     size_t draw_count,
     JPBSoftwareFramebuffer *framebuffer);
+typedef int (*JPBGameRuntimeLoadScreenPresentHook)(void *user_data);
 
 typedef struct JPBGameRuntimeScreenPolyDraw {
     _Material *texture;
@@ -298,6 +300,8 @@ typedef struct JPBGameRuntime {
     void *screenPolyRenderUserData;
     JPBGameRuntimeScreenDrawRenderHook titleScreenDrawRenderHook;
     void *titleScreenDrawRenderUserData;
+    JPBGameRuntimeLoadScreenPresentHook loadScreenPresentHook;
+    void *loadScreenPresentUserData;
     JPBGameRuntimeGameplayCompositeHook gameplayCompositeHook;
     void *gameplayCompositeUserData;
     uint64_t gameplayHudCacheHash;
@@ -343,13 +347,6 @@ typedef struct JPBGameRuntime {
     double profileLastSceneBackdropSeconds;
     double profileLastScenePhysicsSeconds;
     double profileLastSceneLevelOwnerSeconds;
-    double profileLastEnemyCreateTotalSeconds;
-    double profileLastEnemyCreatePoolSeconds;
-    double profileLastEnemyCreateAiSeconds;
-    double profileLastEnemyCreateModelSeconds;
-    double profileLastEnemyCreateAnimSeconds;
-    double profileLastEnemyCreatePlayerSeconds;
-    double profileLastEnemyCreateRefreshSeconds;
     double profileMaxFrameSeconds;
     double profileMaxCameraSeconds;
     double profileMaxSceneSeconds;
@@ -372,13 +369,6 @@ typedef struct JPBGameRuntime {
     double profileMaxSceneBackdropSeconds;
     double profileMaxScenePhysicsSeconds;
     double profileMaxSceneLevelOwnerSeconds;
-    double profileMaxEnemyCreateTotalSeconds;
-    double profileMaxEnemyCreatePoolSeconds;
-    double profileMaxEnemyCreateAiSeconds;
-    double profileMaxEnemyCreateModelSeconds;
-    double profileMaxEnemyCreateAnimSeconds;
-    double profileMaxEnemyCreatePlayerSeconds;
-    double profileMaxEnemyCreateRefreshSeconds;
     uint32_t profileFrameCount;
     objectRoot actorRoot;
     sceneObject *actorScene;
@@ -531,6 +521,12 @@ typedef struct JPBGameRuntime {
     uint32_t lastPlayerProjectileFlags[2];
     VECTOR lastPlayerProjectileStart[2];
     VECTOR lastPlayerProjectileTarget[2];
+    size_t enemyProjectileLaunchCount;
+    uint32_t lastEnemyProjectileLaunchFrame;
+    int16_t lastEnemyProjectileType;
+    int16_t lastEnemyProjectileOwner;
+    VECTOR lastEnemyProjectileStart;
+    VECTOR lastEnemyProjectileTarget;
     size_t enemyRenderedTriangles;
     size_t enemyRenderedPixels;
     JPBGameRuntimeScreenDraw screenDraws[
@@ -573,14 +569,16 @@ typedef struct JPBGameRuntime {
     size_t glowDrawCount;
     size_t glowDrawDroppedCount;
     size_t cylinderDrawCount;
-    JPBGameRuntimeScreenPolyDraw screenPolyDraws[
-        JPB_GAME_RUNTIME_SCREEN_POLY_CAPACITY];
+    JPBGameRuntimeScreenPolyDraw *screenPolyDraws;
+    size_t screenPolyCapacity;
     size_t screenPolyDrawCount;
     size_t screenPolyDroppedCount;
     size_t screenPolyCompositePixelCount;
     size_t waterPolyDrawCount;
     size_t waterPolyCompositePixelCount;
     size_t loadScreenPresentCount;
+    size_t loadScreenPresentFailureCount;
+    int loadScreenPresentFailed;
     int clearWindowRequested;
     int clearWindowHookReady;
     int renderLoadHookReady;
@@ -674,6 +672,17 @@ void jpb_GameRuntimeSetTitleScreenDrawRenderHook(
     JPBGameRuntime *runtime,
     JPBGameRuntimeScreenDrawRenderHook hook,
     void *user_data);
+void jpb_GameRuntimeSetLoadScreenPresentHook(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeLoadScreenPresentHook hook,
+    void *user_data);
+int jpb_GameRuntimeRenderLoadScreen(
+    JPBGameRuntime *runtime,
+    JPBSoftwareFramebuffer *framebuffer);
+/* Composite captured menu draws in the shared hardware/software depth order. */
+int jpb_GameRuntimeRenderTitleDraws(
+    JPBGameRuntime *runtime,
+    JPBSoftwareFramebuffer *framebuffer);
 void jpb_GameRuntimeSetGameplayCompositeHook(
     JPBGameRuntime *runtime,
     JPBGameRuntimeGameplayCompositeHook hook,

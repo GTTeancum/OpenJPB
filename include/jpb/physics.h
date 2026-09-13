@@ -233,6 +233,9 @@ int jpb_PhysicsGeneralCollide(
     float velocity,
     float radius);
 int jpb_PhysicsPolyCollideCheck(void);
+void jpb_PhysicsSetSelectedEdge(
+    const FVECTOR *start, const FVECTOR *end);
+void jpb_PhysicsGetSelectedEdge(FVECTOR *start, FVECTOR *end);
 int jpb_PhysicsSphereAndPoly(void);
 int newclosestPoly(
     FVECTOR *from,

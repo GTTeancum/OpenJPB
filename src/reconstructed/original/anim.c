@@ -156,7 +156,7 @@ int anim_AddNextAnimSeq(
     uint32_t motion_flags;
 
     motion_flags = motion->motionFlags;
-    if ((int)motion->Seq < player->maxMotions) {
+    if ((int)motion->globalID < player->maxMotions) {
         if ((motion_flags & 0x00000020u) == 0) {
             templates = animation->depack_context.seqdata;
         } else {
@@ -183,7 +183,7 @@ int anim_AddNextAnimSeq(
 
     if ((int32_t)motion_flags < 0 &&
         animation->pCurrentAnimSeq != NULL &&
-        &templates[motion->Seq] ==
+        &templates[motion->globalID] ==
             animation->pCurrentAnimSeq->pAnimTemplate) {
         return -1;
     }
@@ -193,7 +193,7 @@ int anim_AddNextAnimSeq(
     if (node == NULL) {
         return -1;
     }
-    node->pAnimTemplate = &templates[motion->Seq];
+    node->pAnimTemplate = &templates[motion->globalID];
     if (replace_queue != 0) {
         list_MoveList(
             &animation->animFreeList, &animation->animList);
@@ -488,7 +488,7 @@ static int anim_MotionRecovery(animObject *animation)
     }
 
     motion = &player->paMotions[move];
-    if ((int)motion->Seq >= player->maxMotions &&
+    if ((int)motion->globalID >= player->maxMotions &&
         (motion->motionFlags & UINT32_C(0x20)) == 0) {
         return 1;
     }

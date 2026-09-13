@@ -439,6 +439,35 @@ static int test_geometry_view(void)
     CHECK(node.time == 48);
     CHECK(render_stats.modelTriangles == 1);
 
+    /* Hidden and retired scene owners must not draw or simulate debris. */
+    for (int hidden_case = 0; hidden_case < 2; ++hidden_case) {
+        scene.sceneRoot.flags = hidden_case == 0 ? UINT32_C(0x20) : 0;
+        scene.sceneRoot.objectID = hidden_case == 0 ? 3 : -1;
+        memset(&render_stats, 0, sizeof(render_stats));
+        CHECK(jpb_SoftwareRenderBmdForScene(
+                  &view, &model, NULL, &scene, &physics, &world_position,
+                  0, NULL, &world_scene, &framebuffer, resolve_white_texture,
+                  NULL, NULL, NULL, NULL, &render_stats) ==
+              JPB_SOFTWARE_RENDER_OK);
+        CHECK(render_stats.modelTriangles == 0);
+        CHECK(node.time == 48);
+    }
+    scene.sceneRoot.flags = 0;
+    scene.sceneRoot.objectID = 3;
+
+    /* Active script owners hide their model, not their scene. They must
+     * emit no triangles, and clearing the model flag must restore drawing. */
+    for (int model_hidden = 1; model_hidden >= 0; --model_hidden) {
+        model.flags = model_hidden ? UINT32_C(0x10) : 0;
+        memset(&render_stats, 0, sizeof(render_stats));
+        CHECK(jpb_SoftwareRenderBmdForScene(
+                  &view, &model, NULL, &scene, &physics, &world_position,
+                  0, NULL, &world_scene, &framebuffer, resolve_white_texture,
+                  NULL, NULL, NULL, NULL, &render_stats) ==
+              JPB_SOFTWARE_RENDER_OK);
+        CHECK(render_stats.modelTriangles == (model_hidden ? 0 : 1));
+    }
+
     node.flags = UINT32_C(0x04000000);
     node.time = 0x1000;
     memset(&render_stats, 0, sizeof(render_stats));

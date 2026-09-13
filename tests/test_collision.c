@@ -250,7 +250,8 @@ static int test_hot_node_player_collision(void)
     coll_ResetCollisionSystem();
     coll_gRegisterNode(attacker.playernum, &attacker_node);
     coll_gRegisterNode(target.playernum, &target_node);
-    totalframes = 100;
+    gGlobalTimer = 100;
+    totalframes = 0;
     CHECK(coll_gCheckHotNodes(&attacker, &target) == 1);
     CHECK((attacker.pFlags & 0x00010000u) != 0);
     CHECK((target_node.flags & 0x00020000u) != 0);
@@ -267,6 +268,11 @@ static int test_hot_node_player_collision(void)
     attacker.pFlags |= 0x00010000u;
     CHECK(coll_gCheckHotNodes(&attacker, &target) == 0);
     CHECK((attacker.pFlags & 0x00010000u) == 0);
+
+    /* Retail compares hitDelay with gGlobalTimer, not totalframes. */
+    gGlobalTimer = 101;
+    CHECK(coll_gCheckHotNodes(&attacker, &target) == 1);
+    totalframes = 0;
     return 0;
 }
 

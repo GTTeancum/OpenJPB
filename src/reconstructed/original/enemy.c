@@ -1343,7 +1343,7 @@ void bapenemy_postFrame(wsl_ENEMY *enemy)
         return;
     }
     game_gSetEnergy(
-        enemy->pPlayer->playernum, enemy->hitPoints);
+        enemy->pPlayer->playerRoot.objectID, enemy->hitPoints);
     position = physics_gGetPosition(
         &enemy->pPlayer->playerRoot);
     if (position == NULL) {
@@ -2014,9 +2014,20 @@ JPBEnemyOpcodeParseResult jpb_enemy_ProcessActiveFrame(
     return frame_result;
 }
 
+static int jpb_enemy_ai_suspended;
+
+void jpb_EnemySetAiSuspended(int suspended)
+{
+    jpb_enemy_ai_suspended = suspended != 0;
+}
+
 void enemy_HandleEnemies(void)
 {
     jpb_enemy_last_unsupported_opcode = 0;
+    if (jpb_enemy_ai_suspended) {
+        jpb_enemy_last_frame_result = JPB_ENEMY_OPCODE_PARSE_COMPLETE;
+        return;
+    }
     jpb_enemy_last_frame_result =
         jpb_enemy_ProcessActiveFrame(
             &jpb_enemy_last_unsupported_opcode);
@@ -2464,10 +2475,10 @@ jpb_enemy_execute_authored_opcode(
         }
         if (LevelSelect == 7 &&
             enemy->enemyID == 0x3a) {
-            enemy->range = 100;
+            enemy->hitPoints = 100;
         }
         *branch_flag = aisub_compareSIVariables(
-            enemy->range,
+            enemy->hitPoints,
             variables[0].si,
             variables[1].si);
         return JPB_ENEMY_OPCODE_PARSE_COMPLETE;
@@ -2802,7 +2813,7 @@ jpb_enemy_execute_authored_opcode(
             enemy->exit_flag = 1;
         } else {
             aisub_arithmeticSIVariables(
-                &enemy->range,
+                &enemy->hitPoints,
                 variables[0].si,
                 variables[1].si);
         }
@@ -3001,10 +3012,10 @@ jpb_enemy_execute_authored_opcode(
                     JPB_ENEMY_OPCODE_PARSE_INVALID_DATA;
             }
             if (variables[1].si != 0) {
-                enemy->pPlayer->pFlags |=
+                enemy->pPlayer->forceFlags |=
                     UINT32_C(0x10);
             } else {
-                enemy->pPlayer->pFlags &=
+                enemy->pPlayer->forceFlags &=
                     ~UINT32_C(0x10);
             }
             return JPB_ENEMY_OPCODE_PARSE_COMPLETE;
@@ -3828,6 +3839,23 @@ JPBEnemyOpcodeParseResult jpb_enemy_ParseOpcodes(
 {
     return jpb_enemy_parse_opcodes_internal(
         enemy, unsupported_opcode, 1);
+}
+
+JPBEnemyOpcodeParseResult jpb_enemy_ExecuteOpcode(
+    wsl_ENEMY *enemy,
+    BAP_AINODE *node,
+    int *branch_flag,
+    uint16_t *unsupported_opcode)
+{
+    if (enemy == NULL || enemy->pAI == NULL || node == NULL ||
+        branch_flag == NULL) {
+        return JPB_ENEMY_OPCODE_PARSE_INVALID_DATA;
+    }
+    if (unsupported_opcode != NULL) {
+        *unsupported_opcode = 0;
+    }
+    return jpb_enemy_execute_authored_opcode(
+        enemy, node, branch_flag, unsupported_opcode, 1);
 }
 
 /* 0x48E60, 7884 bytes, global, 81 named locals

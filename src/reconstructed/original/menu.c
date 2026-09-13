@@ -1,3 +1,4 @@
+#include "jpb/mods.h"
 /*
  * REVIEWED RECONSTRUCTION.
  *
@@ -71,7 +72,16 @@ void menu_drawSelectors(void);
 void menu_fadeBG(void);
 static void menu_drawSelector(float x, float y);
 static void menu_nextMMV(MMVDEF *control);
-static void menu_publishWinif2FontSpec(void);
+#include "menu_font_specs.inc"
+
+static void menu_publishVrmFontSpec(void)
+{
+    size_t index;
+    for (index = 0; index < sizeof(menuVrmFontSpecs) / sizeof(menuVrmFontSpecs[0]); ++index) {
+        fontSpec[menuVrmFontSpecs[index].index] = menuVrmFontSpecs[index].spec;
+    }
+}
+
 static int menu_drawLevelSelectPsxTexture(
     unsigned texture,
     float x,
@@ -309,6 +319,7 @@ int menu_scoreComboDraw(void)
         y = (float)next_y;
         setPivotPositionMM(&x, &y, 0);
         menuVars.mmX = (uint32_t)(int64_t)x;
+        menuVars.mmY = (uint32_t)(int64_t)y;
         for (combo = 0;
              combo < menuVars.td.comboListCount;
              ++combo) {
@@ -844,7 +855,7 @@ void drawScoreMenus(unsigned current_award, AWARDSET *award_set)
         scissor.right = (int32_t)clip_right;
         scissor.bottom = (int32_t)clip_bottom;
         _DrawTextureClipped(
-            menuTextures[238], destination, NULL, color,
+            menuTextures[235], destination, NULL, color,
             0.5f - (float)award * 0.001f, scissor);
     }
 }
@@ -1902,7 +1913,7 @@ unsigned menu_checkCombo(unsigned jedi, short combonum)
             return 1;
         }
         if (game_getCombo(
-                (uint32_t)(int32_t)GameStruct.ModelSelect[jedi],
+                (uint32_t)(int32_t)jpb_ModPlayerModel(jedi, GameStruct.ModelSelect[jedi]),
                 (uint32_t)(int32_t)combonum) == 0) {
             return 0;
         }
@@ -2348,14 +2359,14 @@ void menu_drawCombos(void)
             if (prerequisite != -1) {
                 if (game_getCombo(
                         (uint32_t)(uint16_t)
-                            GameStruct.ModelSelect[player],
+                            jpb_ModPlayerModel(player, GameStruct.ModelSelect[player]),
                         (uint32_t)prerequisite) != 0) {
                     continue;
                 }
                 break;
             }
             tint = game_getCombo(
-                (uint32_t)(uint16_t)GameStruct.ModelSelect[player],
+                (uint32_t)(uint16_t)jpb_ModPlayerModel(player, GameStruct.ModelSelect[player]),
                 combo) != 0 ? 11 : 1;
             if (combo_ValidComboAward((int)player, (int)combo) == 0) {
                 text = "NOT ELIGABLE";
@@ -2811,7 +2822,9 @@ void menu_drawLevelSelectScreen(unsigned interactive)
         2.5f, 0, "%s", allText[text_index]);
 
     menu_drawLevelSelectTexture(
-        fontSpec[410 + level].clut,
+        /* Retail RVA 0xC40F0 reads clut at 0x945AAE + level * 12:
+         * fontSpec[409 + level], matching the 1-based loading bank. */
+        fontSpec[409 + level].clut,
         116.0f, 92.0f, 960.0f, 354.5f, 0, 8,
         preview_color, 0.5f);
     menu_drawSelectBox();
@@ -3322,13 +3335,11 @@ static void menu_scoreDrawCurrentAwardDetail(
     position->maxScrolly = 106;
     menuVars.mmFlags = 1;
     if (type == 0u) {
-        comboIconOverride = 1;
         if (position->scrolly < position->maxScrolly) {
             mmDraw(comboDispDef);
         } else {
             menu_mainMenu(comboDispDef);
         }
-        comboIconOverride = 0;
         cachedBonusLines[award_index] = (int16_t)menuVars.mmTotal;
     } else if (type == 1u) {
         int32_t scaled_x = (int32_t)(
@@ -3428,7 +3439,7 @@ static void menu_scoreDrawPanel(
     scissor.right = (int32_t)clip_right;
     scissor.bottom = (int32_t)clip_bottom;
     _DrawTextureClipped(
-        menuTextures[237], destination, NULL, color,
+        menuTextures[234], destination, NULL, color,
         0.3f - (float)panel * 0.05f, scissor);
 }
 
@@ -3496,7 +3507,7 @@ static void menu_scoreDrawFrame(unsigned active_panel, AWARDSET *award_set)
         scissor.right = (int32_t)right;
         scissor.bottom = (int32_t)bottom;
         _DrawTextureClipped(
-            controlTextures[0], destination, NULL, color, 0.6f, scissor);
+            menuTextures[246], destination, NULL, color, 0.6f, scissor);
     }
 
     redlineFunc();
@@ -3521,7 +3532,7 @@ static void menu_scoreDrawFrame(unsigned active_panel, AWARDSET *award_set)
     scissor.right = (int32_t)right;
     scissor.bottom = (int32_t)bottom;
     _DrawTextureClipped(
-        controlTextures[1], destination, NULL, color, 0.7f, scissor);
+        menuTextures[247], destination, NULL, color, 0.7f, scissor);
     gPSXDrawScaleX = 1.0f;
     gPSXDrawScaleY = 1.0f;
 }
@@ -3558,8 +3569,8 @@ void menu_drawScoreScreen(unsigned interactive)
     destination.top = (int32_t)top;
     destination.right = (int32_t)right;
     destination.bottom = (int32_t)bottom;
-    _DrawTexture(menuTextures[167], destination, NULL, color, 0.9f);
-    _DrawTexture(menuTextures[168], destination, NULL, color, 0.4f);
+    _DrawTexture(menuTextures[164], destination, NULL, color, 0.9f);
+    _DrawTexture(menuTextures[165], destination, NULL, color, 0.4f);
 
     left = 0.0f;
     top = 145.0f;
@@ -3581,13 +3592,15 @@ void menu_drawScoreScreen(unsigned interactive)
     case 0: {
         unsigned index;
 
+        menuVars.scoreScore = 0;
         menuVars.currentAward = 0;
         scoreYtot = 0;
         for (index = 0; index < 3; ++index) {
             MPNT *position = &menuVars.mp[index];
 
             position->x = -166;
-            position->y = (int16_t)(redline[2u - index] - 20u);
+            /* Retail reads the first short of each four-byte redline pair. */
+            position->y = (int16_t)(redline[2u * (2u - index)] - 20u);
             if (index != 0) {
                 position->y = (int16_t)(position->y + (int)index * 4);
             }
@@ -3612,9 +3625,9 @@ void menu_drawScoreScreen(unsigned interactive)
     case 1:
         if (award_set->awardTotal != 0u) {
             if (GameStruct.NumPlayers == 1) {
-                if (menuVars.td.comboListCount == 0u) {
-                    menu_setScoreMode(3, 0);
-                }
+                /* Retail C5800 also advances when the combo list remains
+                 * populated after an award has been chosen. */
+                menu_setScoreMode(3, 0);
             } else if (menuVars.scoreCurrentPlayer == 0u) {
                 menuVars.scoreCurrentPlayer = 1;
                 testcombo(1);
@@ -3779,7 +3792,7 @@ void menu_drawScoreScreen(unsigned interactive)
 
         (void)sprintf(digits, "%06u", player_score - shown_score);
         for (index = 0; digits[index] != '\0'; ++index) {
-            unsigned texture = (unsigned)(digits[index] - '0') + 0xb8u;
+            unsigned texture = (unsigned)(unsigned char)digits[index] + 0xb8u;
             float digit_x = (float)x;
             float digit_y = 183.0f;
 
@@ -5083,8 +5096,7 @@ static void menu_drawComboDebugList(void)
                 break;
             }
             if (game_getCombo(
-                    (uint32_t)(int)GameStruct.ModelSelect[
-                        menuVars.jediDebugCombo],
+                    (uint32_t)(int)jpb_ModPlayerModel(menuVars.jediDebugCombo, GameStruct.ModelSelect[menuVars.jediDebugCombo]),
                     (uint32_t)previous) == 0) {
                 break;
             }
@@ -5095,8 +5107,7 @@ static void menu_drawComboDebugList(void)
         }
 
         tint = game_getCombo(
-            (uint32_t)(int)GameStruct.ModelSelect[
-                menuVars.jediDebugCombo], combo) == 0
+            (uint32_t)(int)jpb_ModPlayerModel(menuVars.jediDebugCombo, GameStruct.ModelSelect[menuVars.jediDebugCombo]), combo) == 0
             ? 1
             : 11;
         if (combo_ValidComboAward(
@@ -5944,8 +5955,10 @@ void menu_pushMenu(unsigned menu_id)
     unsigned stack_pointer;
 
     /* User-directed host policy: entering the pre-FMV level transition must
-     * not pulse the controller before playback begins. */
-    if (menu_id != 0x66) {
+     * cancel any active menu pulse before playback begins. */
+    if (menu_id == 0x66) {
+        clearShockers(0, 0);
+    } else {
         feedback_startEffect(0, 14);
     }
     if ((menu_id == 0x30 &&
@@ -5990,10 +6003,18 @@ unsigned menu_handleMenuTriggers(int destination)
         menu_menuExit();
         break;
     case 9:
+        jpb_ModResetProgress();
         newGameGameInit();
         menu_pushMenu(3);
         break;
     case 10:
+        /* The title owner resets stock model selections on entry. Native
+         * packages keep their saved identity separately; republish it only
+         * when Continue is chosen, before its player-count handoff. */
+        for (int player = 0; player < 2; ++player) {
+            const JPBModCharacter *mod = jpb_ModPlayer(player);
+            if (mod != NULL) menu_setPlayer((unsigned)player, mod->modelId);
+        }
         menuVars.itemSelect = 0;
         menu_pushMenu(0x99);
         break;
@@ -6320,7 +6341,7 @@ unsigned menu_handleMenuTriggers(int destination)
         uint32_t player = menuVars.jediDebugCombo;
         uint32_t combo = menuVars.comboSelect;
         uint32_t jedi =
-            (uint32_t)(uint16_t)GameStruct.ModelSelect[player];
+            (uint32_t)jpb_ModPlayerModel((int)player, GameStruct.ModelSelect[player]);
 
         if (game_getCombo(jedi, combo) != 0) {
             game_disableCombo(jedi, combo);
@@ -6335,8 +6356,16 @@ unsigned menu_handleMenuTriggers(int destination)
         unsigned model = (uint16_t)GameStruct.ModelSelect[
             menuVars.scoreCurrentPlayer];
         unsigned score_kind = destination == 0x7d ? 0u : 1u;
+        int package = jpb_ModPlayerModel(menuVars.scoreCurrentPlayer, (int)model);
+        Upgrades *mod_upgrades = jpb_ModUpgrades(package);
 
-        if (destination == 0x7d) {
+        if (mod_upgrades != NULL) {
+            if (destination == 0x7d) {
+                if (mod_upgrades->healthUpgrades < 5) ++mod_upgrades->healthUpgrades;
+            } else {
+                if (mod_upgrades->forceUpgrades < 5) ++mod_upgrades->forceUpgrades;
+            }
+        } else if (destination == 0x7d) {
             GameStruct.maxEnergyLevels[model] = (uint16_t)(
                 GameStruct.maxEnergyLevels[model] + 20u);
             GameStruct.maxEnergyLineLength[model] = (uint16_t)(
@@ -6416,7 +6445,13 @@ unsigned menu_handleMenuTriggers(int destination)
         menu_pushMenu(0x0d);
         break;
     case 0x9d:
-        menu_pushMenu(0x9c);
+        /* The desktop release exposes a one-player CPU branch here, but the
+         * reconstructed game treats Versus as the two-player mode requested
+         * by the project. Enter character selection directly so there is no
+         * misleading player-count choice. */
+        tempPlayersVs = 2;
+        GameStruct.NumPlayers = 1;
+        menu_pushMenu(0x0d);
         break;
     default:
         menu_pushMenu((unsigned)destination);
@@ -6888,7 +6923,12 @@ void menu_setNumPlayers(unsigned num_players)
  */
 void menu_setPlayer(unsigned player, unsigned model)
 {
-    unsigned character = model % 80u;
+    unsigned character;
+    if (jpb_ModCharacterById((int)model) != NULL) {
+        jpb_ModSetPlayer((int)player, (int)model);
+        model = (unsigned)jpb_ModDonor((int)model);
+    }
+    character = model % 80u;
     unsigned base_bit = player == 0 ? 3u : 8u;
     unsigned index;
     int player_active =
@@ -7373,16 +7413,16 @@ void menu_winLoadTextures(void)
             spec->w = (uint16_t)material->iw;
         }
     }
-    menu_publishWinif2FontSpec();
+    menu_publishVrmFontSpec();
 
-    /* Exact post-table level-preview bank. The matched owner reads
-     * fontSpec[410 + LevelSelect].clut; LevelSelect is 1-based, so the
-     * first playable preview is published at fontSpec[411]. */
+    /* Exact post-table level-preview bank. The matched loading owner reads
+     * fontSpec[409 + LevelSelect].clut; LevelSelect is 1-based, so the
+     * first playable preview is published at fontSpec[410]. */
     for (index = 0; index < 15; ++index) {
         char filename[64];
         const char *path;
         _Material *material;
-        FONTSPEC *spec = &fontSpec[411u + index];
+        FONTSPEC *spec = &fontSpec[410u + index];
 
         (void)snprintf(
             filename,
@@ -7399,6 +7439,27 @@ void menu_winLoadTextures(void)
             spec->x = 0;
             spec->h = (uint16_t)(material->ih / 4);
             spec->w = (uint16_t)(material->iw / 4);
+        }
+    }
+
+    /* Retail CF240 publishes 23 results portraits at textures 96..118
+     * and quarter-size sprite records 426..448. */
+    for (index = 0; index < 23; ++index) {
+        char filename[128];
+        _Material *material;
+        FONTSPEC *spec = &fontSpec[426u + index];
+
+        (void)snprintf(filename, sizeof(filename), "scorescreen/%s.png",
+                       psxScoreScreenMaps[index].scoreScreenTextureName);
+        material = _LoadTexture((char *)resource_getPath(
+            filename, JPB_RESOURCE_FRONT), TT_FRONT, 0);
+        menuTextures[96u + index] = material;
+        if (material != NULL) {
+            spec->xypage = 0;
+            spec->clut = (uint16_t)(96u + index);
+            spec->x = spec->y = 0;
+            spec->w = (uint16_t)(material->iw / 4);
+            spec->h = (uint16_t)(material->ih / 4);
         }
     }
 
@@ -7502,6 +7563,16 @@ void menu_mainMenu(uint32_t *mdef)
     unsigned stream_index = 0;
     int carousel_clip = 0;
 
+    /* Retail menu_mainMenu (0xCD560) checks the start device before
+     * interpreting startMdef, which deliberately contains no menu items.
+     * The portable input owner supplies the equivalent mapped confirm. */
+    if (menuVars.menuMode[menuVars.menuModeSP & 7u] == 1) {
+        if (((menuVars.pad[0] | menuVars.pad[1]) &
+             JPB_PAD_COMBO_SOUTH) != 0 || checkStartDevice()) {
+            menu_pushMenu(0);
+        }
+        return;
+    }
     while (mdef[stream_index] != UINT32_C(0x14)) {
         uint32_t command = mdef[stream_index] & UINT32_C(0x7fff);
 
@@ -7581,11 +7652,14 @@ void menu_mainMenu(uint32_t *mdef)
         }
         if (menuVars.mmSelectPtr != NULL &&
             menuVars.mmSelectPtr[0] == 9) {
-            if ((pad & JPB_PAD_LEFT) != 0) {
+            /* Retail 0xCD75F/0xCD772 uses the legacy direction-bit names:
+             * physical left is JPB_PAD_RIGHT and physical right is
+             * JPB_PAD_LEFT. */
+            if ((pad & JPB_PAD_RIGHT) != 0) {
                 mmDecVar(menuVars.mmSelectPtr);
                 sound = 2;
             }
-            if ((pad & JPB_PAD_RIGHT) != 0) {
+            if ((pad & JPB_PAD_LEFT) != 0) {
                 mmIncVar(menuVars.mmSelectPtr);
                 sound = 2;
             }
@@ -7596,16 +7670,39 @@ void menu_mainMenu(uint32_t *mdef)
         uint32_t *selected_item = menuVars.mmSelectPtr;
         uint32_t destination = selected_item[3];
 
-        (void)menu_handleMenuTriggers((int)destination);
+        if (selected_item[0] == 0x0f) {
+            menu_menuExit();
+        } else {
+            (void)menu_handleMenuTriggers((int)destination);
+        }
 
-        if (jpb_menu_platform_hooks.activateItem != NULL) {
+        if (selected_item[0] != 0x0f &&
+            jpb_menu_platform_hooks.activateItem != NULL) {
             (void)jpb_menu_platform_hooks.activateItem(
                 destination,
                 jpb_menu_platform_user_data);
         }
         sound = 1;
     } else if ((pad & JPB_PAD_JUMP) != 0) {
-        menu_popMenu();
+        uint16_t mode =
+            menuVars.menuMode[menuVars.menuModeSP & 7u];
+
+        /* Retail 0xCD84B persists in-game Audio and Controls changes before
+         * returning to the pause menu. SaveSettingsData takes a value copy. */
+        if (GameStruct.gameMode == 6 &&
+            (mode == 0x10 || mode == 0x23) &&
+            jpb_menu_platform_hooks.saveSettingsData != NULL) {
+            optionstruct options = OptionStruct;
+
+            jpb_menu_platform_hooks.saveSettingsData(
+                &options, jpb_menu_platform_user_data);
+        }
+        if (mode == 0) {
+            /* Closing the root menu returns to its confirm prompt. */
+            menu_pushMenu(1);
+        } else if (mode != 0x2a) {
+            menu_menuExit();
+        }
         sound = 1;
     }
     if (sound != 0) {
@@ -7860,13 +7957,20 @@ void mmDrawMod(uint32_t *md, uint8_t *dstbuffer)
         if ((mod->type & UINT16_C(0x4000)) != 0) {
             return;
         }
-        (void)snprintf(
-            display,
-            sizeof(display),
-            "%s%u%s",
-            prefix,
-            value,
-            active ? " <" : "");
+        /* Retail 0xD0C30: flagged slider values render only the prefix;
+         * their value is represented by menu_slideco, not decimal text. */
+        if ((mod->type & UINT16_C(0xef00)) != 0) {
+            if ((mod->type & UINT16_C(0x2000)) == 0) return;
+            (void)snprintf(display, sizeof(display), "%s", prefix);
+        } else {
+            (void)snprintf(
+                display,
+                sizeof(display),
+                "%s%u%s",
+                prefix,
+                value,
+                active ? " <" : "");
+        }
     }
     y = (int32_t)menuVars.mmY;
     if (menuVars.yflag == 1) {
@@ -7998,6 +8102,35 @@ unsigned mmDrawsub(uint32_t *md, unsigned index)
     case 17:
         mmDraw(exitSelectMdef2);
         break;
+    case 18: {
+        unsigned next = index + mmsizes[command];
+        int visible;
+
+        /* Retail 0xD1B06 dispatches the 0x4CAA50 condition table with the
+         * following item, then removes that item from drawing/navigation. */
+        mmsizes[0] = 2;
+        switch (md[index + 1]) {
+        case 0: visible = menu_gameContinue(); break;
+        case 1:
+            visible = menu_playerSelectCheck((int64_t)(uintptr_t)&md[next]);
+            break;
+        case 2: visible = menu_healthCK(0); break;
+        case 3: visible = menu_forceCK(0); break;
+        case 4: visible = menu_scoreComboDraw(); break;
+        case 5: visible = menu_controlCK(); break;
+        case 6: visible = menu_ultimate(); break;
+        case 7: visible = menu_concept(); break;
+        case 8: visible = menu_changeSaberCheck(0); break;
+        default: abort();
+        }
+        if (!visible) {
+            mmsizes[0] = 2;
+            --menuVars.mmTotal;
+            ++menuVars.mmSubSet;
+            index = next;
+        }
+        break;
+    }
     case 19:
         menuVars.mmX = md[index + 1];
         break;
@@ -8093,7 +8226,7 @@ unsigned mmDrawsub(uint32_t *md, unsigned index)
             destination,
             NULL,
             color,
-            0.0f);
+            0.99f);
         break;
     }
     case 0x47: {
@@ -8180,7 +8313,7 @@ unsigned mmDrawsub(uint32_t *md, unsigned index)
     default:
         break;
     }
-    return index + mmsizes[command & 0x7fffu];
+    return index + mmsizes[md[index] & 0x7fffu];
 }
 
 /* 0xD1D20, 104 bytes, global, 2 named locals
@@ -8611,6 +8744,26 @@ static CVECTOR newMenu_Color(uint32_t packed)
     return color;
 }
 
+/* Native portraits occupy a separate logical range; the stock material table stays fixed. */
+enum { JPB_MOD_PORTRAIT_BASE = 1000 };
+static int newMenu_CharacterPortrait(int model)
+{
+    return jpb_ModCharacterById(model) != NULL ? JPB_MOD_PORTRAIT_BASE + model :
+        201 + jedi_ConvertToTextIndex(model);
+}
+static const char *newMenu_CharacterName(int model)
+{
+    const JPBModCharacter *mod = jpb_ModCharacterById(model);
+    return mod != NULL ? mod->name : allText[332u + (unsigned)jedi_ConvertToTextIndex(model)];
+}
+static _Material *newMenu_MaterialAt(int texture)
+{
+    const JPBModCharacter *mod = jpb_ModCharacterById(texture - JPB_MOD_PORTRAIT_BASE);
+    if (mod != NULL) return _LoadTexture((char *)mod->portrait, TT_FRONT_PLAYER, 0);
+    if (texture < 0 || texture >= (int)(sizeof(menuTextures) / sizeof(menuTextures[0]))) return NULL;
+    return menuTextures[texture];
+}
+
 static void newMenu_DrawMaterialRect(
     int texture_index,
     float left,
@@ -8623,11 +8776,8 @@ static void newMenu_DrawMaterialRect(
 {
     SCREENRECT destination;
 
-    if (texture_index < 0 ||
-        texture_index >=
-            (int)(sizeof(menuTextures) / sizeof(menuTextures[0]))) {
-        return;
-    }
+    _Material *material = newMenu_MaterialAt(texture_index);
+    if (material == NULL) return;
     setPivotPositionMM(&left, &top, pivot);
     setPivotPositionMM(&right, &bottom, pivot);
     destination.left = (int32_t)left;
@@ -8635,7 +8785,7 @@ static void newMenu_DrawMaterialRect(
     destination.right = (int32_t)right;
     destination.bottom = (int32_t)bottom;
     _DrawTexture(
-        menuTextures[texture_index],
+        material,
         destination,
         NULL,
         newMenu_Color(packed_color),
@@ -8714,8 +8864,8 @@ static int newMenu_AdjacentModel(
     do {
         model += direction;
         if (model < 0) {
-            model = LAST_PLAYABLE_MODEL;
-        } else if (model > LAST_PLAYABLE_MODEL) {
+            model = jpb_ModLastSelectable(LAST_PLAYABLE_MODEL);
+        } else if (model > jpb_ModLastSelectable(LAST_PLAYABLE_MODEL)) {
             model = 0;
         }
     } while (!jedi_CheckValidPlayerWTabs(select_type, model));
@@ -8798,7 +8948,7 @@ static void newMenu_DrawP1CharacterSelect(
         183, -230.0f, -278.0f, 229.0f, 278.0f,
         4, UINT32_C(0xffffffff), 0.0f);
     newMenu_DrawMaterialRect(
-        201 + converted_model,
+        newMenu_CharacterPortrait(model),
         -196.0f, -262.0f, 195.0f, 261.0f,
         4, UINT32_C(0xffffffff), 0.1f);
     newMenu_DrawMaterialRect(
@@ -8815,7 +8965,7 @@ static void newMenu_DrawP1CharacterSelect(
         183, -740.0f, -200.0f, -372.8f, 244.80002f,
         4, UINT32_C(0xc8ffffff), 0.0f);
     newMenu_DrawMaterialRect(
-        201 + previous_converted,
+        newMenu_CharacterPortrait(previous_model),
         -713.0f, -188.0f, -400.19998f, 230.4f,
         4, UINT32_C(0x6effffff), 0.1f);
     newMenu_DrawMaterialRect(
@@ -8832,7 +8982,7 @@ static void newMenu_DrawP1CharacterSelect(
         183, 372.8f, -200.0f, 740.0f, 244.80002f,
         4, UINT32_C(0xc8ffffff), 0.0f);
     newMenu_DrawMaterialRect(
-        201 + next_converted,
+        newMenu_CharacterPortrait(next_model),
         399.4f, -188.0f, 713.0f, 231.20001f,
         4, UINT32_C(0x6effffff), 0.1f);
     newMenu_DrawMaterialRect(
@@ -8866,7 +9016,7 @@ static void newMenu_DrawP1CharacterSelect(
     (void)SDLTextWriteScaleMM(
         11, 255, 2, (int)x, (int)y,
         name_scale, 0, "%s",
-        newMenu_Text(332u + (unsigned)converted_model));
+        newMenu_CharacterName(model));
     x = 0.0f;
     y = 11.0f;
     setPivotPositionMM(&x, &y, 1);
@@ -8994,7 +9144,8 @@ static void newMenu_DrawP2CharacterSelect(
         setPivotPositionMM(&x, &y, 6);
         (void)SDLTextWriteScaleMM(
             15, 255, 2, (int)x, (int)y,
-            2.25f, 0, "%s", newMenu_Text(491));
+            jpb_ModCharacterById(player_one) != NULL ? 1.5f : 2.25f,
+            0, "%s", newMenu_Text(491));
     }
     if (jedi_CanToggleSaber((model_id)player_two)) {
         player2IconOverride = 1;
@@ -9003,7 +9154,8 @@ static void newMenu_DrawP2CharacterSelect(
         setPivotPositionMM(&x, &y, 8);
         (void)SDLTextWriteScaleMM(
             15, 255, 2, (int)x, (int)y,
-            2.25f, 0, "%s", newMenu_Text(491));
+            jpb_ModCharacterById(player_two) != NULL ? 1.5f : 2.25f,
+            0, "%s", newMenu_Text(491));
         player2IconOverride = 0;
     }
 
@@ -9044,7 +9196,7 @@ static void newMenu_DrawP2CharacterSelect(
         183, 240.5f, -278.0f, 699.5f, 278.0f,
         3, UINT32_C(0xffffffff), 0.0f);
     newMenu_DrawMaterialRect(
-        201 + converted_one,
+        newMenu_CharacterPortrait(player_one),
         274.0f, -262.0f, 665.0f, 261.0f,
         3, UINT32_C(0xffffffff), 0.1f);
     newMenu_DrawMaterialRect(
@@ -9073,7 +9225,7 @@ static void newMenu_DrawP2CharacterSelect(
     (void)SDLTextWriteScaleMM(
         11, 255, 2, (int)x, (int)y,
         name_scale, 0, "%s",
-        newMenu_Text(332u + (unsigned)converted_one));
+        newMenu_CharacterName(player_one));
     newMenu_DrawMaterialRect(
         189, 269.5f, 250.0f, 670.5f, 141.0f,
         6, UINT32_C(0xffffffff), 0.0f);
@@ -9151,7 +9303,7 @@ static void newMenu_DrawP2CharacterSelect(
         183, 699.5f, -278.0f, 240.5f, 278.0f,
         5, UINT32_C(0xffffffff), 0.0f);
     newMenu_DrawMaterialRect(
-        201 + converted_two,
+        newMenu_CharacterPortrait(player_two),
         665.0f, -262.0f, 274.0f, 261.0f,
         5, UINT32_C(0xffffffff), 0.1f);
     newMenu_DrawMaterialRect(
@@ -9180,7 +9332,7 @@ static void newMenu_DrawP2CharacterSelect(
     (void)SDLTextWriteScaleMM(
         11, 255, 2, (int)x, (int)y,
         name_scale, 0, "%s",
-        newMenu_Text(332u + (unsigned)converted_two));
+        newMenu_CharacterName(player_two));
     newMenu_DrawMaterialRect(
         189, 670.5f, 250.0f, 269.5f, 141.0f,
         8, UINT32_C(0xffffffff), 0.0f);
@@ -9311,7 +9463,7 @@ static void newMenu_DrawTraining(int model, uint32_t pad)
         183, 240.5f, -278.0f, 699.5f, 278.0f,
         3, UINT32_C(0xffffffff), 0.0f);
     newMenu_DrawMaterialRect(
-        201 + converted_model,
+        newMenu_CharacterPortrait(model),
         274.0f, -262.0f, 665.0f, 261.0f,
         3, UINT32_C(0xffffffff), 0.1f);
     newMenu_DrawMaterialRect(
@@ -9330,7 +9482,7 @@ static void newMenu_DrawTraining(int model, uint32_t pad)
     (void)SDLTextWriteScaleMM(
         11, 255, 2, (int)left_x, (int)left_y,
         1.75f, 0, "%s",
-        newMenu_Text(332u + (unsigned)converted_model));
+        newMenu_CharacterName(model));
 
     newMenu_DrawMaterialRect(
         189, 269.5f, 250.0f, 670.5f, 141.0f,
@@ -9411,11 +9563,11 @@ static void newMenu_DrawTraining(int model, uint32_t pad)
  */
 static void newMenu_DrawVSImage(int texture, int player)
 {
-    _Material *material = menuTextures[fontSpec[texture].clut];
+    _Material *material = texture >= JPB_MOD_PORTRAIT_BASE ? newMenu_MaterialAt(texture) : menuTextures[fontSpec[texture].clut];
     float anchor_x = player == 0 ? 7.0f : 4.0f;
     float anchor_y = player == 0 ? 69.0f : 64.0f;
-    float extent_x = (float)material->iw * 0.535f;
-    float extent_y = (float)material->ih * 0.535f;
+    float extent_x = material != NULL ? (float)material->iw * 0.535f : 0.0f;
+    float extent_y = material != NULL ? (float)material->ih * 0.535f : 0.0f;
     SCREENRECT destination;
     CVECTOR color = {255, 255, 255, 255};
 
@@ -9451,6 +9603,7 @@ static void newMenu_DrawVSPlayer(int model, int player)
         texture = 382 + model;
         name = allText[332u + (unsigned)model];
     }
+    if (jpb_ModCharacterById(model) != NULL) texture = newMenu_CharacterPortrait(model);
     newMenu_DrawVSImage(texture, player);
     setPivotPositionMM(&text_x, &text_y, player == 0 ? 0 : 8);
     (void)SDLTextWriteScaleMM(
@@ -9530,6 +9683,12 @@ static void newMenu_DrawVSMode(
  */
 int newMenu_GetVSExtraPlayer(char **name, int *texture, int model)
 {
+    const JPBModCharacter *mod = jpb_ModCharacterById(model);
+    if (mod != NULL) {
+        *name = (char *)mod->name;
+        *texture = 382 + (mod->animationDonor == 9 ? 5 : mod->animationDonor);
+        return 1;
+    }
     int text;
 
     switch (model) {
@@ -9634,6 +9793,8 @@ int newMenu_P1CharacterSelect(void)
         return 0;
     }
     if (newMenu_state == 0) {
+        jpb_ModSetPlayer(0, -1);
+        jpb_ModSetPlayer(1, -1);
         newMenu_errorState = 0x10;
         newMenu_bAbortMenu = 0;
         newMenu_select = 0;
@@ -9688,7 +9849,7 @@ int newMenu_P1CharacterSelect(void)
             do {
                 ++GameStruct.ModelSelect[0];
                 if (GameStruct.ModelSelect[0] >
-                    jar_jar_playable_model) {
+                    jpb_ModLastSelectable(jar_jar_playable_model)) {
                     GameStruct.ModelSelect[0] = 0;
                 }
             } while (!jedi_CheckValidPlayerWTabs(
@@ -9703,7 +9864,7 @@ int newMenu_P1CharacterSelect(void)
                 --GameStruct.ModelSelect[0];
                 if (GameStruct.ModelSelect[0] < 0) {
                     GameStruct.ModelSelect[0] =
-                        jar_jar_playable_model;
+                        jpb_ModLastSelectable(jar_jar_playable_model);
                 }
             } while (!jedi_CheckValidPlayerWTabs(
                 newMenu_playerSelectTypeP1,
@@ -9765,6 +9926,8 @@ int newMenu_P2CharacterSelect(int isVS)
         return 0;
     }
     if (newMenu_state == 0) {
+        jpb_ModSetPlayer(0, -1);
+        jpb_ModSetPlayer(1, -1);
         newMenu_bAbortMenu = 0;
         newMenu_errorState = 0x10;
         newMenu_state = 1;
@@ -9851,7 +10014,7 @@ int newMenu_P2CharacterSelect(int isVS)
                 do {
                     ++GameStruct.ModelSelect[0];
                     if (GameStruct.ModelSelect[0] >
-                        jar_jar_playable_model) {
+                        jpb_ModLastSelectable(jar_jar_playable_model)) {
                         GameStruct.ModelSelect[0] = 0;
                     }
                 } while (!jedi_CheckValidPlayerWTabs(
@@ -9866,7 +10029,7 @@ int newMenu_P2CharacterSelect(int isVS)
                     --GameStruct.ModelSelect[0];
                     if (GameStruct.ModelSelect[0] < 0) {
                         GameStruct.ModelSelect[0] =
-                            jar_jar_playable_model;
+                            jpb_ModLastSelectable(jar_jar_playable_model);
                     }
                 } while (!jedi_CheckValidPlayerWTabs(
                     newMenu_playerSelectTypeP1,
@@ -9928,7 +10091,7 @@ int newMenu_P2CharacterSelect(int isVS)
                 do {
                     ++GameStruct.ModelSelect[1];
                     if (GameStruct.ModelSelect[1] >
-                        jar_jar_playable_model) {
+                        jpb_ModLastSelectable(jar_jar_playable_model)) {
                         GameStruct.ModelSelect[1] = 0;
                     }
                 } while (!jedi_CheckValidPlayerWTabs(
@@ -9943,7 +10106,7 @@ int newMenu_P2CharacterSelect(int isVS)
                     --GameStruct.ModelSelect[1];
                     if (GameStruct.ModelSelect[1] < 0) {
                         GameStruct.ModelSelect[1] =
-                            jar_jar_playable_model;
+                            jpb_ModLastSelectable(jar_jar_playable_model);
                     }
                 } while (!jedi_CheckValidPlayerWTabs(
                     newMenu_playerSelectTypeP2,
@@ -10138,6 +10301,8 @@ int newMenu_Training(void)
         return 0;
     }
     if (newMenu_state == 0) {
+        jpb_ModSetPlayer(0, -1);
+        jpb_ModSetPlayer(1, -1);
         newMenu_errorState = 0x10;
         newMenu_bAbortMenu = 0;
         newMenu_select = 0;
@@ -10166,7 +10331,7 @@ int newMenu_Training(void)
         if ((pad & JPB_PAD_LEFT) != 0) {
             do {
                 ++GameStruct.ModelSelect[0];
-                if (GameStruct.ModelSelect[0] > plasma_model) {
+                if (GameStruct.ModelSelect[0] > jpb_ModLastSelectable(plasma_model)) {
                     GameStruct.ModelSelect[0] = 0;
                 }
             } while (!jedi_CheckValidPlayer(GameStruct.ModelSelect[0]));
@@ -10178,7 +10343,7 @@ int newMenu_Training(void)
             do {
                 --GameStruct.ModelSelect[0];
                 if (GameStruct.ModelSelect[0] < 0) {
-                    GameStruct.ModelSelect[0] = plasma_model;
+                    GameStruct.ModelSelect[0] = jpb_ModLastSelectable(plasma_model);
                 }
             } while (!jedi_CheckValidPlayer(GameStruct.ModelSelect[0]));
             if (jpb_menu_platform_hooks.soundCue != NULL) {
@@ -10267,9 +10432,9 @@ static void newMenu_VSAdvanceModel(int player, int direction)
         GameStruct.ModelSelect[player] = (int16_t)(
             GameStruct.ModelSelect[player] + direction);
         if (GameStruct.ModelSelect[player] < 0) {
-            GameStruct.ModelSelect[player] = jar_jar_playable_model;
+            GameStruct.ModelSelect[player] = jpb_ModLastSelectable(jar_jar_playable_model);
         } else if (GameStruct.ModelSelect[player] >
-                   jar_jar_playable_model) {
+                   jpb_ModLastSelectable(jar_jar_playable_model)) {
             GameStruct.ModelSelect[player] = 0;
         }
     } while (!jedi_CheckValidVersus(GameStruct.ModelSelect[player]));
@@ -10283,6 +10448,8 @@ int newMenu_VSMode(void)
 
     SetDispMask(1);
     if (newMenu_state == 0) {
+        jpb_ModSetPlayer(0, -1);
+        jpb_ModSetPlayer(1, -1);
         newMenu_bAbortMenu = 0;
         newMenu_errorState = 0x10;
         newMenu_state = 1;
@@ -10392,7 +10559,7 @@ void redlineFunc(void)
         destination.right = (int32_t)right;
         destination.bottom = (int32_t)bottom;
         _DrawTextureClipped(
-            controlTextures[2], destination, NULL, color, 0.8f, scissor);
+            menuTextures[248], destination, NULL, color, 0.8f, scissor);
     }
 }
 
@@ -10401,31 +10568,26 @@ void redlineFunc(void)
  * PDB type: void (<no type>)
  * Source: W:\SWJediPowerBattles\work\menu.c
  */
-static void menu_drawControllerMaterial(
-    _Material *material, float center_x, float top_y)
+static void menu_controllerBounds(
+    _Material *dimensions, float center_x, float top_y, float rect[4])
 {
-    float left;
-    float right;
-    float bottom;
-    SCREENRECT dst;
-    CVECTOR color = {225, 225, 225, 255};
-
-    left = center_x - (float)material->iw * 0.15f;
-    right = center_x + (float)material->iw * 0.15f;
-    bottom = top_y + (float)material->ih * 0.3f;
-    setPivotPositionMM(&left, &top_y, 4);
-    setPivotPositionMM(&right, &bottom, 4);
-    dst.left = (int32_t)left;
-    dst.top = (int32_t)top_y;
-    dst.right = (int32_t)right;
-    dst.bottom = (int32_t)bottom;
-    _DrawTexture(material, dst, NULL, color, 0.0f);
+    rect[0] = center_x - (float)dimensions->iw * 0.3f * 0.5f;
+    rect[1] = top_y;
+    rect[2] = center_x + (float)dimensions->iw * 0.3f * 0.5f;
+    rect[3] = top_y + (float)dimensions->ih * 0.3f;
+    setPivotPositionMM(&rect[0], &rect[1], 4);
+    setPivotPositionMM(&rect[2], &rect[3], 4);
 }
 
-static float menu_controllerIconLeft(
-    _Material *material, float center_x)
+static void menu_drawControllerMaterial(_Material *material, const float rect[4])
 {
-    return center_x - (float)material->iw * 0.15f;
+    SCREENRECT dst = {
+        (int32_t)rect[0], (int32_t)rect[1],
+        (int32_t)rect[2], (int32_t)rect[3]
+    };
+    CVECTOR color = {225, 225, 225, 255};
+
+    _DrawTexture(material, dst, NULL, color, 0.0f);
 }
 
 static void menu_drawControlsText(
@@ -10449,62 +10611,62 @@ static void menu_drawControllerOverview(
     int keyboard,
     float primary_center,
     float force_center,
-    float force_second_center,
-    float force_text_offset)
+    float force_second_center)
 {
     unsigned row = 0;
     float y = 130.0f;
     const float player_offset = player == 0 ? -450.0f : 450.0f;
+    _Material *primary_dimensions = textures[control_scheme[0]];
+    _Material *force_dimensions = textures[force_scheme[0]];
 
     while (row < 7) {
         unsigned action = row == 1 ? 2u : row;
-        _Material *primary = textures[control_scheme[action]];
-        float primary_x = primary_center + player_offset;
-        float primary_left = menu_controllerIconLeft(
-            primary, primary_x);
+        float rect[4];
 
-        menu_drawControllerMaterial(primary, primary_x, y);
-        menu_drawControlsText(
-            controlTextList[action],
-            primary_left + scaleAdjustmentMM * 65.0f,
-            y, 0, 1.75f);
+        /* Retail keeps the first action's icon dimensions for every row.
+         * Text offsets are added after pivot conversion (0xD8C9C/0xD9079). */
+        menu_controllerBounds(
+            primary_dimensions, primary_center + player_offset, y, rect);
+        menu_drawControllerMaterial(textures[control_scheme[action]], rect);
+        (void)SDLTextWriteScaleMM(
+            11, 255, 0, (int)(rect[0] + scaleAdjustmentMM * 65.0f),
+            (int)rect[1], 1.75f, 0, "%s", allText[controlTextList[action]]);
 
         if (action < 6) {
-            _Material *force = textures[force_scheme[action]];
-            float force_x = force_center + player_offset;
-            float force_left;
+            float text_offset = scaleAdjustmentMM * 150.0f;
+
+            menu_controllerBounds(
+                force_dimensions, force_center + player_offset, y, rect);
 
             if (keyboard && player == 0) {
-                if (action != 0) {
-                    force = kbmForceTextures[action - 2u];
-                }
-                menu_drawControllerMaterial(force, force_x, y);
+                _Material *force = action == 0 ? force_dimensions :
+                    kbmForceTextures[action - 2u];
+                menu_drawControllerMaterial(force, rect);
+                text_offset = scaleAdjustmentMM * 65.0f;
             } else if (action == 0) {
-                menu_drawControllerMaterial(force, force_x, y);
+                menu_drawControllerMaterial(force_dimensions, rect);
             } else {
                 _Material *modifier = textures[force_scheme[6]];
-                float plus_x;
-                float plus_y;
+                float second_rect[4];
 
-                menu_drawControllerMaterial(modifier, force_x, y);
-                plus_x = force_x +
-                    (float)force->iw * 0.15f +
-                    scaleAdjustmentMM * 12.0f;
-                plus_y = y + scaleAdjustmentMM * 8.0f;
-                setPivotPositionMM(&plus_x, &plus_y, 4);
+                menu_drawControllerMaterial(modifier, rect);
                 (void)SDLTextWriteScaleMM(
-                    11, 255, 0, (int)plus_x, (int)plus_y,
+                    11, 255, 0, (int)(rect[2] + scaleAdjustmentMM * 12.0f),
+                    (int)(rect[1] + scaleAdjustmentMM * 8.0f),
                     1.75f, 0, "+");
+                menu_controllerBounds(
+                    force_dimensions, force_second_center + player_offset,
+                    y, second_rect);
                 menu_drawControllerMaterial(
-                    force,
-                    force_second_center + player_offset,
-                    y);
+                    textures[force_scheme[action]], second_rect);
             }
-            force_left = menu_controllerIconLeft(force, force_x);
-            menu_drawControlsText(
-                controlTextListForce[action],
-                force_left + force_text_offset,
-                y, 0, 1.75f);
+            if (OptionStruct.ResolutionChanged == 5) {
+                if (action == 3) rect[1] -= scaleAdjustmentMM;
+                if (action == 5) rect[1] += scaleAdjustmentMM * 5.0f;
+            }
+            (void)SDLTextWriteScaleMM(
+                11, 255, 0, (int)(rect[0] + text_offset), (int)rect[1],
+                1.75f, 0, "%s", allText[controlTextListForce[action]]);
         }
         y += 46.0f;
         row = action + 1u;
@@ -10519,11 +10681,11 @@ void runControlsMenu(void)
     const unsigned char *p1_force = ClassicControlSchemeForce;
     const unsigned char *p2_scheme = ClassicControlScheme;
     const unsigned char *p2_force = ClassicControlSchemeForce;
-    float primary_center = -420.0f;
-    float force_center = -55.0f;
-    float p2_force_center = -55.0f;
+    float primary_center = -310.0f;
+    float force_center = 25.0f;
     float force_second_center = 104.0f;
-    float force_text_offset = 29.0f;
+    int slider_x = 520;
+    int slider_y = 510;
     float x;
     float y;
     int show_player_two =
@@ -10545,7 +10707,7 @@ void runControlsMenu(void)
     setPivotPositionMM(&x, &y, 1);
     (void)SDLTextWriteScaleMM(
         11, 255, 2, (int)x, (int)y,
-        1.75f, 0, "%s", newMenu_Text(242));
+        3.0f, 0, "%s", newMenu_Text(242));
     {
         SCREENRECT dst;
         CVECTOR color = {225, 225, 225, 255};
@@ -10587,30 +10749,45 @@ void runControlsMenu(void)
     case 4:
         primary_center = -410.0f;
         force_center = -35.0f;
-        p2_force_center = -35.0f;
         force_second_center = 44.0f;
-        force_text_offset = 44.0f;
+        slider_x = 580;
+        slider_y = 515;
         break;
     case 1:
     case 2:
         primary_center = -390.0f;
         force_center = -15.0f;
-        p2_force_center = -15.0f;
         force_second_center = 64.0f;
-        force_text_offset = 64.0f;
+        slider_x = OptionStruct.ResolutionChanged == 1 ? 650 : 610;
+        slider_y = 515;
         break;
     case 3:
         primary_center = -310.0f;
-        force_center = 25.0f;
-        p2_force_center = 5.0f;
+        force_center = 5.0f;
         force_second_center = 84.0f;
-        force_text_offset = 84.0f;
+        slider_x = 550;
+        slider_y = 512;
         break;
     case 5:
+        primary_center = -420.0f;
+        force_center = -55.0f;
         force_second_center = 29.0f;
+        slider_x = 600;
+        slider_y = 515;
         break;
     default:
         break;
+    }
+
+    menu_slideco(0.225f, 0.225f, slider_x, slider_y,
+                 (float)OptionStruct.WalkLimit[0], 8.0f);
+    menu_slideco(0.225f, 0.225f, slider_x, slider_y + 45,
+                 (float)OptionStruct.RunLimit[0], 8.0f);
+    if (show_player_two) {
+        menu_slideco(0.225f, 0.225f, slider_x + 900, slider_y,
+                     (float)OptionStruct.WalkLimit[1], 8.0f);
+        menu_slideco(0.225f, 0.225f, slider_x + 900, slider_y + 45,
+                     (float)OptionStruct.RunLimit[1], 8.0f);
     }
 
     if (OptionStruct.ControllerConfig[0] == 1 &&
@@ -10626,12 +10803,12 @@ void runControlsMenu(void)
         p1Textures, p1_scheme, p1_force, 0,
         lastUsedInputType == 0,
         primary_center, force_center,
-        force_second_center, force_text_offset);
+        force_second_center);
     if (show_player_two) {
         menu_drawControllerOverview(
             p2Textures, p2_scheme, p2_force, 1, 0,
-            primary_center, p2_force_center,
-            force_second_center, force_text_offset);
+            primary_center, force_center,
+            force_second_center);
     }
 }
 
@@ -10680,7 +10857,7 @@ void testcombo(unsigned player)
     unsigned combo;
     unsigned count = 0;
 
-    menuVars.td.jedi = (uint32_t)(int32_t)player_data->playerID;
+    menuVars.td.jedi = (uint32_t)jpb_ModPlayerModel(player_data->playernum, player_data->playerID);
     for (combo = 0;
          combo < (unsigned)(int)player_data->maxCombos;
          ++combo) {

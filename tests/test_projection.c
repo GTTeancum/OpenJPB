@@ -443,6 +443,49 @@ int main(void)
                   &screen) == 0);
         CHECK(screen.vz == 1.0f / 10240.0f);
     }
+    {
+        const float viewport_sizes[][2] = {
+            {960.0f, 540.0f},
+            {1920.0f, 1080.0f}
+        };
+        const float half_bar_width = 22.55f;
+        FVECTOR camera_center = {173.0f, -9.0f, 500.0f};
+        FVECTOR camera_left = camera_center;
+        FVECTOR camera_right = camera_center;
+        size_t viewport_index;
+
+        camera_left.vx -= half_bar_width;
+        camera_right.vx += half_bar_width;
+        for (viewport_index = 0;
+             viewport_index <
+                 sizeof(viewport_sizes) / sizeof(viewport_sizes[0]);
+             ++viewport_index) {
+            FVECTOR projected_center;
+            FVECTOR projected_left;
+            FVECTOR projected_right;
+            float viewport_width = viewport_sizes[viewport_index][0];
+            float viewport_height = viewport_sizes[viewport_index][1];
+
+            CHECK(jpb_ProjectPcCameraToViewport(
+                      &camera_center,
+                      viewport_width,
+                      viewport_height,
+                      &projected_center) == 0);
+            CHECK(jpb_ProjectPcCameraToViewport(
+                      &camera_left,
+                      viewport_width,
+                      viewport_height,
+                      &projected_left) == 0);
+            CHECK(jpb_ProjectPcCameraToViewport(
+                      &camera_right,
+                      viewport_width,
+                      viewport_height,
+                      &projected_right) == 0);
+            CHECK(fabsf(
+                      (projected_left.vx + projected_right.vx) * 0.5f -
+                      projected_center.vx) < 0.001f);
+        }
+    }
 
     target = eye;
     CHECK(jpb_BuildLookAtView(

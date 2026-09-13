@@ -206,7 +206,15 @@ void enemy_ParseOpcodes(wsl_ENEMY *enemy);
 JPBEnemyOpcodeParseResult jpb_enemy_ParseOpcodes(
     wsl_ENEMY *enemy,
     uint16_t *unsupported_opcode);
+/* Executes one relocated authored node for real-asset validation. */
+JPBEnemyOpcodeParseResult jpb_enemy_ExecuteOpcode(
+    wsl_ENEMY *enemy,
+    BAP_AINODE *node,
+    int *branch_flag,
+    uint16_t *unsupported_opcode);
 void enemy_HandleEnemies(void);
+/* Process-local diagnostic seam; disabled by default. */
+void jpb_EnemySetAiSuspended(int suspended);
 void enemy_Radar(void);
 /*
  * Diagnostic facade for the exact active-enemy owner. It retains the

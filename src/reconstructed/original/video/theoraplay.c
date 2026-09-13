@@ -16,6 +16,7 @@
 #include <string.h>
 
 #include <xmmintrin.h>
+#include <emmintrin.h>
 
 #if defined(JPB_THEORAPLAY_CODEC_AVAILABLE)
 #include <ogg/ogg.h>
@@ -136,6 +137,35 @@ static unsigned char theoraplay_convert_component(float component)
     return (unsigned char)rounded;
 }
 
+/* The shipped converters (0x1062C0 / 0x106A10) process sixteen pixels
+ * with packed float arithmetic. Keep the operation order and MXCSR rounding. */
+static void theoraplay_convert_four(
+    __m128i y, __m128i cb, __m128i cr, unsigned char *destination)
+{
+    const __m128 zero = _mm_setzero_ps();
+    const __m128 limit = _mm_set1_ps(255.0f);
+    const __m128 luma = _mm_mul_ps(_mm_mul_ps(
+        _mm_sub_ps(_mm_cvtepi32_ps(y), _mm_set1_ps(16.0f)),
+        _mm_set1_ps(0.00456621f)), limit);
+    const __m128 cb_scaled = _mm_mul_ps(
+        _mm_sub_ps(_mm_cvtepi32_ps(cb), _mm_set1_ps(128.0f)),
+        _mm_set1_ps(0.004464286f));
+    const __m128 cr_scaled = _mm_mul_ps(
+        _mm_sub_ps(_mm_cvtepi32_ps(cr), _mm_set1_ps(128.0f)),
+        _mm_set1_ps(0.004464286f));
+    const __m128 red = _mm_add_ps(_mm_mul_ps(cr_scaled, _mm_set1_ps(357.50998f)), luma);
+    const __m128 green = _mm_sub_ps(
+        _mm_sub_ps(luma, _mm_mul_ps(cb_scaled, _mm_set1_ps(87.754745f))),
+        _mm_mul_ps(cr_scaled, _mm_set1_ps(182.10474f)));
+    const __m128 blue = _mm_add_ps(_mm_mul_ps(cb_scaled, _mm_set1_ps(451.86f)), luma);
+    const __m128i r = _mm_cvtps_epi32(_mm_max_ps(zero, _mm_min_ps(limit, red)));
+    const __m128i g = _mm_cvtps_epi32(_mm_max_ps(zero, _mm_min_ps(limit, green)));
+    const __m128i b = _mm_cvtps_epi32(_mm_max_ps(zero, _mm_min_ps(limit, blue)));
+    const __m128i rgba = _mm_or_si128(_mm_set1_epi32((int)0xff000000u),
+        _mm_or_si128(r, _mm_or_si128(_mm_slli_epi32(g, 8), _mm_slli_epi32(b, 16))));
+    _mm_storeu_si128((__m128i *)destination, rgba);
+}
+
 static unsigned char *ConvertVideoFrame420ToRGBCommon(
     const th_info *info, const th_img_plane *planes)
 {
@@ -161,9 +191,35 @@ static unsigned char *ConvertVideoFrame420ToRGBCommon(
             planes[2].data + (size_t)(row >> 1) * planes[2].stride;
         unsigned char *destination = pixels +
             (size_t)(info->pic_height - row - 1U) * info->pic_width * 4U;
-        unsigned int column;
+        unsigned int column = 0;
 
-        for (column = 0; column < info->pic_width; ++column) {
+        for (; column + 16 <= info->pic_width; column += 16) {
+            const __m128i zero = _mm_setzero_si128();
+            const __m128i y = _mm_loadu_si128((const __m128i *)(y_source + column));
+            const __m128i cb8 = _mm_loadl_epi64((const __m128i *)(cb_source + (column >> 1)));
+            const __m128i cr8 = _mm_loadl_epi64((const __m128i *)(cr_source + (column >> 1)));
+            const __m128i cb = _mm_unpacklo_epi8(cb8, cb8);
+            const __m128i cr = _mm_unpacklo_epi8(cr8, cr8);
+            const __m128i yl = _mm_unpacklo_epi8(y, zero);
+            const __m128i yh = _mm_unpackhi_epi8(y, zero);
+            const __m128i cbl = _mm_unpacklo_epi8(cb, zero);
+            const __m128i cbh = _mm_unpackhi_epi8(cb, zero);
+            const __m128i crl = _mm_unpacklo_epi8(cr, zero);
+            const __m128i crh = _mm_unpackhi_epi8(cr, zero);
+            theoraplay_convert_four(_mm_unpacklo_epi16(yl, zero),
+                _mm_unpacklo_epi16(cbl, zero), _mm_unpacklo_epi16(crl, zero),
+                destination + column * 4U);
+            theoraplay_convert_four(_mm_unpackhi_epi16(yl, zero),
+                _mm_unpackhi_epi16(cbl, zero), _mm_unpackhi_epi16(crl, zero),
+                destination + column * 4U + 16);
+            theoraplay_convert_four(_mm_unpacklo_epi16(yh, zero),
+                _mm_unpacklo_epi16(cbh, zero), _mm_unpacklo_epi16(crh, zero),
+                destination + column * 4U + 32);
+            theoraplay_convert_four(_mm_unpackhi_epi16(yh, zero),
+                _mm_unpackhi_epi16(cbh, zero), _mm_unpackhi_epi16(crh, zero),
+                destination + column * 4U + 48);
+        }
+        for (; column < info->pic_width; ++column) {
             const float luma =
                 ((float)y_source[column] - 16.0f) * luma_scale * 255.0f;
             const float cb =
@@ -590,7 +646,6 @@ static int FeedMoreOggData(THEORAPLAY_Io *io, ogg_sync_state *sync)
 static void WorkerThread(THEORAPLAY_Decoder *decoder)
 {
     unsigned long audioframes = 0;
-    unsigned long videoframes = 0;
     double fps = 0.0;
     int was_error = 1;
     int eos = 0;
@@ -813,13 +868,18 @@ static void WorkerThread(THEORAPLAY_Decoder *decoder)
             }
             else {
                 ogg_int64_t granule_position = 0;
-                const int result = th_decode_packetin(
-                    tdec, &packet, &granule_position);
+                int result;
 
-                if (result == TH_DUPFRAME) {
-                    ++videoframes;
+                /* WorkerThread RVAs 0x108366..0x1083F9: restore the
+                 * packet clock before decoding, then use granule time.
+                 * Counting pictures loses authored gaps in sparse streams. */
+                if (packet.granulepos >= 0) {
+                    (void)th_decode_ctl(
+                        tdec, TH_DECCTL_SET_GRANPOS,
+                        &packet.granulepos, sizeof(packet.granulepos));
                 }
-                else if (result == 0) {
+                result = th_decode_packetin(tdec, &packet, &granule_position);
+                if (result == 0) {
                     th_ycbcr_buffer ycbcr;
 
                     if (th_decode_ycbcr_out(tdec, ycbcr) == 0) {
@@ -829,10 +889,8 @@ static void WorkerThread(THEORAPLAY_Decoder *decoder)
                         if (item == NULL) {
                             goto cleanup;
                         }
-                        item->playms = fps == 0.0
-                            ? 0
-                            : (unsigned int)(
-                                  ((double)videoframes / fps) * 1000.0);
+                        item->playms = (unsigned int)(
+                            th_granule_time(tdec, granule_position) * 1000.0);
                         item->fps = fps;
                         item->width = tinfo.pic_width;
                         item->height = tinfo.pic_height;
@@ -855,7 +913,6 @@ static void WorkerThread(THEORAPLAY_Decoder *decoder)
                         theoraplay_unlock(decoder);
                         saw_video_frame = 1;
                     }
-                    ++videoframes;
                 }
             }
         }

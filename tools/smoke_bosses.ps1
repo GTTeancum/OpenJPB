@@ -112,14 +112,14 @@ $matrix = @(
         Level = 'corus1'
         LevelIndex = 6
         Label = 'Coruscant thug'
-        Spawn = @(-29952, 10342, -18432)
+        Spawn = @(-29056, 10752, -19968)
         PlacementId = 153
         Actor = 12
         Ai = 15
         ActorName = 'corhum4.baf'
         ForcePlacement = $true
         Confidence = 'confirmed retail boss stream/actor'
-        Notes = 'Late Coruscant high-hp human placement matching the thug-boss asset family; retail assets include 06_CorThugBoss.wav and diagnostics place id 153 in the authored camera-director enemy set with mode 5.'
+        Notes = 'Late Coruscant high-hp human placement matching the thug-boss asset family; retail assets include 06_CorThugBoss.wav. The player spawn is placement 138 waypoint 0, an authored camera-66 anchor beside placement 153; the old untracked coordinate caused a fall/death before the proof frame.'
     },
     [pscustomobject]@{
         Name = 'mini2-kadu'

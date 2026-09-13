@@ -246,7 +246,8 @@ static int test_animation_queue(void)
     memset(target_templates, 0, sizeof(target_templates));
     memset(&motion, 0, sizeof(motion));
 
-    motion.Seq = 2;
+    motion.Seq = 1;
+    motion.globalID = 2;
     motion.twin = 7;
     motion.Lock = 9;
     motion.Speed = -1;
@@ -261,6 +262,7 @@ static int test_animation_queue(void)
     CHECK(node->pMotion == &motion);
 
     motion.Seq = 3;
+    motion.globalID = 3;
     motion.Speed = 200;
     motion.motionFlags = 0x02000000u;
     CHECK(anim_AddNextAnimSeq(animation, &motion, 1) == 0);
@@ -274,6 +276,7 @@ static int test_animation_queue(void)
 
     list_MoveList(&animation->animFreeList, &animation->animList);
     motion.Seq = 6;
+    motion.globalID = 6;
     motion.motionFlags = 0;
     CHECK(anim_AddNextAnimSeq(animation, &motion, 0) == -1);
     CHECK(node_count(&animation->animFreeList) == 8);
@@ -290,6 +293,7 @@ static int test_animation_queue(void)
     list_MoveList(&animation->animFreeList, &animation->animList);
     animation->pCurrentAnimSeq = NULL;
     motion.Seq = 1;
+    motion.globalID = 1;
     motion.motionFlags = 0;
     for (index = 0;
          index < JPB_ANIM_QUEUE_NODE_CAPACITY;
@@ -367,6 +371,7 @@ static int test_queued_motion_state_activation(void)
     templates[2].Fframe = 4;
     templates[3].Fframe = 7;
     first.Seq = 2;
+    first.globalID = 2;
     first.twin = 3;
     first.twout = 6;
     first.Lock = 11;
@@ -398,6 +403,7 @@ static int test_queued_motion_state_activation(void)
     CHECK(physics.accel.vz == 5.0f);
 
     second.Seq = 3;
+    second.globalID = 3;
     second.motionFlags = 1;
     second.twin = 2;
     second.Speed = 200;
@@ -451,10 +457,12 @@ static int test_sequence_end_transition(void)
     templates[1].Fframe = 4;
     templates[1].Lframe = 12;
     looping.Seq = 0;
+    looping.globalID = 0;
     looping.motionFlags = UINT32_C(0x80000000);
     looping.Speed = JPB_FIXED_ONE;
     looping.cutout = 2;
     strike.Seq = 1;
+    strike.globalID = 1;
     strike.Speed = JPB_FIXED_ONE;
 
     CHECK(anim_AddNextAnimSeq(
@@ -522,8 +530,10 @@ static int test_sequence_end_motion_recovery(void)
     templates[2].Fframe = 0;
     templates[2].Lframe = 10;
     motions[0].Seq = 0;
+    motions[0].globalID = 0;
     motions[0].Speed = JPB_FIXED_ONE;
     motions[2].Seq = 2;
+    motions[2].globalID = 2;
     motions[2].Speed = JPB_FIXED_ONE;
     motions[2].Charge = 20;
 
@@ -567,11 +577,13 @@ static int test_motion_chain_wrapper(void)
     memset(templates, 0, sizeof(templates));
     memset(&motion, 0, sizeof(motion));
     motion.Seq = 1;
+    motion.globalID = 1;
     motion.Speed = -1;
 
     CHECK(animctrl_MotionChain(&player.playerRoot, &motion) == 1);
     CHECK(animation->animList.head != NULL);
     motion.Seq = 2;
+    motion.globalID = 2;
     CHECK(animctrl_MotionChain(&player.playerRoot, &motion) == 0);
     return 0;
 }
@@ -600,6 +612,7 @@ static int test_motion_lock_wrappers(void)
     memset(&motion, 0, sizeof(motion));
     templates[1].Lframe = 10;
     motion.Seq = 1;
+    motion.globalID = 1;
     motion.Speed = 0;
 
     animation->Lock = 5;
@@ -661,6 +674,7 @@ static int test_motion_combo_chain_wrapper(void)
     memset(&motion, 0, sizeof(motion));
     templates[1].Lframe = 10;
     motion.Seq = 1;
+    motion.globalID = 1;
     motion.Speed = -1;
 
     animation->Lock = 30;
@@ -759,10 +773,12 @@ static int test_ai_throw_callback(void)
     target_animation->depack_context3.huffdataorigin = pose_words;
 
     motions[0].Seq = 0;
+    motions[0].globalID = 0;
     motions[0].Lock = 1;
     motions[0].Speed = -1;
     motions[0].fx2 = 0;
     motions[1].Seq = 1;
+    motions[1].globalID = 1;
     motions[1].Speed = -1;
     templates[0].Lframe = 8;
     templates[1].Lframe = 8;
@@ -829,6 +845,7 @@ static int test_animation_control_utilities(void)
         target_templates;
     target_animation.depack_context.numparts = 17;
     motion.Seq = 1;
+    motion.globalID = 1;
     templates[1].Fframe = 10;
     templates[1].Lframe = 30;
     target_templates[1].Fframe = 40;
@@ -943,6 +960,7 @@ static int test_animation_sound_scheduler(void)
     memset(&motion, 0, sizeof(motion));
     sequence.Lframe = 10;
     motion.Seq = 0;
+    motion.globalID = 0;
     motion.Speed = JPB_FIXED_ONE;
     motion.FunctPtr = 0;
     memcpy(motion.snd[0], "sabrsw01", 8);
@@ -1072,10 +1090,12 @@ static int test_animation_console_command(void)
     player.maxMotions = 3;
     player.oldmaxCMotions = 3;
     motions[1].Seq = 1;
+    motions[1].globalID = 1;
     motions[1].Lock = 2;
     motions[1].Speed = JPB_FIXED_ONE;
     motions[1].FunctPtr = 0;
     motions[2].Seq = 2;
+    motions[2].globalID = 2;
     motions[2].Lock = 2;
     motions[2].Speed = JPB_FIXED_ONE;
     motions[2].FunctPtr = 0;

@@ -4,9 +4,11 @@
  * archive and runtime-layout failures observable before platform work begins.
  */
 
+#include "jpb/enemy.h"
 #include "jpb/filesys.h"
 #include "jpb/globalarrays.h"
 #include "jpb/memory.h"
+#include "jpb/player.h"
 #include "jpb/world.h"
 
 #include <ctype.h>
@@ -29,6 +31,122 @@ static void print_chunk_id(const uint8_t *cursor, const uint8_t *end)
     fputs("\"", stderr);
 }
 
+static int validate_fed_boss_phases(WorldData *world)
+{
+    enum {
+        fed_boss_ai = 61,
+        root_health_compare = 1,
+        root_health_reset = 2,
+        vulnerable_health_compare = 84,
+        vulnerable_health_reset = 86,
+        protected_flag_set = 87
+    };
+    wsl_ENEMY enemy;
+    playerObject player;
+    BAP_AI *ai;
+    JPBEnemyOpcodeParseResult result;
+    uint16_t unsupported = 0;
+    int node_count;
+    int branch = 0;
+    int root_valid;
+    int vulnerable_valid;
+    int protected_valid;
+
+    if (world == NULL || world->nAI <= fed_boss_ai ||
+        world->apAI == NULL || world->apAI[fed_boss_ai] == NULL) {
+        fputs("FED boss AI 61 is unavailable\n", stderr);
+        return 0;
+    }
+    ai = world->apAI[fed_boss_ai];
+    node_count = ai->numNodes - ai->numAvailable;
+    if (node_count <= protected_flag_set) {
+        fprintf(
+            stderr,
+            "FED boss AI 61 has only %d active nodes\n",
+            node_count);
+        return 0;
+    }
+    if ((uint16_t)ai->aiNodes[root_health_compare].opcode !=
+            UINT16_C(0x010a) ||
+        (uint16_t)ai->aiNodes[root_health_reset].opcode !=
+            UINT16_C(0x040c) ||
+        (uint16_t)ai->aiNodes[vulnerable_health_compare].opcode !=
+            UINT16_C(0x010a) ||
+        (uint16_t)ai->aiNodes[vulnerable_health_reset].opcode !=
+            UINT16_C(0x040c) ||
+        (uint16_t)ai->aiNodes[protected_flag_set].opcode !=
+            UINT16_C(0x0606)) {
+        fputs("FED boss AI 61 phase-node layout changed\n", stderr);
+        return 0;
+    }
+
+    memset(&enemy, 0, sizeof(enemy));
+    memset(&player, 0, sizeof(player));
+    enemy.pAI = ai;
+    enemy.pPlayer = &player;
+    enemy.hitPoints = 30;
+    enemy.range = 5000;
+    result = jpb_enemy_ExecuteOpcode(
+        &enemy,
+        &ai->aiNodes[root_health_compare],
+        &branch,
+        &unsupported);
+    root_valid = result == JPB_ENEMY_OPCODE_PARSE_COMPLETE && branch == 1;
+    result = jpb_enemy_ExecuteOpcode(
+        &enemy,
+        &ai->aiNodes[root_health_reset],
+        &branch,
+        &unsupported);
+    root_valid = root_valid &&
+        result == JPB_ENEMY_OPCODE_PARSE_COMPLETE &&
+        enemy.hitPoints == 100 && enemy.range == 5000;
+
+    enemy.hitPoints = 200;
+    enemy.range = 0;
+    result = jpb_enemy_ExecuteOpcode(
+        &enemy,
+        &ai->aiNodes[vulnerable_health_compare],
+        &branch,
+        &unsupported);
+    vulnerable_valid =
+        result == JPB_ENEMY_OPCODE_PARSE_COMPLETE && branch == 0;
+    enemy.hitPoints = 199;
+    enemy.range = 5000;
+    result = jpb_enemy_ExecuteOpcode(
+        &enemy,
+        &ai->aiNodes[vulnerable_health_compare],
+        &branch,
+        &unsupported);
+    vulnerable_valid = vulnerable_valid &&
+        result == JPB_ENEMY_OPCODE_PARSE_COMPLETE && branch == 1;
+    result = jpb_enemy_ExecuteOpcode(
+        &enemy,
+        &ai->aiNodes[vulnerable_health_reset],
+        &branch,
+        &unsupported);
+    vulnerable_valid = vulnerable_valid &&
+        result == JPB_ENEMY_OPCODE_PARSE_COMPLETE &&
+        enemy.hitPoints == 200 && enemy.range == 5000;
+    result = jpb_enemy_ExecuteOpcode(
+        &enemy,
+        &ai->aiNodes[protected_flag_set],
+        &branch,
+        &unsupported);
+    protected_valid =
+        result == JPB_ENEMY_OPCODE_PARSE_COMPLETE &&
+        (player.forceFlags & UINT32_C(0x10)) != 0 &&
+        (player.pFlags & UINT32_C(0x10)) == 0;
+
+    printf(
+        "fed_boss_phase_validation root=%d vulnerable=%d "
+        "protected=%d valid=%d\n",
+        root_valid,
+        vulnerable_valid,
+        protected_valid,
+        root_valid && vulnerable_valid && protected_valid);
+    return root_valid && vulnerable_valid && protected_valid;
+}
+
 int main(int argc, char **argv)
 {
     WorldData world;
@@ -40,6 +158,7 @@ int main(int argc, char **argv)
     int find_opcode = -1;
     int print_opcode_summary = 0;
     int print_player_controls = 0;
+    int validate_fed_boss = 0;
     int argument;
     int result;
 
@@ -47,7 +166,8 @@ int main(int argc, char **argv)
         fprintf(
             stderr,
             "usage: %s <level.j3d> [--placements] [--ai <index>] "
-            "[--opcode <value>] [--opcode-summary] [--player-controls]\n",
+            "[--opcode <value>] [--opcode-summary] [--player-controls] "
+            "[--validate-fed-boss-phases]\n",
             argv[0]);
         return 2;
     }
@@ -96,12 +216,17 @@ int main(int argc, char **argv)
                        argv[argument],
                        "--player-controls") == 0) {
             print_player_controls = 1;
+        } else if (strcmp(
+                       argv[argument],
+                       "--validate-fed-boss-phases") == 0) {
+            validate_fed_boss = 1;
         } else {
             fprintf(
                 stderr,
                 "usage: %s <level.j3d> [--placements] "
                 "[--ai <index>] [--opcode <value>] "
-                "[--opcode-summary] [--player-controls]\n",
+                "[--opcode-summary] [--player-controls] "
+                "[--validate-fed-boss-phases]\n",
                 argv[0]);
             return 2;
         }
@@ -614,6 +739,10 @@ int main(int argc, char **argv)
             unreferenced_placements,
             invalid_edges);
         free(incoming);
+    }
+    if (validate_fed_boss && !validate_fed_boss_phases(&world)) {
+        pointerRegistry_Reset();
+        return 8;
     }
     pointerRegistry_Reset();
     return 0;

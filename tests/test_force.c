@@ -199,6 +199,7 @@ static void reset_fixture(ForceFixture *fixture)
     for (index = 0; index < TEST_MOTION_COUNT; ++index) {
         fixture->motions[index].Seq =
             (uint16_t)index;
+        fixture->motions[index].globalID = (uint16_t)index;
         fixture->motions[index].Speed = -1;
         fixture->templates[index].Lframe = 10;
     }
@@ -518,6 +519,7 @@ static void test_mesmerize_callback(void)
     target->pMotion =
         &target_animation->pMotion;
     target_motions[61].Seq = 61;
+    target_motions[61].globalID = 61;
     target_motions[61].Speed = -1;
     target_motions[61].Lock = 1;
     target_templates[61].Fframe = 0;

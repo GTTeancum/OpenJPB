@@ -31,6 +31,7 @@
 #include "jpb/jedi.h"
 #include "jpb/linkstubs.h"
 #include "jpb/model.h"
+#include "jpb/mods.h"
 #include "jpb/objroot.h"
 #include "jpb/physics.h"
 #include "jpb/scene.h"
@@ -61,6 +62,13 @@ static int g = 0xff;
 
 /* Exact zero-initialized force.c PDB global at matched-PC RVA 0x537D78. */
 static _svector force_reflect_rot;
+
+static int jpb_force_donor(const playerObject *player)
+{
+    const JPBModCharacter *mod = jpb_ModPlayer(player->playernum);
+    return mod != NULL && mod->animationDonor == player->playerID
+        ? mod->forceDonor : player->playerID;
+}
 
 static Motion *jpb_force_resolve_motion(
     playerObject *player, int16_t encoded_motion)
@@ -430,7 +438,7 @@ int force_CloakCallBack(
     if (model != NULL) {
         model->flags |= UINT32_C(0x10);
     }
-    alternate_color = player->playerID != 3;
+    alternate_color = jpb_force_donor(player) != 3;
     fx_GlowingMan(
         physics,
         48,
@@ -1022,7 +1030,7 @@ int force_ReflectCallBack(
         }
 
         color = jedi_GetColour32(
-            (uint64_t)(uint16_t)player->playerID);
+            (uint64_t)jpb_ModPlayerModel(player->playernum, player->playerID));
         color = (color & UINT32_C(0x00ffffff)) |
             UINT32_C(0x60000000);
         inner_color =
@@ -1106,15 +1114,16 @@ int force_RingCallBack(
     int force = game_gGetForce(player->playernum);
     int index = animutl_gGetCurrentFrameIndex(
         &player->playerRoot);
+    int force_donor = jpb_force_donor(player);
 
     (void)cpad;
-    if (force > 4 || player->playerID == 9 ||
-        player->playerID == 0x2b) {
+    if (force > 4 || force_donor == 9 ||
+        force_donor == 0x2b) {
         if (index < 2) {
             return 0;
         }
         {
-            int type = player->playerID == 1
+            int type = force_donor == 1
                 ? 0x0b
                 : 0x0e;
             Projectile *proj = bullet_AllocProjectile(type);
@@ -1804,7 +1813,7 @@ int force_ZapCallBack(
     svhitpoint.vy = (int16_t)(int32_t)hitpoint.vy;
     svhitpoint.vz = (int16_t)(int32_t)hitpoint.vz;
     svhitpoint.pad = 0;
-    if (player->playerID == 4) {
+    if (jpb_force_donor(player) == 4) {
         glow_color = UINT32_C(0xc0804020);
         glow_width = 0x20;
         color1 = UINT32_C(0x007f7f7f);
