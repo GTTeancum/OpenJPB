@@ -1299,12 +1299,76 @@ static int test_ai_fire_weapon_callback(void)
     return 0;
 }
 
+/* RVA 0x2304b clears R9 before the trail's AddSpriteEffect call.
+ * Smoke retains its authored drift instead of inheriting rocket velocity. */
+static int test_rocket_trail_drift(void)
+{
+    ProjType *types = (ProjType *)(void *)maProjTypes;
+    EffectHeader effect = {0};
+    Projectile projectile = {0};
+    Sprite callback = {0};
+    playerObject owner = {0};
+    VECTOR origin = {0, 1000, 0, 0};
+    _Material material = {0};
+    Sprite **emitted;
+    float saved_rate = fGlobalFrameRate;
+    int saved_fixed_rate = gGlobalFrameRate;
+
+    meminit();
+    sprite_gInitSprites();
+    coll_ResetCollisionSystem();
+    clear_physics_player_pool();
+    memset(maProjTypes, 0, sizeof(maProjTypes));
+    GameStruct.GameState = 0;
+    GameStruct.versusModeFlag = 0;
+    fGlobalFrameRate = 1.0f;
+    gGlobalFrameRate = 4096;
+    owner.playerRoot.objectID = 2;
+    owner.playernum = 2;
+    projectile.pj_Owner = (int32_t *)(void *)&owner;
+    projectile.pj_Start = origin;
+    projectile.pj_Type = 17;
+    projectile.pj_Range = 5;
+    projectile.pj_Dir.vz = 4096;
+    projectile.pj_Dir.speed = 55 * 8;
+    callback.sp_User = (int32_t *)(void *)&projectile;
+    types[17].flag = 0x4045;
+    types[17].rangeEffect = -1;
+    types[17].hitEffect = -1;
+    types[17].bulletEffect = 13;
+    types[17].bulletFXRate = 2;
+    effect.num = 1;
+    effect.aEffects[0].bank = 1;
+    effect.aEffects[0].type = 1;
+    effect.aEffects[0].vel.vx = -3;
+    effect.aEffects[0].vel.vy = 7;
+    effect.aEffects[0].vel.vz = 2;
+    effects1Handle[1] = &material;
+    paEffects[13] = &effect;
+    emitted = sprite_AddSpriteEffect(effect.aEffects, 0, &origin, NULL);
+    CHECK(emitted != NULL && emitted[0] == NULL);
+    CHECK(bullet_CallBack((Projectile *)(void *)&callback) == 0);
+    CHECK(projectile.pj_Range == 4);
+    CHECK(emitted[0] != NULL);
+    CHECK(emitted[0]->sp_Pos.vz == (float)projectile.pj_Start.vz);
+    CHECK(emitted[0]->sp_Vel.vx == -3.0f);
+    CHECK(emitted[0]->sp_Vel.vy == 7.0f);
+    CHECK(emitted[0]->sp_Vel.vz == 2.0f);
+    paEffects[13] = NULL;
+    effects1Handle[1] = NULL;
+    sprite_gInitSprites();
+    fGlobalFrameRate = saved_rate;
+    gGlobalFrameRate = saved_fixed_rate;
+    return 0;
+}
+
 int main(void)
 {
     if (sound_LoadBank("resident", 0) != 0) return 1;
     if (sound_LoadBank("theed", 1) != 0) return 1;
     if (sound_LoadBank("resident", 2) != 0) return 1;
     if (sound_LoadBank("resident", 3) != 0) return 1;
+    if (test_rocket_trail_drift() != 0) return 1;
     if (test_terminate_sfx_string() != 0) return 1;
     if (test_allocate_and_free() != 0) return 1;
     if (test_sound_name_initialization() != 0) return 1;

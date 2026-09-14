@@ -470,10 +470,12 @@ terminate_projectile:
         temp.vz = proj->pj_Dir.vz;
         temp.pad = 0;
         vec_ScaleVector(&temp, (int)proj->pj_Dir.speed);
+        /* The shipped call at RVA 0x23058 explicitly clears R9 (velocity).
+         * The scaled direction above is not passed to the trail effect. */
         bullet_spawn_effect(
             (int)type->bulletEffect,
             &proj->pj_Start,
-            &temp);
+            NULL);
     }
     return 0;
 

@@ -2,6 +2,7 @@
 #define JPB_GAME_RUNTIME_H
 
 #include "jpb/anim.h"
+#include "jpb/animation_blend.h"
 #include "jpb/bmd.h"
 #include "jpb/camera.h"
 #include "jpb/cad.h"
@@ -244,6 +245,8 @@ typedef struct JPBGameRuntimeSecondPlayerState
     JPBGameRuntimeSecondPlayerState;
 
 typedef struct JPBGameRuntime {
+    JPBAnimationBlend animationBlend;
+    unsigned secondPlayerBlendTransitions, enemyBlendTransitions;
     uint8_t *meshStorage;
     uint8_t *collisionStorage;
     size_t collisionStorageSize;

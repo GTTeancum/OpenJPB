@@ -11247,7 +11247,7 @@ static void pc_print_usage(const char *program)
         "[--validate-hud-debug-labels3] "
         "[--validate-hud-debug-labels3-1080] "
         "[--validate-hud-owner-coverage] "
-        "[--validate-teleport] [--validate-death-restart] "
+        "[--animation-blend-ms 0..250] [--validate-teleport] [--validate-death-restart] "
         "[--validate-palace-lifecycle] "
         "[--validate-camera-follow] "
         "[--validate-title-audio] [--validate-title-movie N] "
@@ -14492,6 +14492,14 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[index], "--enemy-bmd") == 0 &&
                    index + 1 < argc) {
             enemy_bmd_path = argv[++index];
+        } else if (strcmp(argv[index], "--animation-blend-ms") == 0 && index + 1 < argc) {
+            char *end = NULL;
+            double milliseconds = strtod(argv[++index], &end);
+            if (end == argv[index] || *end != '\0' || !isfinite(milliseconds) || milliseconds < 0.0 || milliseconds > 250.0) {
+                fputs("--animation-blend-ms requires 0..250\n", stderr);
+                return 2;
+            }
+            jpb_AnimationSetBlendSeconds((float)(milliseconds / 1000.0));
         } else if (strcmp(argv[index], "--frames") == 0 &&
                    index + 1 < argc) {
             frame_limit = atoi(argv[++index]);
@@ -21632,6 +21640,9 @@ cleanup:
     jpb_PCAudioDestroy(audio);
     pc_movie_playback_shutdown(&movie_playback);
     jpb_SoftwareFreeOwnedLevelMesh(&jpx_hardware_level);
+    jpb_PCLog("animation blending milliseconds=%.1f p1_transitions=%u p2_transitions=%u enemy_transitions=%u",
+        jpb_AnimationBlendSeconds() * 1000.0f, runtime.animationBlend.transitions,
+        runtime.secondPlayerBlendTransitions, runtime.enemyBlendTransitions);
     jpb_GameRuntimeShutdown(&runtime);
     pc_release_menu_textures(menu_texture_cache);
     free(menu_texture_cache);

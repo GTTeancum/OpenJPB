@@ -1,4 +1,5 @@
 #include "jpb/model.h"
+#include "jpb/animation_blend.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -209,8 +210,64 @@ static int test_pose_bounds(void)
     return 0;
 }
 
+static int test_animation_state_blending(void)
+{
+    JPBAnimationBlend blend = {0}, second = {0};
+    _animFrame idle = {0}, attack = {0}, interrupted = {0};
+    const _animFrame *pose;
+    idle.av3JointAngle[1].vx = 4090;
+    attack.av3JointAngle[1].vx = 6;
+    attack.av3JointAngle[2].vy = 1024;
+    attack.v3RootTranslation.vy = 999;
+    attack.event[2] = 3;
+    pose = jpb_AnimationBlendFrame(&blend, &idle, &idle, 0, 0.0f, 0.1f);
+    CHECK(pose->av3JointAngle[1].vx == 4090);
+    pose = jpb_AnimationBlendFrame(&blend, &attack, &attack, 1, 0.016f, 0.1f);
+    CHECK(blend.transitions == 1 && pose->av3JointAngle[2].vy == 0);
+    CHECK(pose->event[2] == 3 && pose->v3RootTranslation.vy == 999);
+    pose = jpb_AnimationBlendFrame(&blend, &attack, &attack, 1, 0.05f, 0.1f);
+    CHECK(pose->av3JointAngle[1].vx == 0 && pose->av3JointAngle[2].vy == 512);
+    pose = jpb_AnimationBlendFrame(&blend, &attack, &attack, 1, 0.0f, 0.1f);
+    CHECK(pose->av3JointAngle[2].vy == 512); /* paused */
+    interrupted.av3JointAngle[2].vy = 1792;
+    pose = jpb_AnimationBlendFrame(&blend, &interrupted, &interrupted, 2, 0.01f, 0.1f);
+    CHECK(pose->av3JointAngle[2].vy == 512); /* continuous interruption */
+    pose = jpb_AnimationBlendFrame(&blend, &interrupted, &interrupted, 2, 0.1f, 0.1f);
+    CHECK(pose->av3JointAngle[2].vy == 1792 && blend.transitions == 2);
+    CHECK(attack.av3JointAngle[2].vy == 1024); /* source remains authored */
+    pose = jpb_AnimationBlendFrame(&second, &attack, &attack, 1, 0.01f, 0.1f);
+    CHECK(second.transitions == 0 && pose->av3JointAngle[2].vy == 1024);
+    CHECK(jpb_AnimationBlendFrame(&blend, &idle, &idle, 0, 0.01f, 0.0f) == &idle);
+    CHECK(blend.initialized == 0);
+    {
+        Motion motion = {0};
+        float previous = jpb_AnimationBlendSeconds();
+        jpb_AnimationSetBlendSeconds(0.2f);
+        CHECK(jpb_AnimationBlendMotionSeconds(&motion) == 0.2f);
+        motion.Damage = 10;
+        CHECK(jpb_AnimationBlendMotionSeconds(&motion) == 0.1f);
+        motion.Damage = 0;
+        motion.attackFlags = 1;
+        CHECK(jpb_AnimationBlendMotionSeconds(&motion) == 0.1f);
+        jpb_AnimationSetBlendSeconds(0.05f);
+        CHECK(jpb_AnimationBlendMotionSeconds(&motion) == 0.05f);
+        jpb_AnimationSetBlendSeconds(0.0f);
+        CHECK(jpb_AnimationBlendMotionSeconds(&motion) == 0.0f);
+        jpb_AnimationSetBlendSeconds(previous);
+        jpb_AnimationBlendFrame(&blend, &idle, &idle, 0, 0.0f, 0.2f);
+        jpb_AnimationBlendFrame(&blend, &attack, &attack, 1, 0.0f, 0.2f);
+        pose = jpb_AnimationBlendFrame(&blend, &attack, &attack, 1, 0.1f, 0.2f);
+        CHECK(pose->av3JointAngle[2].vy == 512);
+        CHECK(pose->event[2] == 3 && pose->v3RootTranslation.vy == 999);
+        pose = jpb_AnimationBlendFrame(&blend, &attack, &attack, 1, 0.101f, 0.2f);
+        CHECK(pose->av3JointAngle[2].vy == 1024);
+    }
+    return 0;
+}
+
 int main(void)
 {
+    CHECK(test_animation_state_blending() == 0);
     CHECK(test_authored_pose_tree() == 0);
     CHECK(test_absolute_rotation_override() == 0);
     CHECK(test_hot_node_publishes_scene_attack() == 0);

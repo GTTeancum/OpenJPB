@@ -150,6 +150,8 @@ target_link_libraries(jpb_asset_probe PRIVATE jpb_reconstructed)
 
 add_executable(jpb_cad_probe src/port/cad_probe.c)
 target_link_libraries(jpb_cad_probe PRIVATE jpb_reconstructed)
+add_executable(jpb_cad_frame_probe src/port/cad_frame_probe.c)
+target_link_libraries(jpb_cad_frame_probe PRIVATE jpb_reconstructed)
 
 add_executable(jpb_bmd_probe src/port/bmd_probe.c)
 target_link_libraries(jpb_bmd_probe PRIVATE jpb_reconstructed)
@@ -182,6 +184,9 @@ if(JPB_UFBX_SOURCE_DIR)
         src/port/fbx_level_probe.c)
     target_link_libraries(jpb_fbx_level_probe PRIVATE jpb_reconstructed)
 
+    add_executable(jpb_level_import src/port/level_import.c src/port/pc_level_fbx.c)
+    target_link_libraries(jpb_level_import PRIVATE jpb_reconstructed)
+
     add_executable(
         jpb_fbx_jpx_match_probe
         src/port/fbx_jpx_match_probe.c)
@@ -210,6 +215,7 @@ if(WIN32)
         src/port/pc_present_d3d11.c
         src/port/pc_xinput_win32.c
         src/port/jpb_pc_game.rc)
+    set_target_properties(jpb_pc_game PROPERTIES OUTPUT_NAME OpenJPB)
     if(MSVC)
         target_link_options(jpb_pc_game PRIVATE "/ENTRY:mainCRTStartup")
     endif()

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Executable = 'C:\Games\Star Wars Jedi Power Battles\jpb_pc_game.exe',
+    [string]$Executable = 'C:\Games\Star Wars Jedi Power Battles\OpenJPB.exe',
     [string]$Mesh = 'C:\Games\Star Wars Jedi Power Battles\res\level\jpx\fed\fed.jpx',
     [string]$Cad = 'C:\Games\Star Wars Jedi Power Battles\res\animation\obi_wan.cad',
     [string]$Bmd = 'C:\Games\Star Wars Jedi Power Battles\res\MODEL\obi_wan.bmd',

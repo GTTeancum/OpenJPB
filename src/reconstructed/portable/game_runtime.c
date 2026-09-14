@@ -1501,6 +1501,7 @@ struct JPBGameRuntimeTextureCache {
 };
 
 struct JPBGameRuntimeSecondPlayerState {
+    JPBAnimationBlend animationBlend;
     uint8_t *cadStorage;
     uint8_t *bmdStorage;
     uint8_t *comboStorage;
@@ -1598,6 +1599,7 @@ typedef struct JPBGameRuntimeEnemyClass {
 } JPBGameRuntimeEnemyClass;
 
 typedef struct JPBGameRuntimeEnemyActor {
+    JPBAnimationBlend animationBlend;
     objectRoot actorRoot;
     sceneObject *scene;
     modelObject *model;
@@ -3382,6 +3384,19 @@ static int game_runtime_load_huffman(
     return 1;
 }
 
+static const _animFrame *game_runtime_blended_frame(
+    JPBAnimationBlend *blend, animObject *animation, sceneObject *scene)
+{
+    const _animFrame *frame = jpb_AnimationBlendFrame(blend,
+        animation->pCurrentAnimFrame,
+        animation->pCurrentAnimSeq->pAnimTemplate,
+        animation->pMotion != NULL ? animation->pMotion->globalID : -1,
+        GameStruct.inMenuFlag ? 0.0f : (float)gGlobalFrameRate / 122880.0f,
+        jpb_AnimationBlendMotionSeconds(animation->pMotion));
+    if (scene != NULL) scene->pKeyFrameModel = (_animFrame *)frame;
+    return frame;
+}
+
 static int game_runtime_publish_authored_frame(
     JPBGameRuntime *runtime, int32_t previous_index)
 {
@@ -3405,7 +3420,7 @@ static int game_runtime_publish_authored_frame(
     if (model->pRootNode != NULL &&
         jpb_ModelPublishAnimFrame(
             model,
-            decoded_frame,
+            game_runtime_blended_frame(&runtime->animationBlend, runtime->animation, runtime->actorScene),
             game_runtime_scene_actor_root(
                 runtime->actorScene,
                 &runtime->actorRoot)) != JPB_MODEL_POSE_OK) {
@@ -3467,13 +3482,14 @@ static int game_runtime_publish_second_player_frame(
     if (model->pRootNode != NULL &&
         jpb_ModelPublishAnimFrame(
             model,
-            decoded_frame,
+            game_runtime_blended_frame(&state->animationBlend, state->animation, runtime->inactivePlayerScene),
             game_runtime_scene_actor_root(
                 runtime->inactivePlayerScene,
                 &runtime->inactivePlayerActorRoot)) !=
             JPB_MODEL_POSE_OK) {
         return 0;
     }
+    runtime->secondPlayerBlendTransitions = state->animationBlend.transitions;
     state->authoredPoseReady =
         model->pRootNode != NULL;
     state->authoredFrameReady = 1;
@@ -3500,7 +3516,7 @@ static int game_runtime_publish_enemy_frame(
         actor->model->pRootNode != NULL &&
         jpb_ModelPublishAnimFrame(
             actor->model,
-            decoded_frame,
+            game_runtime_blended_frame(&actor->animationBlend, actor->animation, actor->scene),
             &actor->scene->sceneRoot) != JPB_MODEL_POSE_OK) {
         return 0;
     }
@@ -6845,6 +6861,7 @@ static void game_runtime_scene_after_animations(
             JPBGameRuntimeEnemyActor *actor =
                 &runtime->enemyState->actors[enemy_index];
             int animation_index;
+            unsigned transitions_before = actor->animationBlend.transitions;
 
             if (!actor->authoredMotionReady ||
                 !game_runtime_enemy_is_active(actor->enemy)) {
@@ -6882,6 +6899,7 @@ static void game_runtime_scene_after_animations(
                     JPB_GAME_RUNTIME_RENDER_FAILED;
                 return;
             }
+            runtime->enemyBlendTransitions += actor->animationBlend.transitions - transitions_before;
         }
         game_runtime_publish_primary_enemy(runtime);
     }
@@ -6949,11 +6967,10 @@ static void game_runtime_scene_after_world(
                 : JPB_GAME_RUNTIME_RENDER_FAILED;
         return;
     }
-    clear_color = runtime->world != NULL
-        ? ((uint32_t)runtime->world->bkColor.r << 16) |
-          ((uint32_t)runtime->world->bkColor.g << 8) |
-          (uint32_t)runtime->world->bkColor.b
-        : 0;
+    /* CD3DApplication::StartRender clears the shipped PC target to black.
+     * bkColor belongs to the legacy drawing surfaces (scene_postRender);
+     * using it here washes out additive water and other transparent effects. */
+    clear_color = 0;
     started = game_runtime_wall_seconds();
     if (!game_runtime_prepare_depth_buffer(
             runtime,

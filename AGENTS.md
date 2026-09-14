@@ -5,5 +5,6 @@
 
 # Live-review deployment
 
+- Name future Windows game builds and deployed executables `OpenJPB.exe`. The CMake target remains `jpb_pc_game`.
 - Deploy every test-ready build to the game folder by default before marking an item ready for live review.
 - If deployment is blocked because the user is actively testing or the executable is locked, report deployment as pending and complete it as soon as the game process exits.

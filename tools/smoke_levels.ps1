@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Executable = 'C:\Games\Star Wars Jedi Power Battles\jpb_pc_game.exe',
+    [string]$Executable = 'C:\Games\Star Wars Jedi Power Battles\OpenJPB.exe',
     [string]$OutputDirectory = '',
     [string]$LedgerPath = '',
     [int]$Frames = 720,

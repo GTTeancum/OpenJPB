@@ -99,23 +99,23 @@ ctest --test-dir build -C Release -L real_assets --output-on-failure
 
 ## Run
 
-Place `jpb_pc_game.exe` in the installed Steam or GOG game directory beside
+Place `OpenJPB.exe` in the installed Steam or GOG game directory beside
 `res`, then run:
 
 ```powershell
-& "C:\Games\Star Wars Jedi Power Battles\jpb_pc_game.exe"
+& "C:\Games\Star Wars Jedi Power Battles\OpenJPB.exe"
 ```
 
 For deterministic map inspection:
 
 ```powershell
-& "C:\Games\Star Wars Jedi Power Battles\jpb_pc_game.exe" --quickload fed
+& "C:\Games\Star Wars Jedi Power Battles\OpenJPB.exe" --quickload fed
 ```
 
 Headless validation and framebuffer capture are also supported:
 
 ```powershell
-& "C:\Games\Star Wars Jedi Power Battles\jpb_pc_game.exe" `
+& "C:\Games\Star Wars Jedi Power Battles\OpenJPB.exe" `
   --headless --quickload fed --frames 360 --framebuffer-size 1920 1080 `
   --output frame.ppm
 ```
