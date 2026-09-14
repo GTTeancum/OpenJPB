@@ -10,6 +10,11 @@ from pathlib import Path
 import re
 import shutil
 
+# Legacy patcher's ICON_INDEX_MAP (DLL WLT slots), not NEW_ICON_SLOTS'
+# older executable table offsets. Keep concept-art slots untouched natively.
+SABER_ICONS = {0xb2:'Blue',0xb3:'Green',0xb4:'Purple',0xb5:'Red',0xb6:'Yellow',
+               **{0x9d+i:f'New{i+1}' for i in range(6)}}
+
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -76,6 +81,14 @@ def migrate(root, destination):
         portrait = entity.get('portrait', '')
         relative = Path('res/front') / portrait
         manifest['portrait'] = add(root / relative, relative)
+        if entity['isJedi']:
+            manifest['saberIcons'] = []
+            for key in ('defIcon', 'altIcon'):
+                icon = int(entity[key], 16)
+                if icon not in SABER_ICONS:
+                    raise ValueError(f'Unknown legacy saber icon {icon:#x} for {model}')
+                relative = Path('res/front/NewUI') / f'Lightsaber_{SABER_ICONS[icon]}.png'
+                manifest['saberIcons'].append(add(root / relative, relative))
         bmd = (root / f'res/MODEL/{model}.bmd').read_bytes()
         textures = {m.decode('ascii') for m in re.findall(rb'([A-Za-z0-9_]+)\.bmp', bmd, re.I)}
         for texture in sorted(textures):
@@ -107,8 +120,11 @@ def migrate(root, destination):
             raise ValueError(f'Preserving modified destination; conflict: {target}')
         unique[target] = (source, expected)
     for target, manifest in manifests:
-        if target.exists() and json.loads(target.read_text(encoding='utf-8')) != manifest:
-            raise ValueError(f'Preserving existing manifest; conflict: {target}')
+        if target.exists():
+            existing = json.loads(target.read_text(encoding='utf-8'))
+            prior = {k:v for k,v in manifest.items() if k != 'saberIcons'}
+            if existing != manifest and existing != prior:
+                raise ValueError(f'Preserving existing manifest; conflict: {target}')
     result = []
     for target, (source, expected) in unique.items():
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -117,7 +133,8 @@ def migrate(root, destination):
         result.append(dict(source=str(source), destination=str(target), sha256=expected))
     for target, manifest in manifests:
         target.parent.mkdir(parents=True, exist_ok=True)
-        if not target.exists(): target.write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
+        if not target.exists() or json.loads(target.read_text(encoding='utf-8')) != manifest:
+            target.write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
     if not progress_target.exists():
         progress_target.write_text(json.dumps(imported, indent=2) + '\n', encoding='utf-8')
     return dict(packages=len(manifests), files=len(result), copies=result, importedProgress=str(progress_target))

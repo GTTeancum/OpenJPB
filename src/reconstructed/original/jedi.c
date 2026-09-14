@@ -878,7 +878,9 @@ int jedi_GetAwardFlags(int player_number, int points)
 int jedi_GetColorSprite(uint64_t player_id)
 {
     const JPBModCharacter *mod = jpb_ModCharacterById((int)player_id);
-    if (mod != NULL) return mod->isJedi ? (int)mod->icons[2] : -1;
+    if (mod != NULL) return !mod->isJedi ? -1 :
+        jpb_ModSaberIconPath((int)player_id) != NULL ?
+        JPB_MOD_SABER_ICON_BASE + (int)player_id : (int)mod->icons[2];
     if (player_id >= JPB_JEDI_COLOUR_COUNT) {
         return -1;
     }

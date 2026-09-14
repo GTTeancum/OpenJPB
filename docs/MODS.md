@@ -60,7 +60,8 @@ This is the manifest generated from the installed Kit Fisto configuration:
 - `animationDonor` supplies stock movement/combo behavior. `forceDonor` selects the Force recipe. Supported names are `obi_wan`, `qui_gon`, `mace`, `adi`, `plo`, `maul_p`, `amidala`, `panaka`, `ki_adi`, and `maul`. Custom CAD/CMB files must retain compatible motion and gameplay-event semantics; the manifest does not remap arbitrary rigs or animation events.
 - `isJedi` controls the native package's saber/Force capability. `hidden` removes it from selection while keeping the package available to saved games. `soundBank` names an inherited or packaged SFX bank.
 - `bmd`, `cad`, `cmb`, and `portrait` are required existing files, relative to the package directory.
-- `colors` and `icons` each contain three eight-digit hexadecimal strings: default, alternate, and current. Colors retain the engine's encoded values. Icons index the existing menu texture table (0–248); custom icon registration is not implemented.
+- `colors` and `icons` each contain three eight-digit hexadecimal strings: default, alternate, and current. Colors retain the engine's encoded values. Without `saberIcons`, icons index the existing menu texture table (0–248).
+- Optional `saberIcons` contains two existing package-relative image paths, default then alternate. For example: `"saberIcons": ["res/front/NewUI/Lightsaber_Green.png", "res/front/NewUI/Lightsaber_New6.png"]`. These are loaded separately from stock menu slots and follow the selected saber variant. Copy-only legacy migration now includes these files and upgrades otherwise unchanged old manifests with these paths; it does not overwrite unrelated package edits.
 
 ## Resource packages
 

@@ -78,11 +78,14 @@ enum {
     PC_HEADLESS_PHASE_CAPACITY = 128,
     PC_MOVIE_AUDIO_BUFFER_BYTES = 16384,
     PC_MOVIE_AUDIO_PREBUFFER_MS = 2000,
-    /* Maximum canonical publication set: white pair, 132 front-end records,
+    /* Maximum canonical publication set plus one portrait and two saber
+     * icons for every supported mod ID. Browsing must not exhaust the bank.
+     * White pair, 132 front-end records,
      * 15 level previews, 23 results portraits, and 77 controller/KBM records. Duplicate paths are
      * coalesced by the cache, but capacity must not depend on that. */
     PC_MENU_TEXTURE_CAPACITY =
-        2 + JPB_MENU_TEXTURE_ENTRY_COUNT + 15 + 23 + 77,
+        2 + JPB_MENU_TEXTURE_ENTRY_COUNT + 15 + 23 + 77 +
+        3 * (JPB_MOD_LAST_ID - JPB_MOD_FIRST_ID + 1),
     PC_MENU_TEXTURE_PATH_CAPACITY = 1024
 };
 
@@ -594,6 +597,13 @@ static int pc_apply_player_saber_color_mode(
 
     if (mode == PC_PLAYER_SABER_COLOR_CURRENT) {
         return 1;
+    }
+    {
+        const JPBModCharacter *mod = jpb_ModCharacterById(player_model);
+        if (mod != NULL) {
+            int slot = mode == PC_PLAYER_SABER_COLOR_LEGACY ? 1 : 0;
+            return jpb_ModSelectColor(player_model, slot);
+        }
     }
     if (player_model < 0 ||
         index >= gJediColourArrayLength ||
@@ -1643,6 +1653,70 @@ static int pc_configure_default_assets(PcDefaultAssets *assets)
             sizeof(assets->enemyBmd),
             directory,
             "res\\MODEL\\battle_d.bmd");
+}
+
+static uint64_t pc_identity_bytes(uint64_t hash, const void *data, size_t size)
+{
+    const unsigned char *bytes = (const unsigned char *)data;
+    size_t i;
+    for (i = 0; i < size; ++i) hash = (hash ^ bytes[i]) * UINT64_C(1099511628211);
+    return hash;
+}
+
+/* Compare rendered geometry with the package on disk, independent of pointer
+ * relocation. A donor ID or a successfully opened path is not identity proof. */
+static uint64_t pc_identity_node(const JPBBmdView *view, const geomData *node,
+                                uint64_t hash, int depth)
+{
+    JPBBmdGeometryView geometry;
+    int i;
+    if (depth > JPB_BMD_NODE_CAPACITY) return 0;
+    hash = pc_identity_bytes(hash, node->name, sizeof(node->name));
+    hash = pc_identity_bytes(hash, &node->id, sizeof(node->id));
+    hash = pc_identity_bytes(hash, &node->trans, sizeof(node->trans));
+    hash = pc_identity_bytes(hash, &node->numFaces, 3 * sizeof(int32_t));
+    if (node->numFaces > 0) {
+        if (jpb_BmdGetGeometry(view, node, &geometry) != JPB_BMD_OK) return 0;
+        hash = pc_identity_bytes(hash, geometry.packed_vertices,
+                                 geometry.total_vertex_count * sizeof(uint32_t));
+        hash = pc_identity_bytes(hash, geometry.face_uvs,
+                                 geometry.face_count * sizeof(faceUV));
+    }
+    for (i = 0; i < node->numChildren; ++i) {
+        const geomData *child = (const geomData *)(view->payload +
+            (size_t)node->aChildren[i] * sizeof(geomData));
+        hash = pc_identity_node(view, child, hash, depth + 1);
+        if (!hash) return 0;
+    }
+    return hash;
+}
+
+static void pc_review_mod_identity(const JPBGameRuntime *runtime)
+{
+    const JPBModCharacter *mod = jpb_ModPlayer(0);
+    JPBBmdView expected;
+    void *storage;
+    uint64_t actual, wanted;
+    PcPlayerSaberDiagnostics saber;
+    if (mod == NULL || runtime->bmdView.root == NULL) return;
+    storage = malloc(JPB_BMD_REFERENCE_CAPACITY);
+    if (storage == NULL) return;
+    actual = pc_identity_node(&runtime->bmdView, runtime->bmdView.root,
+                              UINT64_C(14695981039346656037), 0);
+    wanted = jpb_BmdLoadFile(mod->bmd, storage, JPB_BMD_REFERENCE_CAPACITY,
+                            &expected) == JPB_BMD_OK
+        ? pc_identity_node(&expected, expected.root,
+                           UINT64_C(14695981039346656037), 0) : 0;
+    jpb_PCLog("mod-identity id=%s actual=%016llx expected=%016llx match=%d",
+        mod->id, (unsigned long long)actual, (unsigned long long)wanted,
+        actual != 0 && actual == wanted);
+    pc_collect_player_saber_diagnostics(runtime, runtime->player, &saber);
+    jpb_PCLog("mod-saber id=%s color=%08x expected=%08x core=%zu attached=%zu unmatched=%zu",
+        mod->id, (unsigned)saber.outerColor,
+        (unsigned)((mod->colors[2] & 0xffffffu) | 0x7f000000u),
+        saber.matchedCoreDrawCount, saber.matchedAttachmentDrawCount,
+        saber.unmatchedAttachmentDrawCount);
+    free(storage);
 }
 
 static int pc_configure_player_assets(
@@ -13543,6 +13617,8 @@ int main(int argc, char **argv)
         PC_PLAYER_SABER_COLOR_CURRENT;
     int player_two_model = 1;
     const char *output_path = NULL;
+    const char *session_review_prefix = NULL;
+    unsigned session_attack_frames = 0;
     const char *load_screen_output_path = NULL;
     int frame_limit = 0;
     int frame_count = 0;
@@ -14510,6 +14586,9 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[index], "--output") == 0 &&
                    index + 1 < argc) {
             output_path = argv[++index];
+        } else if (strcmp(argv[index], "--session-review-prefix") == 0 &&
+                   index + 1 < argc) {
+            session_review_prefix = argv[++index];
         } else if (strcmp(
                        argv[index], "--load-screen-output") == 0 &&
                    index + 1 < argc) {
@@ -17619,7 +17698,40 @@ int main(int argc, char **argv)
                     }
                 }
                 ++presentation_frame_count;
+                if (session_review_prefix != NULL && input.scriptedInput &&
+                    !title_active && !GameStruct.inMenuFlag && runtime.player != NULL) {
+                    uint32_t attacks = input.observedGameplayPlayerBits[0] &
+                        (JPB_PAD_COMBO_NORTH | JPB_PAD_COMBO_SOUTH | JPB_PAD_COMBO_WEST);
+                    int motion = pc_player_active_motion_index(runtime.player);
+                    if (attacks != 0 && motion >= 0 &&
+                        (motion == pc_player_authored_attack_motion(runtime.player, attacks) ||
+                         pc_player_is_authored_combo_motion(runtime.player, motion, attacks)))
+                        ++session_attack_frames;
+                }
                 ++frame_count;
+                if (session_review_prefix != NULL && input.scriptedInput) {
+                    int phase, boundary = 0;
+                    for (phase = 0; phase < input.phaseCount; ++phase) {
+                        boundary += input.phases[phase].frames;
+                        if (frame_count == boundary) {
+                            char capture_path[1024];
+                            snprintf(capture_path, sizeof(capture_path),
+                                "%s-%03d.ppm", session_review_prefix, phase);
+                            if (!title_active && !presented_movie_frame)
+                                jpb_PCD3D11PresenterReadbackGameplay(presenter, &framebuffer);
+                            pc_write_ppm(capture_path, &framebuffer);
+                            jpb_PCLog("session-review phase=%d frame=%d title=%d menu=%u selected=%d package=%d",
+                                phase, frame_count, title_active,
+                                (unsigned)menuVars.menuMode[menuVars.menuModeSP & 7u],
+                                (int)GameStruct.ModelSelect[0],
+                                jpb_ModPlayerModel(0, GameStruct.ModelSelect[0]));
+                            if (!title_active && !presented_movie_frame)
+                                pc_review_mod_identity(&runtime);
+                            jpb_PCLog("session-combat phase=%d attack_frames=%u",
+                                phase, session_attack_frames);
+                        }
+                    }
+                }
             }
             if (presentation_frame_count != 0) {
                 LARGE_INTEGER loop_finished;
@@ -18701,6 +18813,10 @@ int main(int argc, char **argv)
         }
         if (result == JPB_GAME_RUNTIME_OK &&
             observed_attack_bits != 0 &&
+            /* A long user-driven session can finish with an automatic block
+             * or hit reaction after a valid attack. Retain witnessed attack
+             * frames instead of requiring that attack to be the final state. */
+            !(session_review_prefix != NULL && session_attack_frames != 0) &&
             /* Classic uses LB (logical block) as its Force modifier while
              * Modern uses LT. A fixed LT exclusion misclassified valid
              * Classic Force motions as failed ordinary attacks. */
@@ -18736,7 +18852,7 @@ int main(int argc, char **argv)
         }
         if (result == JPB_GAME_RUNTIME_OK &&
             (input.validateCombat ||
-             runtime.combatHitCount != 0) &&
+             (input.headless && runtime.combatHitCount != 0)) &&
             (!input.headless ||
              enemy_cad_path == NULL ||
              (input.observedGameplayPlayerBits[0] &

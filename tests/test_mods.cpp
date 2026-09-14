@@ -61,6 +61,25 @@ int main(){
         write(pack/"mod.json",manifest);check(jpb_ModsLoad(root.string().c_str(),error,sizeof(error))==1);
         check(jpb_ModsCount()==1&&jpb_ModDonor(115)==2&&jpb_ModDonor(47)==47);
         check(jpb_ModCharacterById(115)->forceDonor==4);
+        auto iconManifest=manifest;
+        iconManifest.insert(iconManifest.size()-1,",\"saberIcons\":[\"res/front/default.png\",\"res/front/alternate.png\"]");
+        write(pack/"res/front/default.png","default");write(pack/"res/front/alternate.png","alternate");
+        write(pack/"mod.json",iconManifest);check(jpb_ModsLoad(root.string().c_str(),error,sizeof(error)));
+        check(jedi_GetColorSprite(115)==JPB_MOD_SABER_ICON_BASE+115);
+        check(fs::equivalent(jpb_ModSaberIconPath(115),pack/"res/front/default.png"));
+        check(jpb_ModToggleColor(115));
+        check(fs::equivalent(jpb_ModSaberIconPath(115),pack/"res/front/alternate.png"));
+        auto staleIcon=iconManifest;
+        auto currentColor=staleIcon.find("00000001\"]");
+        staleIcon.replace(currentColor,8,"00000002");
+        write(pack/"mod.json",staleIcon);check(jpb_ModsLoad(root.string().c_str(),error,sizeof(error)));
+        check(fs::equivalent(jpb_ModSaberIconPath(115),pack/"res/front/alternate.png"));
+        check(jpb_ModSelectColor(115,0));
+        check(fs::equivalent(jpb_ModSaberIconPath(115),pack/"res/front/default.png"));
+        fs::remove(pack/"res/front/alternate.png");
+        check(!jpb_ModsLoad(root.string().c_str(),error,sizeof(error)));
+        check(jpb_ModsCount()==1); // Invalid icon cannot replace the active registry.
+        write(pack/"mod.json",manifest);check(jpb_ModsLoad(root.string().c_str(),error,sizeof(error)));
         check_mod_force(2,160,137,9);
         auto maulManifest=manifest;auto donorPos=maulManifest.find("\"animationDonor\":\"mace\"");
         maulManifest.replace(donorPos,std::strlen("\"animationDonor\":\"mace\""),"\"animationDonor\":\"maul\"");

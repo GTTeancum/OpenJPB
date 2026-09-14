@@ -8758,6 +8758,8 @@ static const char *newMenu_CharacterName(int model)
 }
 static _Material *newMenu_MaterialAt(int texture)
 {
+    const char *saber_icon = jpb_ModSaberIconPath(texture - JPB_MOD_SABER_ICON_BASE);
+    if (saber_icon != NULL) return _LoadTexture((char *)saber_icon, TT_FRONT_PLAYER, 0);
     const JPBModCharacter *mod = jpb_ModCharacterById(texture - JPB_MOD_PORTRAIT_BASE);
     if (mod != NULL) return _LoadTexture((char *)mod->portrait, TT_FRONT_PLAYER, 0);
     if (texture < 0 || texture >= (int)(sizeof(menuTextures) / sizeof(menuTextures[0]))) return NULL;

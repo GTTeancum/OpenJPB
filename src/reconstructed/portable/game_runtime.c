@@ -7948,6 +7948,7 @@ int jpb_GameRuntimeTitleFrame(
     JPBSoftwareFramebuffer *framebuffer)
 {
     unsigned menu_mode;
+    unsigned initial_menu_mode = menuVars.menuMode[menuVars.menuModeSP & 7u];
 
     if (runtime == NULL || framebuffer == NULL ||
         framebuffer->pixels == NULL ||
@@ -8002,6 +8003,7 @@ int jpb_GameRuntimeTitleFrame(
            runtime->textDrawDroppedCount == 0 &&
            (runtime->textDrawCount != 0 ||
             runtime->screenDrawCount != 0 ||
+            menu_mode != initial_menu_mode ||
             menu_mode == 0x13 || menu_mode == 0x66)
         ? JPB_GAME_RUNTIME_OK
         : JPB_GAME_RUNTIME_RENDER_FAILED;

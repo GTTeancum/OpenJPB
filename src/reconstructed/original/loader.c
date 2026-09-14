@@ -399,6 +399,12 @@ static playerObject *loader_CreateCharacter(
     sceneObject *pScene;
     playerObject *pPlayer = NULL;
 
+    /* Single-player builds an inactive second hierarchy from P1's already
+     * relocated BMD. It must reuse P1's registration name, not the stock
+     * donor name, or material handles are interpreted as texture strings. */
+    if (ID == 1 && GameStruct.NumPlayers != 2 && LevelSelect != 0x0c) {
+        mod = jpb_ModPlayer(0);
+    }
     if (mod != NULL && mod->animationDonor == type) {
         /* Cache names are engine-owned, bounded and distinct from stock.
          * Asset stems may be shared or exceed the cache's 31-byte limit. */
@@ -989,6 +995,13 @@ static char *loader_LoadJediCAD(int jedi)
         path = (char *)resource_getPathWithExtension(
             "turret_a", JPB_RESOURCE_ANIMATION, "cad");
     }
+    {
+        const JPBModCharacter *mod = jpb_ModPlayer(jedi);
+        if (mod != NULL && mod->animationDonor == model &&
+            LevelSelect != 8 && LevelSelect != 12) {
+            path = (char *)mod->cad;
+        }
+    }
     return file_LoadFile2PoolFunc(
                path,
                &size,
@@ -1012,6 +1025,12 @@ static void loader_LoadJediCMB(int jedi, playerObject *player)
     if (player->playerID == 0x4f) {
         path = (char *)resource_getPathWithExtension(
             sModelNames[53], JPB_RESOURCE_COMBO, "cmb");
+    }
+    {
+        const JPBModCharacter *mod = jpb_ModPlayer(jedi);
+        if (mod != NULL && mod->animationDonor == model) {
+            path = (char *)mod->cmb;
+        }
     }
     size = file_LoadFile(path, player->paCombos);
     if (size == 0) {
@@ -1401,6 +1420,12 @@ static geomData *loader_loadJediBMD(int pnum)
     if (model == 0x4f) {
         fullFilePath = resource_getPathWithExtension(
             sModelNames[10], JPB_RESOURCE_MODEL, "bmd");
+    }
+    {
+        const JPBModCharacter *mod = jpb_ModPlayer(pnum);
+        if (mod != NULL && mod->animationDonor == model) {
+            fullFilePath = mod->bmd;
+        }
     }
     pModelBuffer = (geomData *)(void *)(
         file_LoadFile2PoolFunc(

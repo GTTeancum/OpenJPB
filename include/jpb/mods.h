@@ -5,13 +5,14 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-enum { JPB_MOD_PATH = 1024, JPB_MOD_FIRST_ID = 115, JPB_MOD_LAST_ID = 254 };
+enum { JPB_MOD_PATH = 1024, JPB_MOD_FIRST_ID = 115, JPB_MOD_LAST_ID = 254, JPB_MOD_SABER_ICON_BASE = 2000 };
 typedef struct JPBModCharacter {
     int modelId, animationDonor, forceDonor, isJedi, hidden;
     int legacyHighestLevel, legacySkillPercent;
     char id[96], name[128], model[64], soundBank[64];
     char bmd[JPB_MOD_PATH], cad[JPB_MOD_PATH], cmb[JPB_MOD_PATH], portrait[JPB_MOD_PATH];
     uint32_t colors[3], icons[3];
+    char saberIcons[2][JPB_MOD_PATH];
 } JPBModCharacter;
 /* Loading is transactional: a malformed enabled package rejects the set. */
 int jpb_ModsLoad(const char *game_root, char *error, size_t error_size);
@@ -41,6 +42,8 @@ const JPBModCharacter *jpb_ModCharacterAt(size_t index);
 int jpb_ModDonor(int model_id);
 int jpb_ModLastSelectable(int stock_last);
 int jpb_ModToggleColor(int model_id);
+int jpb_ModSelectColor(int model_id, int alternate);
+const char *jpb_ModSaberIconPath(int model_id);
 /* Runtime slots retain package identity while stock combat uses its donor ID. */
 void jpb_ModSetPlayer(int player, int model_id);
 const JPBModCharacter *jpb_ModPlayer(int player);

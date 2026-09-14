@@ -172,6 +172,11 @@ extern "C" int jpb_ModsLoad(const char *game_root,char *error,size_t error_size)
                 if(!identifier(c.soundBank))throw std::runtime_error("invalid sound bank");
                 auto asset=[&](const char *key){auto path=contained(package,j.at(key).str());if(!fs::is_regular_file(path))throw std::runtime_error("missing asset: "+path.string());return path.u8string();};
                 copy(c.bmd,asset("bmd"));copy(c.cad,asset("cad"));copy(c.cmb,asset("cmb"));copy(c.portrait,asset("portrait"));
+                if(j.object.count("saberIcons")){
+                    const auto &paths=j.at("saberIcons");
+                    if(paths.kind!=Json::Array||paths.array.size()!=2)throw std::runtime_error("expected default and alternate saber icon paths");
+                    for(int i=0;i<2;++i){auto path=contained(package,paths.array[i].str());if(!fs::is_regular_file(path))throw std::runtime_error("missing saber icon: "+path.string());copy(c.saberIcons[i],path.u8string());}
+                }
                 const auto &colors=j.at("colors");const auto &icons=j.at("icons");if(colors.kind!=Json::Array||icons.kind!=Json::Array||colors.array.size()!=3||icons.array.size()!=3)throw std::runtime_error("expected three colors/icons");
                 for(int i=0;i<3;++i){c.colors[i]=color(colors.array[i]);c.icons[i]=color(icons.array[i]);if(c.icons[i]>=249)throw std::runtime_error("saber icon outside menu texture table");}
                 next.push_back(c);
@@ -207,6 +212,17 @@ extern "C" int jpb_ModPlayerModel(int player,int fallback){auto c=jpb_ModPlayer(
 extern "C" int jpb_ModLastSelectable(int stock_last){return characters.empty()?stock_last:std::max(stock_last,characters.back().modelId);}
 extern "C" int jpb_ModToggleColor(int id){
     for(auto &c:characters)if(c.modelId==id){if(!c.isJedi)return 0;int next=c.colors[2]==c.colors[0]?1:0;c.colors[2]=c.colors[next];c.icons[2]=c.icons[next];return 1;}return 0;
+}
+extern "C" int jpb_ModSelectColor(int id,int alternate){
+    if(alternate<0||alternate>1)return 0;
+    for(auto &c:characters)if(c.modelId==id){if(!c.isJedi)return 0;c.colors[2]=c.colors[alternate];c.icons[2]=c.icons[alternate];return 1;}return 0;
+}
+extern "C" const char *jpb_ModSaberIconPath(int id){
+    auto c=jpb_ModCharacterById(id);if(!c||!c->isJedi)return nullptr;
+    // Some legacy configs persisted the color but left the current icon stale.
+    // Prefer the selected color; use the icon only for equal-color variants.
+    int slot=c->colors[2]==c->colors[1]&&(c->colors[0]!=c->colors[1]||c->icons[2]==c->icons[1])?1:0;
+    return c->saberIcons[slot][0]?c->saberIcons[slot]:nullptr;
 }
 
 namespace {
