@@ -92,11 +92,11 @@ int jpb_SbasicGosubDepth(void);
 #endif
 
 #if defined(__cplusplus)
-static_assert(sizeof(for_stack) == 24, "for_stack layout changed");
-static_assert(sizeof(label) == 24, "label layout changed");
+static_assert(sizeof(for_stack) == (sizeof(void *) == 8 ? 24 : 16), "for_stack layout changed");
+static_assert(sizeof(label) == (sizeof(void *) == 8 ? 24 : 16), "label layout changed");
 #else
-_Static_assert(sizeof(for_stack) == 24, "for_stack layout changed");
-_Static_assert(sizeof(label) == 24, "label layout changed");
+_Static_assert(sizeof(for_stack) == (sizeof(void *) == 8 ? 24 : 16), "for_stack layout changed");
+_Static_assert(sizeof(label) == (sizeof(void *) == 8 ? 24 : 16), "label layout changed");
 #endif
 
 #endif

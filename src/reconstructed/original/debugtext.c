@@ -329,6 +329,13 @@ void Draw3dText(
             color,
             text,
             jpb_draw3d_text_user_data);
+#if defined(JPB_XBOX)
+        /* The nxdk runtime captures 3-D text here; its WHook has no 3-D
+           font-atlas submitter. The legacy SDLTextWriteScale3D path would
+           reopen a font face for each rising score-popup size and then
+           discard the draw, stalling combat for 30+ ms repeatedly. */
+        return;
+#endif
     }
 
     position.vx = (int16_t)(int)x;

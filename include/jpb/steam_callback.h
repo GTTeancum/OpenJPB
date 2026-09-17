@@ -87,7 +87,7 @@ protected:
     func_t m_Func;
 };
 
-static_assert(sizeof(CCallbackBase) == 16,
+static_assert(sizeof(CCallbackBase) == (sizeof(void *) == 8 ? 16 : 12),
     "CCallbackBase must match the x64 Steam/PDB layout");
 
 #endif

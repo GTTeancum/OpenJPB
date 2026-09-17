@@ -104,13 +104,13 @@ JPB_SABRE_STATIC_ASSERT(sizeof(SabreEdge) == 292, "SabreEdge layout changed");
 JPB_SABRE_STATIC_ASSERT(offsetof(SabreEdge, brightness) == 32, "SabreEdge.brightness layout changed");
 JPB_SABRE_STATIC_ASSERT(offsetof(SabreEdge, flag) == 34, "SabreEdge.flag layout changed");
 JPB_SABRE_STATIC_ASSERT(offsetof(SabreEdge, aSubs) == 36, "SabreEdge.aSubs layout changed");
-JPB_SABRE_STATIC_ASSERT(sizeof(Sabre) == 14048, "Sabre layout changed");
+JPB_SABRE_STATIC_ASSERT(sizeof(Sabre) == (sizeof(void *) == 8 ? 14048 : 14036), "Sabre layout changed");
 JPB_SABRE_STATIC_ASSERT(offsetof(Sabre, pPrims) == 14016, "Sabre.pPrims layout changed");
-JPB_SABRE_STATIC_ASSERT(offsetof(Sabre, head) == 14032, "Sabre.head layout changed");
-JPB_SABRE_STATIC_ASSERT(offsetof(Sabre, tail) == 14034, "Sabre.tail layout changed");
-JPB_SABRE_STATIC_ASSERT(offsetof(Sabre, length) == 14036, "Sabre.length layout changed");
-JPB_SABRE_STATIC_ASSERT(offsetof(Sabre, decay) == 14038, "Sabre.decay layout changed");
-JPB_SABRE_STATIC_ASSERT(offsetof(Sabre, sabreFlags) == 14040, "Sabre.sabreFlags layout changed");
+JPB_SABRE_STATIC_ASSERT(offsetof(Sabre, head) == (sizeof(void *) == 8 ? 14032 : 14024), "Sabre.head layout changed");
+JPB_SABRE_STATIC_ASSERT(offsetof(Sabre, tail) == (sizeof(void *) == 8 ? 14034 : 14026), "Sabre.tail layout changed");
+JPB_SABRE_STATIC_ASSERT(offsetof(Sabre, length) == (sizeof(void *) == 8 ? 14036 : 14028), "Sabre.length layout changed");
+JPB_SABRE_STATIC_ASSERT(offsetof(Sabre, decay) == (sizeof(void *) == 8 ? 14038 : 14030), "Sabre.decay layout changed");
+JPB_SABRE_STATIC_ASSERT(offsetof(Sabre, sabreFlags) == (sizeof(void *) == 8 ? 14040 : 14032), "Sabre.sabreFlags layout changed");
 
 #undef JPB_SABRE_STATIC_ASSERT
 

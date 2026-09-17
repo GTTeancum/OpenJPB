@@ -94,3 +94,7 @@ python tools/migrate_legacy_mods.py "C:\Games\Star Wars Jedi Power Battles" --re
 The default destination is the game's `mods` directory; `--destination` can select a staging directory. Migration copies runtime assets and verifies source/destination SHA-256 hashes. It preserves legacy files, refuses conflicting destination content, and can be rerun when existing output matches. Blender source projects are not copied by this command. The original legacy progress sidecar is copied unchanged to `mods/_legacy/jpb_progress.json`; `mods/legacy-progress.json` maps its aggregate level/skill values to stable package IDs. Absent entries receive the proxy’s documented defaults (new Jedi 10/100; other characters 0/0). These are unlock baselines, not invented completion flags, scores or upgrade history.
 
 The installed configuration contains 14 additional characters. Their staged conversion includes BMD/CAD/CMB, portraits, referenced textures and shared animation Huffman tables. The deployed executable discovers these packages automatically. Blender authoring and additional-level registration remain separate work; this release supports existing-format character/animation resources and level-resource overlays.
+
+## Shared package design (next version)
+
+The [version-2 design](DLC_PACKAGE_DESIGN.md) covers shared animation libraries, characters and registered levels, stable export IDs, dependencies, compatibility and Blender publishing. It is a completed design, not a supported runtime format yet. Continue using version 1 for installed packages.

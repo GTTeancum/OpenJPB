@@ -20,11 +20,19 @@
 #include <string.h>
 #include <wctype.h>
 
+#if defined(_WIN32) || defined(JPB_STATIC_SDL_TTF)
+#define JPB_HAVE_SDL_TTF 1
+#endif
+
 #ifdef _WIN32
 typedef void *HMODULE;
 __declspec(dllimport) HMODULE __stdcall LoadLibraryA(const char *);
 __declspec(dllimport) void *__stdcall GetProcAddress(
     HMODULE, const char *);
+#elif defined(JPB_STATIC_SDL_TTF)
+typedef void *HMODULE;
+extern void *jpb_StaticTextGetSymbol(const char *name);
+#define GetProcAddress(module, name) jpb_StaticTextGetSymbol(name)
 #endif
 
 enum {
@@ -40,7 +48,7 @@ typedef struct JPBPortableTextFont {
     int loaded;
 } JPBPortableTextFont;
 
-#ifdef _WIN32
+#ifdef JPB_HAVE_SDL_TTF
 typedef struct JPBPortableSDLColor {
     uint8_t r;
     uint8_t g;
@@ -125,7 +133,7 @@ static JPB_SDL_GetError portable_SDL_GetError;
 static JPBPortableTextFont portableTextFonts[
     JPB_PORTABLE_TEXT_FONT_CACHE_CAPACITY];
 
-#ifdef _WIN32
+#ifdef JPB_HAVE_SDL_TTF
 static int portable_text_copy_game_root(
     const char *font_path,
     char *root,
@@ -177,6 +185,10 @@ static int portable_text_load_sdl_ttf(const char *font_path)
         return portableTextTTFModule != NULL;
     }
     portableTextSDLLoadAttempted = 1;
+#ifdef JPB_STATIC_SDL_TTF
+    (void)font_path;
+    portableTextSDLModule = portableTextTTFModule = (void *)1;
+#else
     if (portable_text_copy_game_root(font_path, root, sizeof(root))) {
         snprintf(dll_path, sizeof(dll_path), "%s\\SDL2.dll", root);
         portableTextSDLModule = LoadLibraryA(dll_path);
@@ -192,6 +204,7 @@ static int portable_text_load_sdl_ttf(const char *font_path)
     if (portableTextTTFModule == NULL) {
         return 0;
     }
+#endif
     portable_TTF_Init = (JPB_TTF_Init)GetProcAddress(
         portableTextTTFModule, "TTF_Init");
     portable_TTF_OpenFont = (JPB_TTF_OpenFont)GetProcAddress(
@@ -339,7 +352,7 @@ static _TTF_Font *portable_text_load_font(
         if (strlen(path) >= sizeof(font->sourcePath)) {
             return NULL;
         }
-#ifndef _WIN32
+#ifndef JPB_HAVE_SDL_TTF
         return NULL;
 #else
         if (!portable_text_load_sdl_ttf(path)) {
@@ -362,7 +375,7 @@ static _TTF_Font *portable_text_load_font(
 static int portable_text_set_font_size(
     _TTF_Font *font, int point_size)
 {
-#ifdef _WIN32
+#ifdef JPB_HAVE_SDL_TTF
     JPBPortableTextFont *portable_font =
         (JPBPortableTextFont *)(void *)font;
     int result;
@@ -393,7 +406,7 @@ static int portable_text_glyph_metrics(
     int *maximum_y,
     int *advance)
 {
-#ifdef _WIN32
+#ifdef JPB_HAVE_SDL_TTF
     JPBPortableTextFont *portable_font =
         (JPBPortableTextFont *)(void *)font;
 
@@ -423,7 +436,7 @@ static int portable_text_glyph_metrics(
 
 static const char *portable_text_get_error(void)
 {
-#ifdef _WIN32
+#ifdef JPB_HAVE_SDL_TTF
     if (portable_SDL_GetError == NULL) {
         abort();
     }
@@ -451,7 +464,7 @@ static JPBPortableTextFont *portable_text_get_font(
         font_style, point_size);
 }
 
-#ifdef _WIN32
+#ifdef JPB_HAVE_SDL_TTF
 static int portable_text_prepare_sdl_font(
     JPBPortableTextFont *font,
     int point_size)
@@ -584,7 +597,7 @@ static int portable_text_control_advance(
     if (font == NULL || advance_out == NULL) {
         return 0;
     }
-#ifdef _WIN32
+#ifdef JPB_HAVE_SDL_TTF
     if (font->sdlFont != NULL &&
         portable_text_prepare_sdl_font(font, point_size) &&
         portable_TTF_GlyphMetrics != NULL) {
@@ -648,7 +661,7 @@ int jpb_PortableTextPrepareControlGlyphs(
     if (font == NULL) {
         return -1;
     }
-#ifndef _WIN32
+#ifndef JPB_HAVE_SDL_TTF
     return -1;
 #else
     if (!portable_text_measure_sdl(
@@ -762,7 +775,7 @@ static uint32_t portable_text_blend(
         output_blue;
 }
 
-#ifdef _WIN32
+#ifdef JPB_HAVE_SDL_TTF
 typedef struct JPBPortableGlyphBitmap {
     struct JPBPortableGlyphBitmap *next;
     void *sdlFont;
@@ -1082,6 +1095,87 @@ static int portable_text_draw_sdl(
 }
 #endif
 
+int jpb_PortableTextEmitUiPointSize(
+    const uint16_t *text, uint32_t color, int mode,
+    int x, int y, int point_size, int font_style, int language,
+    int clip_enabled, int clip_left, int clip_top,
+    int clip_right, int clip_bottom,
+    JPBPortableTextUiGlyphHook hook, void *user_data)
+{
+#ifndef JPB_HAVE_SDL_TTF
+    (void)text; (void)color; (void)mode; (void)x; (void)y;
+    (void)point_size; (void)font_style; (void)language;
+    (void)clip_enabled; (void)clip_left; (void)clip_top;
+    (void)clip_right; (void)clip_bottom; (void)hook; (void)user_data;
+    return 0;
+#else
+    JPBPortableTextFont *font;
+    const uint16_t *cursor;
+    int text_width, text_height, baseline_offset;
+    int text_max_y = 0;
+    int pen_x, pen_y = y;
+    if (text == NULL || hook == NULL) return 0;
+    font = portable_text_get_font(font_style, language, point_size);
+    if (font == NULL || !portable_text_prepare_sdl_font(font, point_size) ||
+        !portable_text_measure_sdl(font, text, point_size,
+            &text_width, &text_height, &baseline_offset)) return 0;
+    (void)text_height;
+    (void)baseline_offset;
+    pen_x = x;
+    if ((mode & 0x7f) == 1) pen_x -= text_width;
+    else if ((mode & 0x7f) == 2) pen_x -= text_width / 2;
+    for (cursor = text; *cursor; ++cursor) {
+        JPBPortableGlyphBitmap *glyph;
+        if (*cursor == L'\n') continue;
+        glyph = portable_text_get_glyph_bitmap(font, point_size, *cursor);
+        if (glyph != NULL && text_max_y < glyph->maxY)
+            text_max_y = glyph->maxY;
+    }
+    {
+        int line_x = pen_x;
+        for (cursor = text; *cursor; ++cursor) {
+            JPBPortableGlyphBitmap *glyph;
+            float left, top, right, bottom;
+            float clipped_left, clipped_top, clipped_right, clipped_bottom;
+            float u0, v0, u1, v1;
+            if (*cursor == L'\n') {
+                pen_x = line_x;
+                pen_y = (int)((float)pen_y + (float)text_max_y * 1.5f);
+                continue;
+            }
+            glyph = portable_text_get_glyph_bitmap(font, point_size, *cursor);
+            if (glyph == NULL) continue;
+            left = (float)pen_x;
+            top = (float)(pen_y + text_max_y - glyph->maxY);
+            right = left + glyph->width;
+            bottom = top + glyph->height;
+            pen_x += glyph->advance - glyph->minX;
+            if (glyph->width <= 0 || glyph->height <= 0) continue;
+            clipped_left = left;
+            clipped_top = top;
+            clipped_right = right;
+            clipped_bottom = bottom;
+            if (clip_enabled) {
+                if (clipped_left < clip_left) clipped_left = (float)clip_left;
+                if (clipped_top < clip_top) clipped_top = (float)clip_top;
+                if (clipped_right > clip_right) clipped_right = (float)clip_right;
+                if (clipped_bottom > clip_bottom) clipped_bottom = (float)clip_bottom;
+            }
+            if (clipped_left >= clipped_right ||
+                clipped_top >= clipped_bottom) continue;
+            u0 = (clipped_left - left) / (right - left);
+            v0 = (clipped_top - top) / (bottom - top);
+            u1 = (clipped_right - left) / (right - left);
+            v1 = (clipped_bottom - top) / (bottom - top);
+            if (!hook(user_data, &glyph->texture,
+                    clipped_left, clipped_top, clipped_right, clipped_bottom,
+                    u0, v0, u1, v1, color)) return 0;
+        }
+    }
+    return 1;
+#endif
+}
+
 int jpb_PortableTextDrawPointSize(
     const uint16_t *text,
     uint32_t color,
@@ -1123,7 +1217,7 @@ int jpb_PortableTextDrawPointSize(
     if (font == NULL) {
         return 0;
     }
-#ifndef _WIN32
+#ifndef JPB_HAVE_SDL_TTF
     return 0;
 #else
     if (!portable_text_measure_sdl(
@@ -1257,7 +1351,7 @@ int jpb_PortableTextEmit3DPointSize(
     JPBPortableText3DGlyphHook glyph_hook,
     void *user_data)
 {
-#ifndef _WIN32
+#ifndef JPB_HAVE_SDL_TTF
     (void)text;
     (void)color;
     (void)mode;
@@ -1354,7 +1448,7 @@ void jpb_PortableTextShutdown(void)
 {
     size_t index;
 
-#ifdef _WIN32
+#ifdef JPB_HAVE_SDL_TTF
     while (portableTextGlyphBitmaps != NULL) {
         JPBPortableGlyphBitmap *next = portableTextGlyphBitmaps->next;
 
@@ -1366,7 +1460,7 @@ void jpb_PortableTextShutdown(void)
     for (index = 0;
          index < JPB_PORTABLE_TEXT_FONT_CACHE_CAPACITY;
          ++index) {
-#ifdef _WIN32
+#ifdef JPB_HAVE_SDL_TTF
         if (portable_TTF_CloseFont != NULL &&
             portableTextFonts[index].sdlFont != NULL) {
             portable_TTF_CloseFont(portableTextFonts[index].sdlFont);

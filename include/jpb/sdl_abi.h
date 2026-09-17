@@ -71,25 +71,25 @@ typedef struct SDL_Texture SDL_Texture;
 
 #if defined(__cplusplus)
 static_assert(sizeof(SDL_Rect) == 16, "SDL_Rect PDB layout changed");
-static_assert(sizeof(SDL_Surface) == 96, "SDL_Surface PDB layout changed");
-static_assert(sizeof(SDL_AudioSpec) == 32,
+static_assert(sizeof(SDL_Surface) == (sizeof(void *) == 8 ? 96 : 60), "SDL_Surface PDB layout changed");
+static_assert(sizeof(SDL_AudioSpec) == 16 + 2 * sizeof(void *),
               "SDL_AudioSpec PDB layout changed");
 static_assert(sizeof(SDL_KeyboardEvent) == 32,
               "SDL_KeyboardEvent PDB layout changed");
 static_assert(sizeof(SDL_Event) == 56, "SDL_Event PDB layout changed");
 static_assert(
-    offsetof(SDL_Surface, pixels) == 32,
+    offsetof(SDL_Surface, pixels) == (sizeof(void *) == 8 ? 32 : 20),
     "SDL_Surface.pixels offset changed");
 #else
 _Static_assert(sizeof(SDL_Rect) == 16, "SDL_Rect PDB layout changed");
-_Static_assert(sizeof(SDL_Surface) == 96, "SDL_Surface PDB layout changed");
-_Static_assert(sizeof(SDL_AudioSpec) == 32,
+_Static_assert(sizeof(SDL_Surface) == (sizeof(void *) == 8 ? 96 : 60), "SDL_Surface PDB layout changed");
+_Static_assert(sizeof(SDL_AudioSpec) == 16 + 2 * sizeof(void *),
                "SDL_AudioSpec PDB layout changed");
 _Static_assert(sizeof(SDL_KeyboardEvent) == 32,
                "SDL_KeyboardEvent PDB layout changed");
 _Static_assert(sizeof(SDL_Event) == 56, "SDL_Event PDB layout changed");
 _Static_assert(
-    offsetof(SDL_Surface, pixels) == 32,
+    offsetof(SDL_Surface, pixels) == (sizeof(void *) == 8 ? 32 : 20),
     "SDL_Surface.pixels offset changed");
 #endif
 

@@ -33,6 +33,19 @@ typedef void (*JPBPortableText3DGlyphHook)(
     _Material *material,
     const JPBScreenPolyVertex *vertices);
 
+typedef int (*JPBPortableTextUiGlyphHook)(
+    void *user_data, const JPBSoftwareTexture *texture,
+    float left, float top, float right, float bottom,
+    float u0, float v0, float u1, float v1, uint32_t color);
+
+/* Submit cached SDL_ttf glyph bitmaps in output-pixel coordinates. */
+int jpb_PortableTextEmitUiPointSize(
+    const uint16_t *text, uint32_t color, int mode,
+    int x, int y, int point_size, int font_style, int language,
+    int clip_enabled, int clip_left, int clip_top,
+    int clip_right, int clip_bottom,
+    JPBPortableTextUiGlyphHook hook, void *user_data);
+
 /*
  * Exact matched-PC font selection performed by getFontFile. Language 6 uses
  * the three Simplified-Chinese faces; the remaining languages use the shared

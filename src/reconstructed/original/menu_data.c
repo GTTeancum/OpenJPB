@@ -418,7 +418,7 @@ const JPBMenuTextureEntry menuTextureList[JPB_MENU_TEXTURE_ENTRY_COUNT] = {
 };
 
 _Static_assert(
-    sizeof(JPBMenuTextureEntry) == 16,
+    sizeof(JPBMenuTextureEntry) == (sizeof(void *) == 8 ? 16 : 12),
     "menuTextureList record layout changed");
 
 /*

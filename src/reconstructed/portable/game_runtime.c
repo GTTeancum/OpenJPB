@@ -1739,6 +1739,9 @@ static int game_runtime_bind_relocated_bmd_view(
     view->node_count = node_count;
     view->geometry_streams_relocated = 1;
     view->material_handles_relocated = 1;
+#if defined(JPB_XBOX)
+    view->load_generation = jpb_BmdNextLoadGeneration();
+#endif
     return 1;
 }
 
@@ -2872,7 +2875,12 @@ try_png:
     memcpy(path, png_path, strlen(png_path) + 1);
 
 image_ready:
+    /* Rendering owns decoded pixels. The encoded TGA buffer is only used
+       during decoding; retaining it duplicates each resident texture. */
+    free(entry->fileData);
+    entry->fileData = NULL;
     entry->texture.pixels = entry->pixels;
+    entry->texture.sourceName = entry->name;
     entry->texture.width = (size_t)decoded_width;
     entry->texture.height = (size_t)decoded_height;
     entry->texture.stridePixels = (size_t)decoded_width;
@@ -3883,7 +3891,8 @@ int jpb_GameRuntimeInitWithPlayerAssets(
      * shared white material through this same retail-style cache. */
     runtime->uiTextureCache =
         game_runtime_create_texture_cache(
-            JPB_RESIDENT_SPRITE_COUNT + 1,
+            /* Resident effects, white, controller bank and in-game panels. */
+            JPB_RESIDENT_SPRITE_COUNT + 1 + 32,
             level_index);
     resident_sprite_path = resource_getPath(
         "a_credit.tga",
@@ -6214,6 +6223,37 @@ int jpb_GameRuntimeRenderLoadScreen(
     return result;
 }
 
+void jpb_GameRuntimeUseUiTextureCache(JPBGameRuntime *runtime)
+{
+    if (runtime != NULL) {
+        jpb_TextureSetPlatformHooks(game_runtime_load_material_texture,
+            NULL, runtime->uiTextureCache);
+    }
+}
+
+#if defined(JPB_XBOX)
+void jpb_GameRuntimeSetGameplayHudScreenDrawHook(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeScreenDrawRenderHook hook,
+    void *user_data)
+{
+    if (runtime != NULL) {
+        runtime->gameplayHudScreenDrawHook = hook;
+        runtime->gameplayHudScreenDrawUserData = user_data;
+    }
+}
+void jpb_GameRuntimeSetGameplayHudTextDrawHook(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeTextDrawRenderHook hook,
+    void *user_data)
+{
+    if (runtime != NULL) {
+        runtime->gameplayHudTextDrawHook = hook;
+        runtime->gameplayHudTextDrawUserData = user_data;
+    }
+}
+#endif
+
 void jpb_GameRuntimeSetGameplayCompositeHook(
     JPBGameRuntime *runtime,
     JPBGameRuntimeGameplayCompositeHook hook,
@@ -6421,6 +6461,10 @@ static void game_runtime_scene_after_physics(
 static void game_runtime_scene_after_level_owner(
     void *user_data, MATRIX *view)
 {
+#if defined(JPB_XBOX)
+    extern volatile unsigned jpb_XboxGpuStage;
+    jpb_XboxGpuStage=100;
+#endif
     JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
     JPBGameRuntimeFrameContext *context =
         game_runtime_active_frame;
@@ -6444,6 +6488,9 @@ static void game_runtime_scene_after_level_owner(
                 view,
                 (JPBLevelFbxMeshPass)pass,
                 0);
+#if defined(JPB_XBOX)
+            jpb_XboxGpuStage=110+(unsigned)pass;
+#endif
 
             if (render_result != JPB_SOFTWARE_RENDER_OK) {
                 game_runtime_set_failure_detail(
@@ -6479,6 +6526,9 @@ static void game_runtime_scene_after_level_owner(
         context,
         &runtime->profileLastSceneLevelOwnerSeconds,
         &runtime->profileMaxSceneLevelOwnerSeconds);
+#if defined(JPB_XBOX)
+    jpb_XboxGpuStage=120;
+#endif
 }
 
 static void game_runtime_observe_player_lifecycle(
@@ -6946,6 +6996,9 @@ static int game_runtime_render_level_mesh_pass(
 static void game_runtime_scene_after_world(
     void *user_data, MATRIX *view)
 {
+#if defined(JPB_XBOX)
+    extern volatile unsigned jpb_XboxGpuStage;
+#endif
     JPBGameRuntime *runtime = (JPBGameRuntime *)user_data;
     JPBGameRuntimeFrameContext *context =
         game_runtime_active_frame;
@@ -6987,6 +7040,13 @@ static void game_runtime_scene_after_world(
                    view,
                    JPB_LEVEL_FBX_PASS_OPAQUE,
                    clear_color)
+             : runtime->levelRenderHook != NULL
+             ? runtime->levelRenderHook(
+                   runtime->levelRenderUserData, NULL,
+                   JPB_LEVEL_FBX_PASS_OPAQUE, &runtime->scene, view,
+                   context->framebuffer, clear_color,
+                   game_runtime_resolve_texture, runtime->worldTextureCache,
+                   &context->depthBuffer, context->stats)
              : jpb_SoftwareRenderJpxMaterialized(
                    &runtime->scene,
                    view,
@@ -6998,13 +7058,22 @@ static void game_runtime_scene_after_world(
                    context->stats)) == JPB_SOFTWARE_RENDER_OK
             ? JPB_GAME_RUNTIME_OK
             : JPB_GAME_RUNTIME_RENDER_FAILED;
+#if defined(JPB_XBOX)
+    jpb_XboxGpuStage=64;
+#endif
     context->sharedDepthReady =
         context->result == JPB_GAME_RUNTIME_OK;
+#if defined(JPB_XBOX)
+    jpb_XboxGpuStage=65;
+#endif
     game_runtime_record_duration(
         &runtime->profileWorldSeconds,
         &runtime->profileLastWorldSeconds,
         &runtime->profileMaxWorldSeconds,
         game_runtime_wall_seconds() - started);
+#if defined(JPB_XBOX)
+    jpb_XboxGpuStage=66;
+#endif
     if (context->sharedDepthReady) {
         runtime->worldLoadedTextures =
             runtime->worldTextureCache->loadedTextureCount;
@@ -7018,6 +7087,9 @@ static void game_runtime_scene_after_world(
         context,
         &runtime->profileLastWorldSeconds,
         &runtime->profileMaxWorldSeconds);
+#if defined(JPB_XBOX)
+    jpb_XboxGpuStage=67;
+#endif
 }
 
 static int game_runtime_scene_render_model(
@@ -7456,6 +7528,12 @@ int jpb_GameRuntimeFrame(
     JPBSoftwareFramebuffer *framebuffer,
     JPBSoftwareRenderStats *stats)
 {
+#if defined(JPB_XBOX)
+    extern volatile unsigned jpb_XboxRuntimeStage;
+    extern volatile unsigned jpb_XboxMenuMs;
+    extern volatile unsigned jpb_XboxGameStageMs;
+    jpb_XboxRuntimeStage=0;
+#endif
     uint32_t controls;
     uint32_t held_controls;
     float direction_x = 0.0f;
@@ -7580,14 +7658,16 @@ int jpb_GameRuntimeFrame(
     if (runtime->orbitDistance > runtime->maximumOrbitDistance) {
         runtime->orbitDistance = runtime->maximumOrbitDistance;
     }
-    /*
-     * The matched executable initializes these gameplay scales to 0.5 and
-     * 0x800 and never writes them again. Wall-clock deltaTime remains live
-     * for the PC front end, while gameplay advances at its authored 60 Hz
-     * fixed step.
-     */
+    /* The matched PC executable advances gameplay by 0.5 / 0x800 at 60 Hz.
+     * Xbox may render below 60 Hz, so scale that step by elapsed wall time.
+     * Keep the PC's canonical fixed step unchanged. */
+#if defined(JPB_XBOX)
+    fGlobalFrameRate = elapsed_seconds * 30.0f;
+    gGlobalFrameRate = (int)(elapsed_seconds * 122880.0f + 0.5f);
+#else
     fGlobalFrameRate = 0.5f;
     gGlobalFrameRate = 0x800;
+#endif
     if (runtime->authoredMotionReady && player1InputType == 0) {
         /*
          * Keyboard input has no analog provider, so derive its camera-relative
@@ -7643,6 +7723,9 @@ int jpb_GameRuntimeFrame(
     stage_started = game_runtime_wall_seconds();
     context.sceneStageStarted = stage_started;
     scene_middleRender(NULL);
+#if defined(JPB_XBOX)
+    jpb_XboxRuntimeStage=1;
+#endif
     game_runtime_record_duration(
         NULL,
         &runtime->profileLastSceneSeconds,
@@ -7654,10 +7737,27 @@ int jpb_GameRuntimeFrame(
     }
     ++runtime->profileFrameCount;
     game_runtime_observe_player_lifecycle(runtime);
+#if defined(JPB_XBOX)
+    jpb_XboxRuntimeStage=2;
+#endif
     /* game_OneGameLoop calls this unconditionally at retail RVA 0xA8C56.
      * Its non-menu branch owns pause/abort dispatch; active menus draw here. */
+#if defined(JPB_XBOX)
+    stage_started = game_runtime_wall_seconds();
+#endif
     menu_mainLoop();
+#if defined(JPB_XBOX)
+    jpb_XboxMenuMs = (unsigned)((game_runtime_wall_seconds() - stage_started) * 1000.0);
+    jpb_XboxRuntimeStage=3;
+#endif
+#if defined(JPB_XBOX)
+    stage_started = game_runtime_wall_seconds();
+#endif
     game_runStage();
+#if defined(JPB_XBOX)
+    jpb_XboxGameStageMs = (unsigned)((game_runtime_wall_seconds() - stage_started) * 1000.0);
+    jpb_XboxRuntimeStage=4;
+#endif
     view = scene_GetSceneMatrix();
     runtime->camera = gCamera;
     /*
@@ -7749,7 +7849,13 @@ int jpb_GameRuntimeFrame(
         runtime->powerupCollectedCount = collected_count;
     }
     effects_started = game_runtime_wall_seconds();
+#if defined(JPB_XBOX)
+    jpb_XboxRuntimeStage=5;
+#endif
     game_runtime_flush_deferred_screen_polys(&context);
+#if defined(JPB_XBOX)
+    jpb_XboxRuntimeStage=6;
+#endif
     game_runtime_record_duration(
         &runtime->profileScreenPolySeconds,
         &runtime->profileLastScreenPolySeconds,
@@ -7759,7 +7865,35 @@ int jpb_GameRuntimeFrame(
         return context.result;
     }
     enemy_CheckTeleport();
+#if defined(JPB_XBOX)
+    jpb_XboxRuntimeStage=7;
+#endif
     if (runtime->gameplayCompositeHook != NULL) {
+#if defined(JPB_XBOX)
+        if (runtime->gameplayHudScreenDrawHook != NULL &&
+            runtime->gameplayHudTextDrawHook != NULL) {
+            double hud_started = game_runtime_wall_seconds();
+            /* The complete gameplay HUD is now submitted by the two GPU
+               hooks. No pixels enter the software HUD surface, so its
+               black/white reconstruction and uploads are redundant. */
+            if (!runtime->gameplayHudScreenDrawHook(
+                    runtime->gameplayHudScreenDrawUserData,
+                    runtime->screenDraws, runtime->screenDrawCount,
+                    framebuffer) ||
+                !runtime->gameplayHudTextDrawHook(
+                    runtime->gameplayHudTextDrawUserData,
+                    runtime->textDraws, runtime->textDrawCount,
+                    framebuffer)) {
+                return JPB_GAME_RUNTIME_RENDER_FAILED;
+            }
+            game_runtime_record_duration(
+                &runtime->profileHudSeconds,
+                &runtime->profileLastHudSeconds,
+                &runtime->profileMaxHudSeconds,
+                game_runtime_wall_seconds() - hud_started);
+        } else
+#endif
+        {
         uint64_t hud_hash =
             game_runtime_hash_hud_draws(runtime, framebuffer);
         int hud_cache_hit =
@@ -7806,6 +7940,12 @@ int jpb_GameRuntimeFrame(
                     runtime->textDraws[draw_index].compositePixels;
             }
             stage_started = game_runtime_wall_seconds();
+#if defined(JPB_XBOX)
+            if (runtime->gameplayHudScreenDrawHook != NULL) {
+                if (runtime->gameplayHudTextDrawHook == NULL)
+                    game_runtime_flush_text_draws(runtime, framebuffer);
+            } else
+#endif
             (void)game_runtime_flush_ordered_title_draws(runtime, framebuffer, 0);
             game_runtime_record_duration(
                 &runtime->profileHudSeconds,
@@ -7848,6 +7988,12 @@ int jpb_GameRuntimeFrame(
             stage_started = game_runtime_wall_seconds();
             game_runtime_clear_framebuffer(
                 framebuffer, UINT32_C(0x00ffffff));
+#if defined(JPB_XBOX)
+            if (runtime->gameplayHudScreenDrawHook != NULL) {
+                if (runtime->gameplayHudTextDrawHook == NULL)
+                    game_runtime_flush_text_draws(runtime, framebuffer);
+            } else
+#endif
             (void)game_runtime_flush_ordered_title_draws(runtime, framebuffer, 0);
             game_runtime_record_duration(
                 &runtime->profileHudReplaySeconds,
@@ -7911,11 +8057,28 @@ int jpb_GameRuntimeFrame(
                 framebuffer, stats)) {
             return JPB_GAME_RUNTIME_RENDER_FAILED;
         }
+#if defined(JPB_XBOX)
+        if (runtime->gameplayHudScreenDrawHook != NULL &&
+            !runtime->gameplayHudScreenDrawHook(
+                runtime->gameplayHudScreenDrawUserData,
+                runtime->screenDraws,
+                runtime->screenDrawCount,
+                framebuffer)) {
+            return JPB_GAME_RUNTIME_RENDER_FAILED;
+        }
+        if (runtime->gameplayHudTextDrawHook != NULL &&
+            !runtime->gameplayHudTextDrawHook(
+                runtime->gameplayHudTextDrawUserData,
+                runtime->textDraws, runtime->textDrawCount, framebuffer)) {
+            return JPB_GAME_RUNTIME_RENDER_FAILED;
+        }
+#endif
         game_runtime_record_duration(
             &runtime->profileCompositeFinishSeconds,
             &runtime->profileLastCompositeFinishSeconds,
             &runtime->profileMaxCompositeFinishSeconds,
             game_runtime_wall_seconds() - stage_started);
+        }
     } else {
         {
             double hud_started = game_runtime_wall_seconds();
@@ -7935,6 +8098,9 @@ int jpb_GameRuntimeFrame(
         game_runtime_wall_seconds() - effects_started);
     /* Return post-frame state to its exact PDB-named scene owner. */
     scene_postRender();
+#if defined(JPB_XBOX)
+    jpb_XboxRuntimeStage=8;
+#endif
     game_runtime_record_duration(
         NULL,
         &runtime->profileLastFrameSeconds,

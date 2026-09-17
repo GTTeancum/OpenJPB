@@ -6,7 +6,7 @@ struct _d3derr {
     char *errmsg;
 };
 
-static_assert(sizeof(_d3derr) == 16, "_d3derr PDB layout changed");
+static_assert(sizeof(_d3derr) == (sizeof(void *) == 8 ? 16 : 8), "_d3derr PDB layout changed");
 
 extern _d3derr alldderrs[199];
 

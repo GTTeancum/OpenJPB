@@ -485,6 +485,39 @@ static int test_block_buster_nearby_cube_scan(void)
     return 0;
 }
 
+static int test_restore_events_empty_and_wrapped(void)
+{
+    int32_t ring[8] = {0};
+    int32_t map[12] = {0};
+    int32_t *old_start = eventlist_start;
+    int32_t *old_next = eventlist_next;
+    int32_t *old_end = eventlist_end;
+
+    eventlist_start = ring;
+    eventlist_end = ring + 8;
+    eventlist_next = ring + 2;
+    restore_events(map);
+    CHECK(eventlist_next == ring + 2);
+    CHECK(map[2] == 0);
+
+    ring[0] = 2; ring[1] = 0x1234;
+    ring[2] = 4; ring[3] = 0x5678;
+    ring[4] = 6; ring[5] = 0x1111;
+    ring[6] = 8; ring[7] = 0x2222;
+    eventlist_next = ring; /* The last write wrapped the full ring. */
+    restore_events(map);
+    CHECK(*(uint16_t *)(void *)&map[2] == 0x1234);
+    CHECK(*(uint16_t *)(void *)&map[4] == 0x5678);
+    CHECK(*(uint16_t *)(void *)&map[6] == 0x1111);
+    CHECK(*(uint16_t *)(void *)&map[8] == 0x2222);
+    CHECK(eventlist_next == ring + 2);
+
+    eventlist_start = old_start;
+    eventlist_next = old_next;
+    eventlist_end = old_end;
+    return 0;
+}
+
 int main(void)
 {
     if (test_makecull_planes() != 0) {
@@ -515,6 +548,9 @@ int main(void)
         return 1;
     }
     if (test_block_buster_nearby_cube_scan() != 0) {
+        return 1;
+    }
+    if (test_restore_events_empty_and_wrapped() != 0) {
         return 1;
     }
 

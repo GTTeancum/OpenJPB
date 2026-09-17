@@ -100,15 +100,15 @@ static_assert(offsetof(UserAchievementStored_t, m_nCurProgress) == 140,
     "UserAchievementStored_t progress offset must match the PDB");
 static_assert(sizeof(UserAchievementStored_t) == 152,
     "UserAchievementStored_t must match the PDB");
-static_assert(offsetof(Achievement_t, m_pchAchievementID) == 8,
+static_assert(offsetof(Achievement_t, m_pchAchievementID) == (sizeof(void *) == 8 ? 8 : 4),
     "Achievement_t ID pointer offset must match the PDB");
-static_assert(offsetof(Achievement_t, m_bAchieved) == 400,
+static_assert(offsetof(Achievement_t, m_bAchieved) == (sizeof(void *) == 8 ? 400 : 392),
     "Achievement_t achieved offset must match the PDB");
-static_assert(sizeof(Achievement_t) == 408,
+static_assert(sizeof(Achievement_t) == (sizeof(void *) == 8 ? 408 : 400),
     "Achievement_t must match PDB type 0x7BDE");
 
 #if defined(_MSC_VER) && _ITERATOR_DEBUG_LEVEL == 0
-static_assert(sizeof(CSteamAchievements) == 136,
+static_assert(sizeof(CSteamAchievements) == (sizeof(void *) == 8 ? 136 : 96),
     "CSteamAchievements must match PDB type 0x7DAA");
 #endif
 

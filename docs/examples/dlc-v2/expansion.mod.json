@@ -1,0 +1,81 @@
+{
+  "version": 2,
+  "id": "example-courtyard",
+  "packageVersion": "1.0.0",
+  "name": "Example Courtyard Expansion",
+  "enabled": true,
+  "requires": ["packages-v2", "characters-v1", "animations-v1", "levels-v1"],
+  "dependencies": [
+    {
+      "id": "example-jedi-motion",
+      "minVersion": "1.0.0",
+      "maxVersion": "2.0.0"
+    }
+  ],
+  "exports": {
+    "assets": [
+      {
+        "id": "stone",
+        "format": "png",
+        "file": "res/textures/courtyard_stone.png"
+      }
+    ],
+    "characters": [
+      {
+        "id": "guardian",
+        "name": "Courtyard Guardian",
+        "bmd": "res/MODEL/guardian.bmd",
+        "portrait": "res/front/NewUI/CharacterSelectImages/guardian.png",
+        "animation": "example-jedi-motion:animation/guardian",
+        "behavior": "base:character/obi_wan",
+        "forceBehavior": "base:character/obi_wan",
+        "soundBank": "base:sound-bank/obi_wan",
+        "isJedi": true,
+        "hidden": false,
+        "saberVariants": [
+          {
+            "id": "default",
+            "color": "0001c03c",
+            "icon": "res/front/NewUI/Lightsaber_Green.png"
+          },
+          {
+            "id": "alternate",
+            "color": "1bf07400",
+            "icon": "res/front/NewUI/Lightsaber_Alternate.png"
+          }
+        ]
+      }
+    ],
+    "levels": [
+      {
+        "id": "courtyard",
+        "name": "Courtyard Duel",
+        "modes": ["versus"],
+        "players": {"min": 2, "max": 2},
+        "preview": "res/front/courtyard.png",
+        "visual": {
+          "format": "fbx",
+          "file": "res/level/jpx/courtyard/courtyard.fbx"
+        },
+        "world": "res/level/W3D/courtyard.j3d",
+        "camera": "res/level/courtyard.cam",
+        "pickups": {"twoPlayer": "res/level/courtyard_2p.pwr"},
+        "starts": {
+          "player1": "2ca43d43-7940-4a8a-bfbf-1b2c56428701",
+          "player2": "2ca43d43-7940-4a8a-bfbf-1b2c56428702"
+        },
+        "completion": "2ca43d43-7940-4a8a-bfbf-1b2c56428703",
+        "next": null,
+        "saveRevision": 1
+      }
+    ]
+  },
+  "bindings": [
+    {
+      "owner": "example-courtyard:level/courtyard",
+      "resource": "res/textures/courtyard_stone.png",
+      "asset": "example-courtyard:asset/stone"
+    }
+  ],
+  "overlays": []
+}

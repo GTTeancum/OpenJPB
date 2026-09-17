@@ -1213,12 +1213,13 @@ void restore_events(int32_t *mapbase)
     int32_t *cursor = initial_next;
 
     for (;;) {
-        int32_t *entry = cursor - 2;
+        int32_t *entry = cursor == eventlist_start
+            ? eventlist_end - 2
+            : cursor - 2;
         uint32_t byte_offset;
 
-        if (entry == eventlist_start) {
-            entry = eventlist_end - 2;
-        }
+        /* A full ring may leave the next cursor exactly at its start. The
+           first pair is the empty-list terminator until overwritten. */
         byte_offset = (uint32_t)entry[0] << 2;
         if (byte_offset == 0) {
             break;

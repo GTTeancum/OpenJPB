@@ -87,17 +87,17 @@ int console_ScreenClearCommand(
 #endif
 
 JPB_COLORB_STATIC_ASSERT(sizeof(DVECTOR) == 4, "DVECTOR PDB layout changed");
-JPB_COLORB_STATIC_ASSERT(sizeof(cb_header) == 16,
+JPB_COLORB_STATIC_ASSERT(sizeof(cb_header) == (sizeof(void *) == 8 ? 16 : 8),
                          "cb_header PDB layout changed");
-JPB_COLORB_STATIC_ASSERT(offsetof(cb_circle, color) == 28,
+JPB_COLORB_STATIC_ASSERT(offsetof(cb_circle, color) == (sizeof(void *) == 8 ? 28 : 24),
                          "cb_circle.color PDB offset changed");
-JPB_COLORB_STATIC_ASSERT(sizeof(cb_circle) == 32,
+JPB_COLORB_STATIC_ASSERT(sizeof(cb_circle) == (sizeof(void *) == 8 ? 32 : 28),
                          "cb_circle PDB layout changed");
-JPB_COLORB_STATIC_ASSERT(sizeof(cb_line2d) == 32,
+JPB_COLORB_STATIC_ASSERT(sizeof(cb_line2d) == (sizeof(void *) == 8 ? 32 : 28),
                          "cb_line2d PDB layout changed");
-JPB_COLORB_STATIC_ASSERT(sizeof(cb_move) == 24,
+JPB_COLORB_STATIC_ASSERT(sizeof(cb_move) == (sizeof(void *) == 8 ? 24 : 20),
                          "cb_move PDB layout changed");
-JPB_COLORB_STATIC_ASSERT(sizeof(cb_point) == 32,
+JPB_COLORB_STATIC_ASSERT(sizeof(cb_point) == (sizeof(void *) == 8 ? 32 : 28),
                          "cb_point PDB layout changed");
 
 #undef JPB_COLORB_STATIC_ASSERT

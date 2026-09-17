@@ -228,11 +228,11 @@ const CVECTOR *jpb_PrimGetBackgroundColor(int surface);
 #define JPB_PRIM_STATIC_ASSERT(condition, message) _Static_assert(condition, message)
 #endif
 
-JPB_PRIM_STATIC_ASSERT(sizeof(SramFloorStack) == 168, "SramFloorStack layout changed");
+JPB_PRIM_STATIC_ASSERT(sizeof(SramFloorStack) == (sizeof(void *) == 8 ? 168 : 156), "SramFloorStack layout changed");
 JPB_PRIM_STATIC_ASSERT(offsetof(SramFloorStack, pCurrentPrim) == 72, "SramFloorStack.pCurrentPrim layout changed");
-JPB_PRIM_STATIC_ASSERT(offsetof(SramFloorStack, pCurrentSabrePrim) == 80, "SramFloorStack.pCurrentSabrePrim layout changed");
-JPB_PRIM_STATIC_ASSERT(offsetof(SramFloorStack, countX) == 88, "SramFloorStack.countX layout changed");
-JPB_PRIM_STATIC_ASSERT(offsetof(SramFloorStack, direct) == 148, "SramFloorStack.direct layout changed");
+JPB_PRIM_STATIC_ASSERT(offsetof(SramFloorStack, pCurrentSabrePrim) == (sizeof(void *) == 8 ? 80 : 76), "SramFloorStack.pCurrentSabrePrim layout changed");
+JPB_PRIM_STATIC_ASSERT(offsetof(SramFloorStack, countX) == (sizeof(void *) == 8 ? 88 : 80), "SramFloorStack.countX layout changed");
+JPB_PRIM_STATIC_ASSERT(offsetof(SramFloorStack, direct) == (sizeof(void *) == 8 ? 148 : 140), "SramFloorStack.direct layout changed");
 JPB_PRIM_STATIC_ASSERT(sizeof(SRECT) == 8, "SRECT layout changed");
 JPB_PRIM_STATIC_ASSERT(sizeof(DR_ENV) == 64, "DR_ENV layout changed");
 JPB_PRIM_STATIC_ASSERT(sizeof(DR_MODE) == 12, "DR_MODE layout changed");
@@ -247,9 +247,9 @@ JPB_PRIM_STATIC_ASSERT(offsetof(POLY_GT4, tpage) == 26, "POLY_GT4.tpage layout c
 JPB_PRIM_STATIC_ASSERT(offsetof(POLY_GT4, u3) == 48, "POLY_GT4.u3 layout changed");
 JPB_PRIM_STATIC_ASSERT(offsetof(POLY_FT4, tpage) == 22, "POLY_FT4.tpage layout changed");
 JPB_PRIM_STATIC_ASSERT(offsetof(POLY_FT4, u3) == 36, "POLY_FT4.u3 layout changed");
-JPB_PRIM_STATIC_ASSERT(sizeof(TIM_IMAGE) == 40, "TIM_IMAGE layout changed");
+JPB_PRIM_STATIC_ASSERT(sizeof(TIM_IMAGE) == (sizeof(void *) == 8 ? 40 : 24), "TIM_IMAGE layout changed");
 JPB_PRIM_STATIC_ASSERT(offsetof(TIM_IMAGE, crect) == 8, "TIM_IMAGE.crect layout changed");
-JPB_PRIM_STATIC_ASSERT(offsetof(TIM_IMAGE, prect) == 24, "TIM_IMAGE.prect layout changed");
+JPB_PRIM_STATIC_ASSERT(offsetof(TIM_IMAGE, prect) == (sizeof(void *) == 8 ? 24 : 16), "TIM_IMAGE.prect layout changed");
 JPB_PRIM_STATIC_ASSERT(sizeof(primDrawingSurface) == 4628, "primDrawingSurface layout changed");
 JPB_PRIM_STATIC_ASSERT(offsetof(primDrawingSurface, disp) == 92, "primDrawingSurface.disp layout changed");
 JPB_PRIM_STATIC_ASSERT(offsetof(primDrawingSurface, aOT) == 368, "primDrawingSurface.aOT layout changed");

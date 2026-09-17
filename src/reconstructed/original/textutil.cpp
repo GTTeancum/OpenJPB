@@ -174,6 +174,12 @@ void ClearGlyphCache(void)
  */
 void ConvertToUTF16(const char *string, unsigned short **utfString)
 {
+#if defined(JPB_XBOX)
+    /* nxdk is built without C++ exceptions. Its platform adapter performs
+       the UTF-8 conversion with explicit error/allocation handling. */
+    extern void jpb_XboxConvertToUTF16(const char *, unsigned short **);
+    jpb_XboxConvertToUTF16(string, utfString);
+#else
     try
     {
         std::wstring_convert<
@@ -201,6 +207,7 @@ void ConvertToUTF16(const char *string, unsigned short **utfString)
         *utfString = static_cast<unsigned short *>(std::malloc(6));
         std::memcpy(*utfString, "ERROR", 6);
     }
+#endif
 }
 
 /* 0x102DB0, 864 bytes, global, 27 named locals
@@ -223,7 +230,7 @@ void SizeText(
 
     if (font == nullptr || string == nullptr ||
         width == nullptr || height == nullptr) {
-        std::printf(
+        ::printf(
             "[Font Atlas][Error] Invalid parameters, got urslef a nullpointer\n");
         return;
     }
@@ -237,7 +244,7 @@ void SizeText(
     *width = 0;
     *height = 0;
     if (jpb_set_font_size_hook(font, point_size) != 0) {
-        std::printf("[Font Atlas][Error] %s", jpb_get_error_hook());
+        ::printf("[Font Atlas][Error] %s", jpb_get_error_hook());
     }
 
     end = string;
@@ -274,7 +281,7 @@ void SizeText(
                     &minimum_y,
                     &maximum_y,
                     &advance) != 0) {
-                std::printf(
+                ::printf(
                     "[Font Atlas][Error] %s\n", jpb_get_error_hook());
                 continue;
             }

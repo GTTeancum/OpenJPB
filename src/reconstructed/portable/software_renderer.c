@@ -32,6 +32,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+
 enum {
     SOFTWARE_RENDER_MARGIN = 24,
     SOFTWARE_SCREEN_POLY_VERTEX_CAPACITY = 4,
@@ -72,7 +73,13 @@ typedef enum SoftwareJpxPass {
 typedef struct SoftwareModelDraw {
     const JPBBmdView *bmd;
     SoftwareDraw draw;
-    FVECTOR transformed[JPB_SOFTWARE_MODEL_VERTEX_CAPACITY];
+    FVECTOR *transformed;
+    FVECTOR *camera_transformed;
+    FVECTOR *screen_transformed;
+    uint8_t *screen_valid;
+#if defined(JPB_XBOX)
+    float *camera_inverse_depth;
+#endif
     JPBSoftwareTextureResolver resolveTexture;
     void *textureUserData;
     float *depthBuffer;
@@ -1459,12 +1466,10 @@ static int software_project_material_vertex(
     return 1;
 }
 
-static void software_camera_material_vertex(
+static void software_camera_position(
     SoftwareModelDraw *state,
     const FVECTOR *world,
-    const pairUV *uv,
-    const CVECTOR *color,
-    SoftwareCameraMaterialVertex *vertex)
+    FVECTOR *position)
 {
     FVECTOR source = *world;
 
@@ -1478,13 +1483,23 @@ static void software_camera_material_vertex(
     }
 
     fApplyMatrixFV(
-        state->draw.view, &source, &vertex->position);
-    vertex->position.vx +=
+        state->draw.view, &source, position);
+    position->vx +=
         (float)state->draw.view->t[0];
-    vertex->position.vy +=
+    position->vy +=
         (float)state->draw.view->t[1];
-    vertex->position.vz +=
+    position->vz +=
         (float)state->draw.view->t[2];
+}
+
+static void software_camera_material_vertex(
+    SoftwareModelDraw *state,
+    const FVECTOR *world,
+    const pairUV *uv,
+    const CVECTOR *color,
+    SoftwareCameraMaterialVertex *vertex)
+{
+    software_camera_position(state, world, &vertex->position);
     vertex->u = uv->u;
     vertex->v = uv->v;
     vertex->red = (float)color->r;
@@ -1524,9 +1539,13 @@ static size_t software_clip_project_material_polygon(
     const pairUV *uv,
     const CVECTOR *color,
     size_t vertex_count,
+    const SoftwareCameraMaterialVertex *precomputed_camera,
+    const FVECTOR *precomputed_screen,
     SoftwareMaterialVertex *projected)
 {
-    SoftwareCameraMaterialVertex camera[4];
+    SoftwareCameraMaterialVertex camera_storage[4];
+    const SoftwareCameraMaterialVertex *camera =
+        precomputed_camera != NULL ? precomputed_camera : camera_storage;
     SoftwareCameraMaterialVertex clipped[
         SOFTWARE_CLIPPED_POLYGON_CAPACITY];
     size_t clipped_count = 0;
@@ -1549,13 +1568,44 @@ static size_t software_clip_project_material_polygon(
         return vertex_count;
     }
 
-    for (vertex = 0; vertex < vertex_count; ++vertex) {
-        software_camera_material_vertex(
-            state,
-            &world[vertex],
-            &uv[vertex],
-            &color[vertex],
-            &camera[vertex]);
+    if (precomputed_camera != NULL && precomputed_screen != NULL) {
+        int all_inside = 1;
+        for (vertex = 0; vertex < vertex_count; ++vertex) {
+            if (precomputed_camera[vertex].position.vz < 1.0f) {
+                all_inside = 0;
+                break;
+            }
+        }
+        if (all_inside) {
+            for (vertex = 0; vertex < vertex_count; ++vertex) {
+                const SoftwareCameraMaterialVertex *source =
+                    &precomputed_camera[vertex];
+                const FVECTOR *screen = &precomputed_screen[vertex];
+                projected[vertex].x = screen->vx;
+                projected[vertex].y = screen->vy;
+                projected[vertex].depth = screen->vz;
+                projected[vertex].inverseDepth = 1.0f / screen->vz;
+                projected[vertex].clipDepth = 0.0f;
+                projected[vertex].u = source->u;
+                projected[vertex].v = source->v;
+                projected[vertex].red = source->red;
+                projected[vertex].green = source->green;
+                projected[vertex].blue = source->blue;
+                projected[vertex].alpha = source->alpha;
+            }
+            return vertex_count;
+        }
+    }
+
+    if (precomputed_camera == NULL) {
+        for (vertex = 0; vertex < vertex_count; ++vertex) {
+            software_camera_material_vertex(
+                state,
+                &world[vertex],
+                &uv[vertex],
+                &color[vertex],
+                &camera_storage[vertex]);
+        }
     }
     for (vertex = 0; vertex < vertex_count; ++vertex) {
         const SoftwareCameraMaterialVertex *from =
@@ -1783,31 +1833,84 @@ static int software_no_scale_camera_polygon_rejected(
     size_t vertex_count,
     int material_flags,
     int transparent,
-    int opaque_special_culling)
+    int opaque_special_culling,
+    SoftwareCameraMaterialVertex *camera_out,
+    const size_t *vertex_indices)
 {
     const float vertical_fov = 0.9250245094299316f;
     const float near_clip = 1.0f;
     const float far_clip = 10000.0f;
     SoftwareNoScaleClipVertex projected[4];
     float aspect;
-    float focal_scale;
+    static float focal_scale;
     size_t vertex;
 
     if (state == NULL || state->draw.view == NULL ||
         state->draw.framebuffer == NULL || world == NULL || uv == NULL ||
-        color == NULL || vertex_count < 3 || vertex_count > 4) {
+        color == NULL ||
+        vertex_count < 3 || vertex_count > 4) {
         return 1;
     }
     aspect = (float)state->draw.framebuffer->width /
         (float)state->draw.framebuffer->height;
-    focal_scale = 1.0f / tanf(vertical_fov * 0.5f);
+    if (focal_scale == 0.0f) {
+        focal_scale = 1.0f / tanf(vertical_fov * 0.5f);
+    }
     for (vertex = 0; vertex < vertex_count; ++vertex) {
         SoftwareCameraMaterialVertex camera;
         float reciprocal_depth;
+        size_t index = vertex_indices != NULL ? vertex_indices[vertex] : 0;
 
-        software_camera_material_vertex(
-            state, &world[vertex], &uv[vertex], &color[vertex], &camera);
+        if (state->camera_transformed != NULL && camera_out != NULL) {
+            camera = camera_out[vertex];
+        } else {
+            software_camera_material_vertex(
+                state, &world[vertex], &uv[vertex], &color[vertex], &camera);
+            if (camera_out != NULL) {
+                camera_out[vertex] = camera;
+            }
+        }
+        if (vertex_indices != NULL && state->screen_valid != NULL &&
+            camera.position.vz >= 1.0f) {
+            FVECTOR *screen = &state->screen_transformed[index];
+            if (!state->screen_valid[index]) {
+                if (jpb_ProjectPcGameplayCameraToViewport(
+                        &camera.position,
+                        (float)state->draw.framebuffer->width,
+                        (float)state->draw.framebuffer->height,
+                        screen) == 0) {
+                    state->screen_valid[index] = 1;
+                }
+            }
+            if (state->screen_valid[index]) {
+                projected[vertex].x =
+                    screen->vx * 2.0f /
+                    (float)state->draw.framebuffer->width - 1.0f;
+                projected[vertex].y =
+                    screen->vy * 2.0f /
+                    (float)state->draw.framebuffer->height - 1.0f;
+#if defined(JPB_XBOX)
+                reciprocal_depth = state->camera_inverse_depth != NULL
+                    ? state->camera_inverse_depth[index]
+                    : 1.0f / camera.position.vz;
+#else
+                reciprocal_depth = 1.0f / camera.position.vz;
+#endif
+                projected[vertex].z =
+                    far_clip / (far_clip - near_clip) -
+                    (near_clip * far_clip) /
+                    (far_clip - near_clip) * reciprocal_depth;
+                continue;
+            }
+        }
+#if defined(JPB_XBOX)
+        reciprocal_depth = vertex_indices != NULL &&
+            state->camera_inverse_depth != NULL
+            ? state->camera_inverse_depth[index]
+            : 1.0f / camera.position.vz;
+#else
         reciprocal_depth = 1.0f / camera.position.vz;
+#endif
         projected[vertex].x =
             camera.position.vx * focal_scale * reciprocal_depth / aspect;
         projected[vertex].y =
@@ -2191,6 +2294,12 @@ static void software_draw_material_triangle(
     const JPBSoftwareTexture *texture)
 {
     float area = software_edge(first, second, third->x, third->y);
+#if defined(JPB_XBOX)
+    if (state->draw.modelGeometry && state->triangleSink != NULL &&
+        area > -0.25f && area < 0.25f) {
+        return;
+    }
+#endif
     float minimum_x;
     float maximum_x;
     float minimum_y;
@@ -2561,6 +2670,8 @@ static int software_draw_material_strip(
                     uv_vertices,
                     color_vertices,
                     3,
+                    NULL,
+                    NULL,
                     projected);
             /*
              * CD3DApplication::CreatePipelineStateObject (RVA 0x315E0)
@@ -2655,6 +2766,23 @@ int jpb_SoftwareRenderJpxMaterialized(
     JPBSoftwareDepthBuffer *depth_buffer,
     JPBSoftwareRenderStats *stats)
 {
+    return jpb_SoftwareRenderJpxMaterializedToSink(
+        scene, view_matrix, framebuffer, clear_color, resolve_texture,
+        texture_user_data, depth_buffer, NULL, NULL, stats);
+}
+
+int jpb_SoftwareRenderJpxMaterializedToSink(
+    const JPBSoftwareJpxScene *scene,
+    MATRIX *view_matrix,
+    JPBSoftwareFramebuffer *framebuffer,
+    uint32_t clear_color,
+    JPBSoftwareTextureResolver resolve_texture,
+    void *texture_user_data,
+    JPBSoftwareDepthBuffer *depth_buffer,
+    JPBSoftwareTriangleSink triangle_sink,
+    void *triangle_user_data,
+    JPBSoftwareRenderStats *stats)
+{
     SoftwareModelDraw state;
     float span_x;
     float span_z;
@@ -2690,6 +2818,8 @@ int jpb_SoftwareRenderJpxMaterialized(
     }
 
     memset(&state, 0, sizeof(state));
+    state.triangleSink = triangle_sink;
+    state.triangleUserData = triangle_user_data;
     state.draw.scene = scene;
     state.draw.framebuffer = framebuffer;
     state.draw.view = view_matrix;
@@ -2922,7 +3052,7 @@ static int software_render_level_mesh_range(
                 }
                 projected_count =
                     software_clip_project_material_polygon(
-                        &state, world, uv, color, 3, projected);
+                        &state, world, uv, color, 3, NULL, NULL, projected);
                 ++state.draw.stats.triangles;
                 if (pass != JPB_LEVEL_FBX_PASS_OPAQUE) {
                     ++state.draw.stats.levelTransparentTriangles;
@@ -3019,6 +3149,7 @@ static int software_draw_model_node(
     uint32_t node_index = (uint32_t)node->id & NODE_INDEX_MASK;
     size_t vertex;
     size_t face;
+    size_t face_color_offset = 0;
     int child;
 
     fApplyMatrixFV(
@@ -3115,6 +3246,7 @@ static int software_draw_model_node(
     }
     fMulMatrix(&current.rotation, &local_rotation);
 
+
     /* render_RenderNode suppresses packets for model flag 0x10.
      * Script owners can remain active with visible scene roots while their
      * placeholder model is hidden. Player hierarchies still advance. */
@@ -3183,6 +3315,21 @@ static int software_draw_model_node(
         state->transformed[
             geometry.shared_vertex_count + vertex] =
                 transformed;
+        if (state->screen_valid != NULL) {
+            state->screen_valid[geometry.shared_vertex_count + vertex] = 0;
+        }
+        if (state->camera_transformed != NULL) {
+            software_camera_position(
+                state, &transformed,
+                &state->camera_transformed[
+                    geometry.shared_vertex_count + vertex]);
+#if defined(JPB_XBOX)
+            state->camera_inverse_depth[
+                geometry.shared_vertex_count + vertex] = 1.0f /
+                    state->camera_transformed[
+                        geometry.shared_vertex_count + vertex].vz;
+#endif
+        }
     }
 
     for (face = 0; face < geometry.face_count; ++face) {
@@ -3191,6 +3338,8 @@ static int software_draw_model_node(
         FVECTOR material_world[4];
         pairUV material_uv[4];
         CVECTOR material_color[4];
+        SoftwareCameraMaterialVertex material_camera[4];
+        size_t material_indices[4];
         int material_face_visible =
             state->depthBuffer != NULL;
         int material_flags = material != NULL
@@ -3202,24 +3351,46 @@ static int software_draw_model_node(
         float height = 0.0f;
         size_t corner;
 
+        /* BMD colors are packed face-by-face. Looking up each corner through
+           jpb_BmdFaceColor rescans every preceding face, making a model pass
+           quadratic in face count. Walk the validated color stream once. */
+        if (geometry.colors == NULL ||
+            face_color_offset + corners > geometry.corner_count) {
+            return JPB_SOFTWARE_RENDER_BMD_ERROR;
+        }
         for (corner = 0; corner < corners; ++corner) {
             size_t index;
             const pairUV *uv;
             const CVECTOR *color;
 
+#if defined(JPB_XBOX)
+            /* jpb_BmdGetGeometry has already validated every face index and
+             * UV span. Avoid repeating its generic checks for each corner of
+             * every animated face on the single-threaded Xbox draw path. */
+            if (geometry.face_encoding == JPB_BMD_FACE_SIGNED_16) {
+                int stored = geometry.faces[face].vertex[corner];
+                index = (size_t)(stored < 0 ? -stored : stored);
+            } else {
+                index = geometry.packed_faces[face].vertex[corner];
+            }
+            uv = &geometry.face_uvs[face].uv[corner];
+#else
             if (!jpb_BmdFaceVertexIndex(
                     &geometry, face, corner, &index)) {
                 return JPB_SOFTWARE_RENDER_BMD_ERROR;
             }
-            height += state->transformed[index].vy;
             uv = jpb_BmdFaceUv(&geometry, face, corner);
-            color =
-                jpb_BmdFaceColor(&geometry, face, corner);
+#endif
+            if (state->depthBuffer == NULL) {
+                height += state->transformed[index].vy;
+            }
+            color = &geometry.colors[face_color_offset + corner];
             if (uv == NULL || color == NULL) {
                 return JPB_SOFTWARE_RENDER_BMD_ERROR;
             }
             material_world[corner] =
                 state->transformed[index];
+            material_indices[corner] = index;
             material_uv[corner] = *uv;
             material_color[corner] = *color;
             if (resolved_texture != NULL &&
@@ -3241,9 +3412,29 @@ static int software_draw_model_node(
                     material_color[corner].b = UINT8_C(0x12);
                 }
             }
+            if (material_face_visible &&
+                state->camera_transformed != NULL) {
+                material_camera[corner].position =
+                    state->camera_transformed[index];
+                material_camera[corner].u = uv->u;
+                material_camera[corner].v = uv->v;
+                material_camera[corner].red =
+                    (float)material_color[corner].r;
+                material_camera[corner].green =
+                    (float)material_color[corner].g;
+                material_camera[corner].blue =
+                    (float)material_color[corner].b;
+                material_camera[corner].alpha =
+                    state->materialShader ==
+                        SOFTWARE_MATERIAL_SHADER_MODEL
+                        ? 255.0f : (float)material_color[corner].cd;
+            }
         }
         if (!transparent && material != NULL &&
-            resolved_texture != NULL) {
+            resolved_texture != NULL &&
+            ((int)(int8_t)LevelSelect == 4 ||
+             (int)(int8_t)LevelSelect == 6 ||
+             (int)(int8_t)LevelSelect == 15)) {
             opaque_special_culling = IsBusTextureForCorus2(
                 (int)(int8_t)LevelSelect,
                 material->filename,
@@ -3269,7 +3460,9 @@ static int software_draw_model_node(
                 corners,
                 material_flags,
                 transparent,
-                opaque_special_culling)) {
+                opaque_special_culling,
+            material_camera,
+            state->camera_transformed != NULL ? material_indices : NULL)) {
             material_face_visible = 0;
         }
         if (material_face_visible) {
@@ -3290,6 +3483,9 @@ static int software_draw_model_node(
                 FVECTOR triangle_world[3];
                 pairUV triangle_uv[3];
                 CVECTOR triangle_color[3];
+                SoftwareCameraMaterialVertex triangle_camera[3];
+                FVECTOR triangle_screen[3];
+                const FVECTOR *cached_screen = NULL;
                 SoftwareMaterialVertex material_vertices[
                     SOFTWARE_CLIPPED_POLYGON_CAPACITY];
                 size_t projected_corners;
@@ -3313,15 +3509,77 @@ static int software_draw_model_node(
                         material_uv[source_corner];
                     triangle_color[clipped_corner] =
                         material_color[source_corner];
+                    triangle_camera[clipped_corner] =
+                        material_camera[source_corner];
                 }
-                projected_corners =
-                    software_clip_project_material_polygon(
-                        state,
-                        triangle_world,
-                        triangle_uv,
-                        triangle_color,
-                        3,
-                        material_vertices);
+                if (state->screen_transformed != NULL &&
+                    triangle_camera[0].position.vz >= 1.0f &&
+                    triangle_camera[1].position.vz >= 1.0f &&
+                    triangle_camera[2].position.vz >= 1.0f) {
+                    int complete = 1;
+                    for (clipped_corner = 0;
+                         clipped_corner < 3;
+                         ++clipped_corner) {
+                        size_t index = material_indices[
+                            triangle_corner[clipped_corner]];
+                        if (!state->screen_valid[index]) {
+                            if (jpb_ProjectPcGameplayCameraToViewport(
+                                    &state->camera_transformed[index],
+                                    (float)state->draw.framebuffer->width,
+                                    (float)state->draw.framebuffer->height,
+                                    &state->screen_transformed[index]) != 0) {
+                                complete = 0;
+                                break;
+                            }
+                            state->screen_valid[index] = 1;
+                        }
+                        triangle_screen[clipped_corner] =
+                            state->screen_transformed[index];
+                    }
+                    if (complete) {
+                        cached_screen = triangle_screen;
+                    }
+                }
+                if (cached_screen != NULL) {
+                    for (clipped_corner = 0;
+                         clipped_corner < 3;
+                         ++clipped_corner) {
+                        const SoftwareCameraMaterialVertex *source =
+                            &triangle_camera[clipped_corner];
+                        SoftwareMaterialVertex *output =
+                            &material_vertices[clipped_corner];
+                        output->x = cached_screen[clipped_corner].vx;
+                        output->y = cached_screen[clipped_corner].vy;
+                        output->depth = cached_screen[clipped_corner].vz;
+#if defined(JPB_XBOX)
+                        output->inverseDepth =
+                            state->camera_inverse_depth[
+                                material_indices[triangle_corner[clipped_corner]]]
+                            * 10240.0f;
+#else
+                        output->inverseDepth = 1.0f / output->depth;
+#endif
+                        output->clipDepth = 0.0f;
+                        output->u = source->u;
+                        output->v = source->v;
+                        output->red = source->red;
+                        output->green = source->green;
+                        output->blue = source->blue;
+                        output->alpha = source->alpha;
+                    }
+                    projected_corners = 3;
+                } else {
+                    projected_corners =
+                        software_clip_project_material_polygon(
+                            state,
+                            triangle_world,
+                            triangle_uv,
+                            triangle_color,
+                            3,
+                            triangle_camera,
+                            NULL,
+                            material_vertices);
+                }
                 if (projected_corners < 3) {
                     continue;
                 }
@@ -3349,17 +3607,17 @@ static int software_draw_model_node(
                 }
             }
         }
-        height /= (float)corners;
-        if (state->draw.scene->maxY >
-            state->draw.scene->minY) {
-            height =
-                (height - state->draw.scene->minY) /
-                (state->draw.scene->maxY -
-                 state->draw.scene->minY);
-        } else {
-            height = 0.5f;
-        }
         if (state->depthBuffer == NULL) {
+            height /= (float)corners;
+            if (state->draw.scene->maxY >
+                state->draw.scene->minY) {
+                height =
+                    (height - state->draw.scene->minY) /
+                    (state->draw.scene->maxY -
+                     state->draw.scene->minY);
+            } else {
+                height = 0.5f;
+            }
             for (corner = 0; corner < corners; ++corner) {
                 size_t next = (corner + 1) % corners;
                 size_t from_index;
@@ -3391,8 +3649,9 @@ static int software_draw_model_node(
         }
         state->draw.stats.triangles += corners - 2;
         state->draw.stats.modelTriangles += corners - 2;
+        face_color_offset += corners;
     }
-clear_transient_hide:
+    clear_transient_hide:
     node->flags &= ~UINT32_C(0x4);
 
     for (child = 0; child < node->numChildNodes; ++child) {
@@ -3518,6 +3777,44 @@ static int software_render_bmd(
             }
         }
     }
+    {
+        size_t capacity = JPB_SOFTWARE_MODEL_VERTEX_CAPACITY;
+        int material_camera = state.depthBuffer != NULL &&
+            view_matrix != NULL;
+        size_t vectors = material_camera ? 3u : 1u;
+        size_t bytes = sizeof(FVECTOR) * capacity * vectors +
+            (material_camera ? capacity : 0u);
+#if defined(JPB_XBOX)
+        /* The Xbox renderer is single-threaded and draws models in sequence.
+           Reuse the model transform scratch instead of allocating it for
+           every character on every frame. */
+        static FVECTOR *xbox_model_scratch;
+        if (xbox_model_scratch == NULL) {
+            xbox_model_scratch = (FVECTOR *)malloc(
+                sizeof(FVECTOR) * capacity * 3u +
+                capacity + sizeof(float) * capacity);
+        }
+        state.transformed = xbox_model_scratch;
+#else
+        state.transformed = (FVECTOR *)malloc(bytes);
+#endif
+        if (state.transformed == NULL) {
+            if (owns_depth_buffer) free(state.depthBuffer);
+            return JPB_SOFTWARE_RENDER_MODEL_TOO_LARGE;
+        }
+        if (material_camera) {
+            state.camera_transformed = state.transformed + capacity;
+            state.screen_transformed =
+                state.camera_transformed + capacity;
+            state.screen_valid =
+                (uint8_t *)(state.screen_transformed + capacity);
+            memset(state.screen_valid, 0, capacity);
+#if defined(JPB_XBOX)
+            state.camera_inverse_depth =
+                (float *)(state.screen_valid + capacity);
+#endif
+        }
+    }
     span_x = world_scene->maxX - world_scene->minX;
     span_z = world_scene->maxZ - world_scene->minZ;
     if (span_x <= 0.0f) span_x = 1.0f;
@@ -3573,6 +3870,9 @@ static int software_render_bmd(
     result = software_draw_model_node(
         &state, model->pRootNode, &root_parent);
     if (result != JPB_SOFTWARE_RENDER_OK) {
+#if !defined(JPB_XBOX)
+        free(state.transformed);
+#endif
         if (owns_depth_buffer) {
             free(state.depthBuffer);
         }
@@ -3584,6 +3884,9 @@ static int software_render_bmd(
     if (owns_depth_buffer) {
         free(state.depthBuffer);
     }
+#if !defined(JPB_XBOX)
+    free(state.transformed);
+#endif
     return JPB_SOFTWARE_RENDER_OK;
 }
 

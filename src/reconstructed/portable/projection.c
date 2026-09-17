@@ -171,6 +171,7 @@ int jpb_ProjectPcCameraToViewport(
     const float depth_scale = 10240.0f;
     float depth;
     float focal_scale;
+    static float tangent_half_fov;
     int clipped;
 
     if (camera == NULL || screen == NULL ||
@@ -184,8 +185,11 @@ int jpb_ProjectPcCameraToViewport(
     if (clipped) {
         depth = near_clip;
     }
+    if (tangent_half_fov == 0.0f) {
+        tangent_half_fov = tanf(vertical_fov * 0.5f);
+    }
     focal_scale =
-        (viewport_height * 0.5f) / tanf(vertical_fov * 0.5f);
+        (viewport_height * 0.5f) / tangent_half_fov;
     screen->vx =
         camera->vx * focal_scale / depth + viewport_width * 0.5f;
     screen->vy =

@@ -121,63 +121,63 @@ unsigned char *jpb_THEORAPLAYConvertRGBForTest(
 
 #if defined(__cplusplus)
 static_assert(
-    sizeof(THEORAPLAY_Io) == 24,
+    sizeof(THEORAPLAY_Io) == 3 * sizeof(void *),
     "THEORAPLAY_Io must match the PDB layout");
 static_assert(
-    offsetof(THEORAPLAY_Io, userdata) == 16,
+    offsetof(THEORAPLAY_Io, userdata) == 2 * sizeof(void *),
     "THEORAPLAY_Io.userdata offset changed");
 static_assert(
-    sizeof(THEORAPLAY_AudioPacket) == 32,
+    sizeof(THEORAPLAY_AudioPacket) == 16 + 2 * sizeof(void *),
     "THEORAPLAY_AudioPacket must match the PDB layout");
 static_assert(
     offsetof(THEORAPLAY_AudioPacket, samples) == 16,
     "THEORAPLAY_AudioPacket.samples offset changed");
 static_assert(
-    offsetof(THEORAPLAY_AudioPacket, next) == 24,
+    offsetof(THEORAPLAY_AudioPacket, next) == 16 + sizeof(void *),
     "THEORAPLAY_AudioPacket.next offset changed");
 static_assert(
-    sizeof(AudioQueue) == 24,
+    sizeof(AudioQueue) == 3 * sizeof(void *),
     "AudioQueue must match the PDB layout");
 static_assert(
-    offsetof(AudioQueue, next) == 16,
+    offsetof(AudioQueue, next) == 2 * sizeof(void *),
     "AudioQueue.next offset changed");
 static_assert(
-    sizeof(THEORAPLAY_VideoFrame) == 48,
+    sizeof(THEORAPLAY_VideoFrame) == (sizeof(void *) == 8 ? 48 : 40),
     "THEORAPLAY_VideoFrame must match the PDB layout");
 static_assert(
-    offsetof(THEORAPLAY_VideoFrame, pixels) == 32,
+    offsetof(THEORAPLAY_VideoFrame, pixels) == (sizeof(void *) == 8 ? 32 : 28),
     "THEORAPLAY_VideoFrame.pixels offset changed");
 static_assert(
-    offsetof(THEORAPLAY_VideoFrame, next) == 40,
+    offsetof(THEORAPLAY_VideoFrame, next) == (sizeof(void *) == 8 ? 40 : 32),
     "THEORAPLAY_VideoFrame.next offset changed");
 #else
 _Static_assert(
-    sizeof(THEORAPLAY_Io) == 24,
+    sizeof(THEORAPLAY_Io) == 3 * sizeof(void *),
     "THEORAPLAY_Io must match the PDB layout");
 _Static_assert(
-    offsetof(THEORAPLAY_Io, userdata) == 16,
+    offsetof(THEORAPLAY_Io, userdata) == 2 * sizeof(void *),
     "THEORAPLAY_Io.userdata offset changed");
 _Static_assert(
-    sizeof(THEORAPLAY_AudioPacket) == 32,
+    sizeof(THEORAPLAY_AudioPacket) == 16 + 2 * sizeof(void *),
     "THEORAPLAY_AudioPacket must match the PDB layout");
 _Static_assert(
     offsetof(THEORAPLAY_AudioPacket, samples) == 16,
     "THEORAPLAY_AudioPacket.samples offset changed");
 _Static_assert(
-    offsetof(THEORAPLAY_AudioPacket, next) == 24,
+    offsetof(THEORAPLAY_AudioPacket, next) == 16 + sizeof(void *),
     "THEORAPLAY_AudioPacket.next offset changed");
-_Static_assert(sizeof(AudioQueue) == 24, "AudioQueue must match the PDB layout");
+_Static_assert(sizeof(AudioQueue) == 3 * sizeof(void *), "AudioQueue must match the PDB layout");
 _Static_assert(
-    offsetof(AudioQueue, next) == 16,
+    offsetof(AudioQueue, next) == 2 * sizeof(void *),
     "AudioQueue.next offset changed");
 _Static_assert(
-    sizeof(THEORAPLAY_VideoFrame) == 48,
+    sizeof(THEORAPLAY_VideoFrame) == (sizeof(void *) == 8 ? 48 : 40),
     "THEORAPLAY_VideoFrame must match the PDB layout");
 _Static_assert(
-    offsetof(THEORAPLAY_VideoFrame, pixels) == 32,
+    offsetof(THEORAPLAY_VideoFrame, pixels) == (sizeof(void *) == 8 ? 32 : 28),
     "THEORAPLAY_VideoFrame.pixels offset changed");
 _Static_assert(
-    offsetof(THEORAPLAY_VideoFrame, next) == 40,
+    offsetof(THEORAPLAY_VideoFrame, next) == (sizeof(void *) == 8 ? 40 : 32),
     "THEORAPLAY_VideoFrame.next offset changed");
 #endif
 

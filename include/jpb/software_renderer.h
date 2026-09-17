@@ -95,6 +95,8 @@ typedef struct JPBSoftwareTexture {
     int32_t materialType;
     /* Stable portable equivalent of Texture::m_nIndex. */
     int32_t descriptorIndex;
+    /* Optional cache-owned filename for platform-specific GPU asset lookup. */
+    const char *sourceName;
 } JPBSoftwareTexture;
 
 typedef struct JPBSoftwareDepthBuffer {
@@ -236,6 +238,18 @@ int jpb_SoftwareRenderJpxMaterialized(
     void *texture_user_data,
     JPBSoftwareDepthBuffer *depth_buffer,
     JPBSoftwareRenderStats *stats);
+int jpb_SoftwareRenderJpxMaterializedToSink(
+    const JPBSoftwareJpxScene *scene,
+    MATRIX *view_matrix,
+    JPBSoftwareFramebuffer *framebuffer,
+    uint32_t clear_color,
+    JPBSoftwareTextureResolver resolve_texture,
+    void *texture_user_data,
+    JPBSoftwareDepthBuffer *depth_buffer,
+    JPBSoftwareTriangleSink triangle_sink,
+    void *triangle_user_data,
+    JPBSoftwareRenderStats *stats);
+
 
 /*
  * Renders the exact live-FBX triangle/material partition after a platform

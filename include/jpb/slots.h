@@ -90,13 +90,13 @@ JPB_SLOTS_STATIC_ASSERT(sizeof(JPBSlotsVec2) == 4,
                         "_vec2 PDB layout changed");
 JPB_SLOTS_STATIC_ASSERT(offsetof(cubeStack, animTrans) == 8,
                         "cubeStack.animTrans PDB offset changed");
-JPB_SLOTS_STATIC_ASSERT(offsetof(cubeStack, besttargetlen) == 176,
+JPB_SLOTS_STATIC_ASSERT(offsetof(cubeStack, besttargetlen) == (sizeof(void *) == 8 ? 176 : 128),
                         "cubeStack.besttargetlen PDB offset changed");
-JPB_SLOTS_STATIC_ASSERT(offsetof(cubeStack, per) == 240,
+JPB_SLOTS_STATIC_ASSERT(offsetof(cubeStack, per) == (sizeof(void *) == 8 ? 240 : 192),
                         "cubeStack.per PDB offset changed");
-JPB_SLOTS_STATIC_ASSERT(offsetof(cubeStack, cubeResults) == 672,
+JPB_SLOTS_STATIC_ASSERT(offsetof(cubeStack, cubeResults) == (sizeof(void *) == 8 ? 672 : 624),
                         "cubeStack.cubeResults PDB offset changed");
-JPB_SLOTS_STATIC_ASSERT(sizeof(cubeStack) == 704,
+JPB_SLOTS_STATIC_ASSERT(sizeof(cubeStack) == (sizeof(void *) == 8 ? 704 : 656),
                         "cubeStack PDB layout changed");
 
 #undef JPB_SLOTS_STATIC_ASSERT

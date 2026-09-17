@@ -63,6 +63,8 @@ typedef union UDATA {
 
 /* Direct PDB map records consumed by wRender.c. */
 typedef union CDATA {
+    /* Serialized map entries retain the shipped 64-bit relocation slot. */
+    uint64_t diskSlot;
     int32_t *p;
     uint8_t b[4];
 } CDATA;

@@ -65,10 +65,10 @@ _Static_assert(
     offsetof(th_info, pic_width) == 12,
     "th_info.pic_width offset changed");
 _Static_assert(
-    sizeof(th_img_plane) == 24,
+    sizeof(th_img_plane) == (sizeof(void *) == 8 ? 24 : 16),
     "th_img_plane must match the PDB layout");
 _Static_assert(
-    offsetof(th_img_plane, data) == 16,
+    offsetof(th_img_plane, data) == (sizeof(void *) == 8 ? 16 : 12),
     "th_img_plane.data offset changed");
 
 struct TheoraDecoder {
@@ -94,19 +94,19 @@ struct TheoraDecoder {
 };
 
 _Static_assert(
-    sizeof(struct TheoraDecoder) == 112,
+    sizeof(struct TheoraDecoder) == (sizeof(void *) == 8 ? 112 : 76),
     "TheoraDecoder must match the PDB layout");
 _Static_assert(
-    offsetof(struct TheoraDecoder, lock) == 8,
+    offsetof(struct TheoraDecoder, lock) == (sizeof(void *) == 8 ? 8 : 4),
     "TheoraDecoder.lock offset changed");
 _Static_assert(
-    offsetof(struct TheoraDecoder, prepped) == 44,
+    offsetof(struct TheoraDecoder, prepped) == (sizeof(void *) == 8 ? 44 : 28),
     "TheoraDecoder.prepped offset changed");
 _Static_assert(
-    offsetof(struct TheoraDecoder, videolist) == 80,
+    offsetof(struct TheoraDecoder, videolist) == (sizeof(void *) == 8 ? 80 : 60),
     "TheoraDecoder.videolist offset changed");
 _Static_assert(
-    offsetof(struct TheoraDecoder, audiolist) == 96,
+    offsetof(struct TheoraDecoder, audiolist) == (sizeof(void *) == 8 ? 96 : 68),
     "TheoraDecoder.audiolist offset changed");
 
 static void theoraplay_lock(THEORAPLAY_Decoder *decoder)

@@ -380,8 +380,11 @@ void _DrawUIText(
     int point_size,
     CVECTOR color)
 {
+    struct PublicCodecvt : std::codecvt<char16_t, char, std::mbstate_t> {
+        ~PublicCodecvt() = default;
+    };
     std::wstring_convert<
-        std::codecvt<char16_t, char, std::mbstate_t>,
+        PublicCodecvt,
         char16_t> converter;
     const std::u16string converted = converter.from_bytes(
         text, text + std::strlen(text));

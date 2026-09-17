@@ -34,7 +34,7 @@ extern CSteamGameManager *g_SteamGameManager;
 
 static_assert(sizeof(GameOverlayActivated_t) == 8,
     "GameOverlayActivated_t must match PDB type 0x7124");
-static_assert(sizeof(CSteamGameManager) == 32,
+static_assert(sizeof(CSteamGameManager) == (sizeof(void *) == 8 ? 32 : 20),
     "CSteamGameManager must match PDB type 0x710B");
 
 #endif

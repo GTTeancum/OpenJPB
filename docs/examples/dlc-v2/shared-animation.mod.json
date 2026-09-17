@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "id": "example-jedi-motion",
+  "packageVersion": "1.0.0",
+  "name": "Example Jedi Animation Library",
+  "enabled": true,
+  "requires": ["packages-v2", "animations-v1"],
+  "dependencies": [],
+  "exports": {
+    "animations": [
+      {
+        "id": "guardian",
+        "rig": "base:rig/obi_wan",
+        "motionProfile": "base:motion-profile/obi_wan",
+        "cad": "res/animation/guardian.cad",
+        "cmb": "res/combo/guardian.cmb",
+        "huffman": [
+          "res/animation/huffman.tab",
+          "res/animation/huffman.val",
+          "res/animation/huffman.opt"
+        ]
+      }
+    ]
+  },
+  "overlays": []
+}

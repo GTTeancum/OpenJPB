@@ -408,10 +408,10 @@ JPB_INPUT_STATIC_ASSERT(
 JPB_INPUT_STATIC_ASSERT(
     sizeof(padCurrentBits) == 32, "padCurrentBits layout changed");
 JPB_INPUT_STATIC_ASSERT(
-    sizeof(gGameControllers) == 16,
+    sizeof(gGameControllers) == 2 * sizeof(void *),
     "gGameControllers must match PDB type 0x7782");
 JPB_INPUT_STATIC_ASSERT(
-    sizeof(sdlPads) == 40,
+    sizeof(sdlPads) == 5 * sizeof(void *),
     "sdlPads must match PDB type 0x75F1");
 JPB_INPUT_STATIC_ASSERT(
     sizeof(controlLimits) == 9,
@@ -441,7 +441,7 @@ JPB_INPUT_STATIC_ASSERT(
     sizeof(JPBDirectInputDeviceInstance) == 0x244,
     "DIDEVICEINSTANCEA layout changed");
 JPB_INPUT_STATIC_ASSERT(
-    sizeof(g_rgpdevFound) == 80,
+    sizeof(g_rgpdevFound) == 10 * sizeof(void *),
     "g_rgpdevFound must match PDB type 0x11FBE");
 
 #undef JPB_INPUT_STATIC_ASSERT

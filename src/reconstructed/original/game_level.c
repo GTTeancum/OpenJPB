@@ -43,7 +43,7 @@
 extern void _StoreDescriptorHeapOffsetsEnd(void);
 extern void _StoreDescriptorHeapOffsetsStart(void);
 extern void loader_LoadJedi(void);
-extern void menu_loadFrontEndArt(int group);
+
 extern void turnOffBackground(void);
 extern void VSync();
 

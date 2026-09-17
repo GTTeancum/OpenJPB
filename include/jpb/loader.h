@@ -36,6 +36,11 @@ extern modelAnimConnect model_anim_table[JPB_ACTOR_NAME_COUNT];
 extern int gotJPX;
 extern ufbx_scene *scene;
 
+/* A platform may supply preprocessed visual geometry. Logical level loading
+ * remains canonical; NULL retains the original FBX parser and renderer hook. */
+typedef int (*JPBLoaderVisualLevelProvider)(const char *fbx_path, int level_index, void *user_data);
+void jpb_LoaderSetVisualLevelProvider(JPBLoaderVisualLevelProvider provider, void *user_data);
+
 /* Descriptive, observation-only boundary after exact enemy construction. */
 typedef void (*JPBLoaderEnemyCreatedObserver)(
     wsl_ENEMY *enemy, int object_id, void *user_data);

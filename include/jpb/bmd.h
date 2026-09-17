@@ -69,7 +69,16 @@ typedef struct JPBBmdView {
     int geometry_streams_relocated;
     /* model_MakeNode replaced t.Texture with the retail _Material pointer. */
     int material_handles_relocated;
+#if defined(JPB_XBOX)
+    /* Distinguishes a newly loaded asset even when allocator addresses recur. */
+    uint32_t load_generation;
+#endif
 } JPBBmdView;
+
+#if defined(JPB_XBOX)
+/* Give relocated executable-owned views the same cache identity as inspected views. */
+uint32_t jpb_BmdNextLoadGeneration(void);
+#endif
 
 /*
  * Descriptive, data-backed views of the pointer-free arrays referenced by

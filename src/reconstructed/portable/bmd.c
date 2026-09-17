@@ -23,6 +23,40 @@ typedef struct JPBBmdBuildState {
     modelObject *model;
 } JPBBmdBuildState;
 
+#if defined(JPB_XBOX)
+typedef struct JPBBmdGeometryCacheEntry {
+    uint32_t generation;
+    const geomData *geometry;
+    JPBBmdGeometryView view;
+} JPBBmdGeometryCacheEntry;
+
+static JPBBmdGeometryCacheEntry bmd_geometry_cache[256];
+static uint32_t bmd_next_load_generation;
+volatile uint32_t jpb_XboxBmdGeometryCacheHits;
+volatile uint32_t jpb_XboxBmdGeometryCacheMisses;
+volatile uint32_t jpb_XboxBmdGeometryCalls;
+volatile uint32_t jpb_XboxBmdLastGeneration;
+volatile uint32_t jpb_XboxBmdInspections;
+volatile uint32_t jpb_XboxBmdLastLoadedGeneration;
+
+uint32_t jpb_BmdNextLoadGeneration(void)
+{
+    ++bmd_next_load_generation;
+    if (bmd_next_load_generation == 0) ++bmd_next_load_generation;
+    jpb_XboxBmdLastLoadedGeneration = bmd_next_load_generation;
+    return bmd_next_load_generation;
+}
+
+static JPBBmdGeometryCacheEntry *bmd_geometry_cache_entry(
+    const JPBBmdView *view, const geomData *geometry)
+{
+    uintptr_t key = (uintptr_t)geometry >> 4;
+    key ^= key >> 11;
+    key ^= (uintptr_t)view->load_generation * UINT32_C(2654435761);
+    return &bmd_geometry_cache[key & 255u];
+}
+#endif
+
 static uint32_t bmd_read_u32(const uint8_t *bytes)
 {
     return (uint32_t)bytes[0] |
@@ -308,6 +342,10 @@ JPBBmdResult jpb_BmdInspect(
 
     view->root = bmd_record(view, 1);
     view->node_count = visited_count;
+#if defined(JPB_XBOX)
+    view->load_generation = jpb_BmdNextLoadGeneration();
+    ++jpb_XboxBmdInspections;
+#endif
     return JPB_BMD_OK;
 }
 
@@ -324,6 +362,23 @@ JPBBmdResult jpb_BmdGetGeometry(
     size_t vertex_bytes;
     size_t uv_bytes;
     size_t corner_count = 0;
+
+#if defined(JPB_XBOX)
+    JPBBmdGeometryCacheEntry *cache = NULL;
+    ++jpb_XboxBmdGeometryCalls;
+    if (view != NULL) jpb_XboxBmdLastGeneration = view->load_generation;
+    if (view != NULL && geometry != NULL && geometry_view != NULL &&
+        view->load_generation != 0) {
+        cache = bmd_geometry_cache_entry(view, geometry);
+        if (cache->generation == view->load_generation &&
+            cache->geometry == geometry) {
+            *geometry_view = cache->view;
+            ++jpb_XboxBmdGeometryCacheHits;
+            return JPB_BMD_OK;
+        }
+        ++jpb_XboxBmdGeometryCacheMisses;
+    }
+#endif
 
     if (view == NULL || view->payload == NULL ||
         geometry == NULL || geometry_view == NULL) {
@@ -417,6 +472,13 @@ JPBBmdResult jpb_BmdGetGeometry(
         (const uint32_t *)normal_data;
     geometry_view->colors = (const CVECTOR *)color_data;
     geometry_view->corner_count = corner_count;
+#if defined(JPB_XBOX)
+    if (cache != NULL) {
+        cache->view = *geometry_view;
+        cache->geometry = geometry;
+        cache->generation = view->load_generation;
+    }
+#endif
     return JPB_BMD_OK;
 }
 

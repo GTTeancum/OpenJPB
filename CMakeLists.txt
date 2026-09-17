@@ -187,6 +187,12 @@ if(JPB_UFBX_SOURCE_DIR)
     add_executable(jpb_level_import src/port/level_import.c src/port/pc_level_fbx.c)
     target_link_libraries(jpb_level_import PRIVATE jpb_reconstructed)
 
+    # Host-side asset preparation only. Xbox executable is built by xbox/Makefile with nxdk.
+    add_executable(jpb_xbox_export_level xbox/tools/export_level.c src/port/pc_level_fbx.c)
+    target_include_directories(jpb_xbox_export_level PRIVATE src/port)
+    target_link_libraries(jpb_xbox_export_level PRIVATE jpb_reconstructed)
+    add_executable(jpb_xbox_round_tests xbox/tools/test_round.c xbox/src/math.c)
+
     add_executable(
         jpb_fbx_jpx_match_probe
         src/port/fbx_jpx_match_probe.c)

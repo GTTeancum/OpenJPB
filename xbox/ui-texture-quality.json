@@ -1,0 +1,14 @@
+{
+  "default/a_dbfont.png": 256,
+  "default/a_dbfont.tga": 256,
+  "default/a_dbfont_new.png": 256,
+  "default/a_dbfont_new.tga": 256,
+  "effects/tga/a_meter_main.png": 256,
+  "effects/tga/a_meter_main.tga": 512,
+  "effects/tga/a_meter_bars.png": 256,
+  "effects/tga/a_meter_bars.tga": 256,
+  "effects/tga/a_meter_lights.png": 256,
+  "effects/tga/a_meter_lights.tga": 256,
+  "front/a_winsys0.png": 512,
+  "front/a_winsys0.tga": 512
+}

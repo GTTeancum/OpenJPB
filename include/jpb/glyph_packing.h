@@ -65,13 +65,13 @@ struct ShelfGlyphPackingPolicyLayoutVerifier {
 
 static_assert(sizeof(GlyphMetrics) == 20, "GlyphMetrics PDB layout changed");
 static_assert(sizeof(GlyphEntry) == 16, "GlyphEntry PDB layout changed");
-static_assert(sizeof(GlyphPackingPolicy) == 16,
+static_assert(sizeof(GlyphPackingPolicy) == (sizeof(void *) == 8 ? 16 : 12),
               "GlyphPackingPolicy PDB layout changed");
-static_assert(ShelfGlyphPackingPolicyLayoutVerifier::PosOffset == 16,
+static_assert(ShelfGlyphPackingPolicyLayoutVerifier::PosOffset == (sizeof(void *) == 8 ? 16 : 12),
               "ShelfGlyphPackingPolicy.Pos PDB offset changed");
-static_assert(ShelfGlyphPackingPolicyLayoutVerifier::MaxYOffset == 24,
+static_assert(ShelfGlyphPackingPolicyLayoutVerifier::MaxYOffset == (sizeof(void *) == 8 ? 24 : 20),
               "ShelfGlyphPackingPolicy.MaxY PDB offset changed");
-static_assert(sizeof(ShelfGlyphPackingPolicy) == 32,
+static_assert(sizeof(ShelfGlyphPackingPolicy) == (sizeof(void *) == 8 ? 32 : 24),
               "ShelfGlyphPackingPolicy PDB layout changed");
 
 #endif

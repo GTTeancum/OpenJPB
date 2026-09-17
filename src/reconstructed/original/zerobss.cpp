@@ -23,7 +23,7 @@ static std::array<void *, NUM_VARS> zeroBSSArray;
 static_assert(sizeof(_svector) == 8, "_svector PDB layout changed");
 static_assert(sizeof(_collide_info) == 52,
               "_collide_info PDB layout changed");
-static_assert(sizeof(playerObject) == 568,
+static_assert(sizeof(playerObject) == (sizeof(void *) == 8 ? 568 : 480),
               "playerObject PDB layout changed");
 
 static void *allocate_zeroed(std::size_t element_size, int size)

@@ -109,6 +109,7 @@ typedef struct JPBGameRuntimeEnemyPlacementState {
     size_t renderedPixels;
 } JPBGameRuntimeEnemyPlacementState;
 
+/* mesh is NULL for a JPX-only level; world_scene remains valid. */
 typedef int (*JPBGameRuntimeLevelRenderHook)(
     void *user_data,
     const JPBSoftwareLevelMesh *mesh,
@@ -203,6 +204,10 @@ typedef struct JPBGameRuntimeTextDraw {
     size_t compositePixels;
     uint16_t text[JPB_GAME_RUNTIME_TEXT_CAPACITY];
 } JPBGameRuntimeTextDraw;
+
+typedef int (*JPBGameRuntimeTextDrawRenderHook)(
+    void *user_data, const JPBGameRuntimeTextDraw *draws,
+    size_t draw_count, JPBSoftwareFramebuffer *framebuffer);
 
 typedef struct JPBGameRuntimeDraw3dText {
     uint32_t order;
@@ -303,6 +308,12 @@ typedef struct JPBGameRuntime {
     void *screenPolyRenderUserData;
     JPBGameRuntimeScreenDrawRenderHook titleScreenDrawRenderHook;
     void *titleScreenDrawRenderUserData;
+#if defined(JPB_XBOX)
+    JPBGameRuntimeScreenDrawRenderHook gameplayHudScreenDrawHook;
+    void *gameplayHudScreenDrawUserData;
+    JPBGameRuntimeTextDrawRenderHook gameplayHudTextDrawHook;
+    void *gameplayHudTextDrawUserData;
+#endif
     JPBGameRuntimeLoadScreenPresentHook loadScreenPresentHook;
     void *loadScreenPresentUserData;
     JPBGameRuntimeGameplayCompositeHook gameplayCompositeHook;
@@ -675,6 +686,16 @@ void jpb_GameRuntimeSetTitleScreenDrawRenderHook(
     JPBGameRuntime *runtime,
     JPBGameRuntimeScreenDrawRenderHook hook,
     void *user_data);
+#if defined(JPB_XBOX)
+void jpb_GameRuntimeSetGameplayHudScreenDrawHook(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeScreenDrawRenderHook hook,
+    void *user_data);
+void jpb_GameRuntimeSetGameplayHudTextDrawHook(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeTextDrawRenderHook hook,
+    void *user_data);
+#endif
 void jpb_GameRuntimeSetLoadScreenPresentHook(
     JPBGameRuntime *runtime,
     JPBGameRuntimeLoadScreenPresentHook hook,
@@ -694,6 +715,8 @@ int jpb_GameRuntimeResolveLevelTexture(
     JPBGameRuntime *runtime,
     const char *texture_name,
     JPBSoftwareTexture *texture);
+/* Select the runtime-owned UI cache before a platform loads its menu assets. */
+void jpb_GameRuntimeUseUiTextureCache(JPBGameRuntime *runtime);
 void jpb_GameRuntimeShutdown(JPBGameRuntime *runtime);
 int jpb_GameRuntimeFrame(
     JPBGameRuntime *runtime,

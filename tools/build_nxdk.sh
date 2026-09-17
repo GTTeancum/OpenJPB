@@ -7,4 +7,5 @@ LLVM_BIN="${LLVM_BIN:-/c/Program Files/LLVM/bin}"
 export NXDK_DIR
 export PATH="${LLVM_BIN}:${NXDK_DIR}/bin:/usr/bin:/mingw64/bin:${PATH}"
 
+python xbox/tools/normalize_depfiles.py
 exec make "$@"

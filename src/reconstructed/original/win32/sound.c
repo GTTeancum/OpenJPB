@@ -45,11 +45,11 @@ typedef struct LoopedSound {
 } LoopedSound;
 
 _Static_assert(
-    sizeof(LoopedSound) == 24,
+    sizeof(LoopedSound) == (sizeof(void *) == 8 ? 24 : 20),
     "loopedSounds entry must match the PDB/matched x64 layout");
-_Static_assert(sizeof(tSFXHandle) == 16, "tSFXHandle PDB layout");
-_Static_assert(sizeof(tBankHandle) == 504, "tBankHandle PDB layout");
-_Static_assert(sizeof(tAudioSFX_Bank) == 80, "tAudioSFX_Bank PDB layout");
+_Static_assert(sizeof(tSFXHandle) == (sizeof(void *) == 8 ? 16 : 8), "tSFXHandle PDB layout");
+_Static_assert(sizeof(tBankHandle) == (sizeof(void *) == 8 ? 504 : 252), "tBankHandle PDB layout");
+_Static_assert(sizeof(tAudioSFX_Bank) == (sizeof(void *) == 8 ? 80 : 72), "tAudioSFX_Bank PDB layout");
 _Static_assert(
     offsetof(tAudioSFX_Bank, ptrSFXNames) == 64,
     "tAudioSFX_Bank pointer offset");

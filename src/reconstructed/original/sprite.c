@@ -37,6 +37,14 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(JPB_XBOX)
+#include <windows.h>
+volatile unsigned jpb_XboxSpriteUpdateMs;
+volatile unsigned jpb_XboxSpriteDrawMs;
+volatile unsigned jpb_XboxSlowSpriteMs;
+volatile uintptr_t jpb_XboxSlowSpriteFunction;
+volatile int jpb_XboxSlowSpriteNum;
+#endif
 
 List mSCBDraw[2];
 int mCurSCBList;
@@ -2754,6 +2762,9 @@ static void sprite_update_attached_position(Sprite *sptr)
 
 void sprite_SpriteWork(MATRIX *matrix)
 {
+#if defined(JPB_XBOX)
+    unsigned sprite_started=GetTickCount();
+#endif
     int sprite_list = mCurSpriteList;
     List *source_sprites;
     List *destination_sprites;
@@ -2763,6 +2774,11 @@ void sprite_SpriteWork(MATRIX *matrix)
     destination_sprites = &mSpriteWork[sprite_list ^ 1];
 
     numSprite = 0;
+#if defined(JPB_XBOX)
+    jpb_XboxSlowSpriteMs=0;
+    jpb_XboxSlowSpriteFunction=0;
+    jpb_XboxSlowSpriteNum=0;
+#endif
     list_InitList(destination_sprites);
     while ((sptr = (Sprite *)list_RemoveHead(source_sprites)) != NULL) {
         uintptr_t address = (uintptr_t)sptr;
@@ -2784,7 +2800,20 @@ void sprite_SpriteWork(MATRIX *matrix)
         if (sptr->sp_Func == NULL) {
             jpb_sprite_mark_free(sptr);
         } else {
+#if defined(JPB_XBOX)
+            unsigned callback_started=GetTickCount();
+            uintptr_t callback_address=(uintptr_t)sptr->sp_Func;
+            int callback_num=sptr->sp_Num;
+#endif
             sptr->sp_Func((int32_t *)sptr);
+#if defined(JPB_XBOX)
+            unsigned callback_ms=GetTickCount()-callback_started;
+            if(callback_ms>jpb_XboxSlowSpriteMs){
+                jpb_XboxSlowSpriteMs=callback_ms;
+                jpb_XboxSlowSpriteFunction=callback_address;
+                jpb_XboxSlowSpriteNum=callback_num;
+            }
+#endif
         }
         if ((sptr->sp_Flags & 1) != 0) {
             memfree(sptr);
@@ -2798,7 +2827,14 @@ void sprite_SpriteWork(MATRIX *matrix)
         list_AddTail(destination_sprites, (Node *)sptr);
     }
     mCurSpriteList ^= 1;
+#if defined(JPB_XBOX)
+    jpb_XboxSpriteUpdateMs=GetTickCount()-sprite_started;
+    sprite_started=GetTickCount();
+#endif
     sprite_SCBDraw(matrix);
+#if defined(JPB_XBOX)
+    jpb_XboxSpriteDrawMs=GetTickCount()-sprite_started;
+#endif
 }
 
 /* 0xFD100, 3 bytes, global, 1 named locals

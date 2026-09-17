@@ -1,0 +1,19 @@
+struct Input { float3 position : POSITION; float4 color : DIFFUSE; float2 uv : TEXCOORD0; float2 scroll : TEXCOORD1; };
+struct Output { float4 position : POSITION; float4 color : COLOR0; float4 uv : TEXCOORD0; };
+// Same camera and projection equations as pc_present_d3d11.c VSWorld.
+Output main(Input v, uniform float4 r0 : register(c0), uniform float4 r1 : register(c1),
+    uniform float4 r2 : register(c2), uniform float4 projection : register(c3),
+    uniform float4 scrollSpeed : register(c4), uniform float4 textureScale : register(c7),
+    uniform float4 colorScale : register(c8)) {
+    Output o;
+    float4 p = float4(v.position, 1);
+    float3 camera = float3(dot(p,r0), dot(p,r1), dot(p,r2));
+    float4 clip = float4(camera.x * projection.x, -camera.y * projection.y,
+        camera.z * projection.z + projection.w, camera.z);
+    o.position = float4(320 + 320*clip.x/clip.w, 240 - 240*clip.y/clip.w,
+        16777215*clip.z/clip.w, clip.w);
+    o.color = float4(max(v.color.rgb*colorScale.x,0.1),
+        v.color.a*colorScale.x);
+    o.uv = float4((v.uv + abs(v.scroll) - sign(v.scroll)*scrollSpeed.xy)*textureScale.xy,0,1);
+    return o;
+}

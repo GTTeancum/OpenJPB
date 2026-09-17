@@ -287,7 +287,9 @@ _Alignas(16) uint8_t gaScratch[2048];
  */
 static int32_t jpb_eventlist_storage[2048];
 int32_t *eventlist_start = jpb_eventlist_storage;
-int32_t *eventlist_next = jpb_eventlist_storage;
+/* The first two words are the zero terminator; clear_eventlist() establishes
+   this cursor after a reset, and a fresh runtime must start in the same state. */
+int32_t *eventlist_next = jpb_eventlist_storage + 2;
 int32_t *eventlist_end = jpb_eventlist_storage + 2048;
 int32_t *WorldmeshData;
 size_t gJpxWorldmeshSize;

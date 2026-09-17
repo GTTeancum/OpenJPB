@@ -1,0 +1,7 @@
+/build/
+/main.exe
+/main.lib
+*.obj
+*.c.d
+*.cpp.d
+src/*.inl

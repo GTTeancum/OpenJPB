@@ -1487,29 +1487,72 @@ void game_ProcessStatus(void)
  */
 void game_ResetGameSystems(void)
 {
+#if defined(JPB_XBOX)
+    extern volatile unsigned jpb_XboxResetStep;
+    jpb_XboxResetStep=0;
+#endif
     stop_all_looped_sounds();
+#if defined(JPB_XBOX)
+    jpb_XboxResetStep=1;
+#endif
     restore_events(leveldata);
+#if defined(JPB_XBOX)
+    jpb_XboxResetStep=2;
+#endif
     physics_InitPhysics();
+#if defined(JPB_XBOX)
+    jpb_XboxResetStep=3;
+#endif
     player_gRefreshPlayers();
+#if defined(JPB_XBOX)
+    jpb_XboxResetStep=4;
+#endif
     enemy_ResetEnemies();
+#if defined(JPB_XBOX)
+    jpb_XboxResetStep=5;
+#endif
     camera_RestoreCameras();
+#if defined(JPB_XBOX)
+    jpb_XboxResetStep=6;
+#endif
     pwrup_Init();
+#if defined(JPB_XBOX)
+    jpb_XboxResetStep=7;
+#endif
     braindmg_ResetDamageTracker(0);
     braindmg_ResetDamageTracker(1);
+#if defined(JPB_XBOX)
+    jpb_XboxResetStep=8;
+#endif
     afterLife = NULL;
     clearzerobss();
     zerobss_levelReset = 1;
     zerobss_ResetBoss = 1;
     cube_InitVisibility();
+#if defined(JPB_XBOX)
+    jpb_XboxResetStep=9;
+#endif
     ClearCachedTextureIndices();
+#if defined(JPB_XBOX)
+    jpb_XboxResetStep=10;
+#endif
     sound_StopAll();
+#if defined(JPB_XBOX)
+    jpb_XboxResetStep=11;
+#endif
     stopXA();
+#if defined(JPB_XBOX)
+    jpb_XboxResetStep=12;
+#endif
     if (GameStruct.CurrentLevel < 26 && OptionStruct.Music == 1) {
         playXA(
             (int)aLevelXATracks[GameStruct.CurrentLevel],
             (int)OptionStruct.musicVolume * 2,
             1);
     }
+#if defined(JPB_XBOX)
+    jpb_XboxResetStep=13;
+#endif
     gHidePikobisModel = 1;
 }
 
@@ -2248,10 +2291,19 @@ void game_initPlayerStartCombos(uint32_t player)
  */
 void game_runStage(void)
 {
+#if defined(JPB_XBOX)
+    extern volatile unsigned jpb_XboxRunStageStep;
+    extern volatile unsigned jpb_XboxRunStageGameState;
+    jpb_XboxRunStageStep=0;
+    jpb_XboxRunStageGameState=GameStruct.GameState;
+#endif
     if ((GameStruct.GameState & UINT32_C(0x00100000)) != 0) {
         player_gRefreshPlayers();
         GameStruct.GameState &= ~UINT32_C(0x00100000);
     }
+#if defined(JPB_XBOX)
+    jpb_XboxRunStageStep=1;
+#endif
     if (GameStruct.CurrentLevel == 0) {
         GameStruct.GameState &= ~UINT32_C(0xe0);
         GameStruct.StageExit = 0;
@@ -2259,10 +2311,22 @@ void game_runStage(void)
     } else if ((int8_t)GameStruct.GameState >= 0) {
         game_ProcessStatus();
     }
+#if defined(JPB_XBOX)
+    jpb_XboxRunStageStep=2;
+#endif
 
     if ((GameStruct.GameState & UINT32_C(0x02000000)) != 0) {
+#if defined(JPB_XBOX)
+        jpb_XboxRunStageStep=20;
+#endif
         mute_looped_sounds();
+#if defined(JPB_XBOX)
+        jpb_XboxRunStageStep=21;
+#endif
         update_looped_sounds();
+#if defined(JPB_XBOX)
+        jpb_XboxRunStageStep=22;
+#endif
         GameStruct.Continuing = 0;
         return;
     }
@@ -2270,13 +2334,28 @@ void game_runStage(void)
         GameStruct.GameState |= UINT32_C(2);
         stop_all_looped_sounds();
     }
+#if defined(JPB_XBOX)
+    jpb_XboxRunStageStep=3;
+#endif
     if (GameStruct.StageExit != 0) {
+#if defined(JPB_XBOX)
+        jpb_XboxRunStageStep=30;
+#endif
         stop_all_looped_sounds();
+#if defined(JPB_XBOX)
+        jpb_XboxRunStageStep=31;
+#endif
         waitForInputReadAfterRefresh = 2;
         game_ResetGameSystems();
+#if defined(JPB_XBOX)
+        jpb_XboxRunStageStep=32;
+#endif
         GameStruct.GameState &= ~UINT32_C(0xe0);
         GameStruct.StageExit = 0;
     }
+#if defined(JPB_XBOX)
+    jpb_XboxRunStageStep=4;
+#endif
     if (GameStruct.LevelExit != 0) {
         GameStruct.LevelExit = 0;
         GameStruct.gameMode = 9;
@@ -2289,8 +2368,17 @@ void game_runStage(void)
         GameStruct.ContinuesUsed = 0;
         afterLife = NULL;
     }
+#if defined(JPB_XBOX)
+    jpb_XboxRunStageStep=5;
+#endif
     unmute_looped_sounds();
+#if defined(JPB_XBOX)
+    jpb_XboxRunStageStep=6;
+#endif
     update_looped_sounds();
+#if defined(JPB_XBOX)
+    jpb_XboxRunStageStep=7;
+#endif
     GameStruct.Continuing = 0;
 }
 

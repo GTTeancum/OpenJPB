@@ -85,7 +85,7 @@ enum zerobssVars {
     NUM_VARS
 };
 
-void *ZeroBSS(zerobssVars var, zerobssType type, int size);
+void *ZeroBSS(enum zerobssVars var, enum zerobssType type, int size);
 void ZeroBSS_ClearAll(void);
 
 static_assert(zerobssplayerObject == 10, "zerobssType values changed");

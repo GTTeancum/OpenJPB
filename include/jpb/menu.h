@@ -123,7 +123,7 @@ typedef struct ScoreScreenModelMap {
 } ScoreScreenModelMap;
 
 _Static_assert(
-    sizeof(ScoreScreenModelMap) == 16,
+    sizeof(ScoreScreenModelMap) == 2 * sizeof(void *),
     "ScoreScreenModelMap size must match matched-PC PDB");
 
 /*
@@ -263,6 +263,7 @@ typedef struct MENUVARS {
     uint8_t reserved980[4];
 } MENUVARS;
 
+#if UINTPTR_MAX == UINT64_MAX
 _Static_assert(
     offsetof(MENUVARS, menuMode) == 0x10e,
     "MENUVARS menu stack offset must match matched-PC PDB");
@@ -272,6 +273,7 @@ _Static_assert(
 _Static_assert(
     offsetof(MENUVARS, mp) == 0x334,
     "MENUVARS score-menu position offset must match matched-PC PDB");
+#endif
 _Static_assert(
     offsetof(MENUVARS, maxAwardScore) + sizeof(uint32_t) ==
         offsetof(MENUVARS, mp) + 4 * sizeof(MPNT),

@@ -98,7 +98,7 @@ _Static_assert(offsetof(JPBUfbxLoadOpts, target_axes) == 280,
     "ufbx_load_opts.target_axes offset changed");
 _Static_assert(offsetof(JPBUfbxLoadOpts, target_unit_meters) == 292,
     "ufbx_load_opts.target_unit_meters offset changed");
-_Static_assert(sizeof(JPBUfbxError) == 616,
+_Static_assert(sizeof(JPBUfbxError) == (sizeof(void *) == 8 ? 616 : 608),
     "ufbx_error PDB layout changed");
 _Static_assert(offsetof(JPBUfbxError, description) == 8,
     "ufbx_error.description offset changed");
@@ -209,6 +209,13 @@ char *maModelData[JPB_MODEL_NAME_COUNT];
 /* Exact PDB globals at matched-PC RVAs 0x508580 and 0x10D7E28. */
 int gotJPX;
 ufbx_scene *scene;
+static JPBLoaderVisualLevelProvider visual_level_provider;
+static void *visual_level_user;
+void jpb_LoaderSetVisualLevelProvider(JPBLoaderVisualLevelProvider provider, void *user_data)
+{
+    visual_level_provider=provider;
+    visual_level_user=user_data;
+}
 
 _Static_assert(
     sizeof(sAnimNames) / sizeof(sAnimNames[0]) ==
@@ -837,6 +844,13 @@ void loader_LevelLoad(void)
             fileNameBuffer, "%s/%s.fbx", levelName, levelName);
         fullFilePath = (char *)resource_getPath(
             fileNameBuffer, JPB_RESOURCE_LEVEL_JPX);
+        if (visual_level_provider != NULL) {
+            if (!visual_level_provider(fullFilePath,(int8_t)LevelSelect,visual_level_user)) {
+                fprintf(stderr,"Failed to load platform visual level: %s\n",fullFilePath);
+                gFileNotFound=1;
+                return;
+            }
+        } else {
         if (scene != NULL) {
             ufbx_free_scene(scene);
         }
@@ -846,6 +860,7 @@ void loader_LevelLoad(void)
             exit(1);
         }
         _InitFBXLevelData(scene);
+        }
     }
 
     menu_addTotal(100);

@@ -82,7 +82,7 @@ inline ISteamUtils *SteamUtils()
 }
 
 static_assert(
-    sizeof(jpb_steam_detail::CallbackCounterAndContext) == 24,
+    sizeof(jpb_steam_detail::CallbackCounterAndContext) == (sizeof(void *) == 8 ? 24 : 12),
     "Steam accessor context must match the PDB's 24-byte record");
 
 #endif

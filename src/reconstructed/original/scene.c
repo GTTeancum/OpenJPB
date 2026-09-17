@@ -770,15 +770,35 @@ static void scene_run_level_owner(void)
 
 void scene_middleRender(MATRIX *matrix)
 {
+#if defined(JPB_XBOX)
+    extern volatile unsigned jpb_XboxGpuStage;
+    static int frame_tick_remainder;
+    static int last_totalframes;
+#endif
     MATRIX *view;
     _svector world_position;
     int simulation_enabled;
 
     (void)matrix;
+#if defined(JPB_XBOX)
+    /* These counters represent 60 Hz game ticks, not presented frames.
+       Retain the fractional tick when rendering misses a refresh. */
+    if (totalframes == 0 && last_totalframes != 0)
+        frame_tick_remainder = 0;
+    frame_tick_remainder += gGlobalFrameRate;
+    {
+        int ticks = frame_tick_remainder / 0x800;
+        frame_tick_remainder -= ticks * 0x800;
+        totalframes += ticks;
+        globaltimer += ticks;
+    }
+    last_totalframes = totalframes;
+#else
     ++totalframes;
     globaltimer += gGlobalFrameRate >= 0
         ? gGlobalFrameRate / 0x800
         : -((-gGlobalFrameRate) / 0x800);
+#endif
     if (gSCENE_READY == 0) {
         gCamera.viewType &= ~UINT32_C(0x1000);
     }
@@ -830,18 +850,30 @@ void scene_middleRender(MATRIX *matrix)
             scene_middle_render_hooks.afterWorld(
                 scene_middle_render_user_data, view);
         }
+#if defined(JPB_XBOX)
+        jpb_XboxGpuStage=60;
+#endif
         PopMatrix();
+#if defined(JPB_XBOX)
+        jpb_XboxGpuStage=61;
+#endif
     } else {
         prim_gSetBkColor(mStrobe.b, mStrobe.g, mStrobe.r);
     }
 
     PushMatrix();
+#if defined(JPB_XBOX)
+    jpb_XboxGpuStage=62;
+#endif
     if (scene_middle_render_hooks.renderModels != NULL) {
         scene_middle_render_hooks.renderModels(
             scene_middle_render_user_data, view);
     } else {
         render_RenderScene();
     }
+#if defined(JPB_XBOX)
+    jpb_XboxGpuStage=63;
+#endif
     PopMatrix();
 
     player_HandleSabre();

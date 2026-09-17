@@ -142,21 +142,21 @@ private:
 };
 
 static_assert(sizeof(SDL_Rect) == 16, "SDL_Rect PDB layout changed");
-static_assert(sizeof(SDL_Surface) == 96,
+static_assert(sizeof(SDL_Surface) == (sizeof(void *) == 8 ? 96 : 60),
               "SDL_Surface PDB layout changed");
-static_assert(sizeof(SDL_Surface_Wrapper) == 8,
+static_assert(sizeof(SDL_Surface_Wrapper) == (sizeof(void *) == 8 ? 8 : 4),
               "SDL_Surface_Wrapper PDB layout changed");
-static_assert(sizeof(TTF_Font_Wrapper) == 8,
+static_assert(sizeof(TTF_Font_Wrapper) == (sizeof(void *) == 8 ? 8 : 4),
               "TTF_Font_Wrapper PDB layout changed");
 #if defined(_MSC_VER) && _ITERATOR_DEBUG_LEVEL == 0
-static_assert(offsetof(Glyph, Character) == 32,
+static_assert(offsetof(Glyph, Character) == (sizeof(void *) == 8 ? 32 : 12),
               "Glyph.Character PDB offset changed");
-static_assert(offsetof(Glyph, FontSize) == 36,
+static_assert(offsetof(Glyph, FontSize) == (sizeof(void *) == 8 ? 36 : 16),
               "Glyph.FontSize PDB offset changed");
-static_assert(offsetof(Glyph, Metrics) == 40,
+static_assert(offsetof(Glyph, Metrics) == (sizeof(void *) == 8 ? 40 : 20),
               "Glyph.Metrics PDB offset changed");
-static_assert(sizeof(Glyph) == 64, "Glyph PDB layout changed");
-static_assert(sizeof(FontAtlas) == 168,
+static_assert(sizeof(Glyph) == (sizeof(void *) == 8 ? 64 : 40), "Glyph PDB layout changed");
+static_assert(sizeof(FontAtlas) == (sizeof(void *) == 8 ? 168 : 64),
               "FontAtlas PDB layout changed");
 #endif
 

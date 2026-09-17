@@ -446,7 +446,7 @@ JPB_SPRITE_STATIC_ASSERT(
     offsetof(RingData, time) == 44,
     "RingData.time layout changed");
 JPB_SPRITE_STATIC_ASSERT(
-    sizeof(TexAnim) == 32,
+    sizeof(TexAnim) == (sizeof(void *) == 8 ? 32 : 24),
     "TexAnim must match the matched-PC PDB");
 JPB_SPRITE_STATIC_ASSERT(
     sizeof(ColorCycle) == 20,
