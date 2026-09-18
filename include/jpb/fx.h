@@ -10,6 +10,10 @@
 extern "C" {
 #endif
 
+struct _Material;
+struct _Material *jpb_FxAdditiveGlowMaterial(void);
+struct _Material *jpb_FxAlphaGlowMaterial(void);
+
 /* Optional observer for the reconstructed immediate-mode glow submission. */
 typedef void (*JPBFxScreenGlowHook)(
     void *user_data,

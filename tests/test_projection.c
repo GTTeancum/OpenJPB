@@ -38,7 +38,7 @@ typedef struct ScreenPolyTrace {
     int vertexCount;
     int noScale;
     JPBScreenPolyVertex vertices[4];
-    JPBScreenPolyVertex captured[8][4];
+    JPBScreenPolyVertex captured[128][4];
 } ScreenPolyTrace;
 
 typedef struct ScreenPolyTriangleTrace {
@@ -105,7 +105,7 @@ static void capture_screen_poly(
             trace->vertices,
             vertices,
             (size_t)vertex_count * sizeof(trace->vertices[0]));
-        if (call < 8) {
+        if (call < (int)(sizeof(trace->captured) / sizeof(trace->captured[0]))) {
             memcpy(
                 trace->captured[call],
                 vertices,
@@ -1014,6 +1014,119 @@ int main(void)
               UINT32_C(0x5f112233));
         CHECK(poly_trace.vertices[0].tu == 0.0f);
         CHECK(poly_trace.vertices[0].tv == 0.0f);
+        memset(&poly_trace, 0, sizeof(poly_trace));
+        gGlobalTimer = 0;
+        jpb_DrawSaberFan(
+            0, 0, &base, &tip, 0,
+            UINT32_C(0x1f112233));
+        CHECK(poly_trace.calls == 0);
+        jpb_DrawSaberFan(
+            0, 0, &base, &tip, 1,
+            UINT32_C(0x1f112233));
+        CHECK(poly_trace.calls == 0);
+        gGlobalTimer = 256;
+        tip.vy += 40;
+        jpb_DrawSaberFan(
+            0, 0, &base, &tip, 1,
+            UINT32_C(0x1f112233));
+        CHECK(poly_trace.calls == 63);
+        CHECK(poly_trace.vertexCount == 3);
+        /* The fan starts at the hilt, fades out at its perimeter, and has
+         * a white core; no separate trailing blade or tip crossbar. */
+        CHECK(poly_trace.captured[0][0].x == 100.0f);
+        CHECK(poly_trace.captured[0][0].y == 200.0f);
+        CHECK((poly_trace.captured[0][0].argb >> 24) == 0);
+        {
+            int call, vertex, white_core = 0, soft_edge = 0;
+            for (call = 0; call < poly_trace.calls; ++call)
+                for (vertex = 0; vertex < 3; ++vertex) {
+                    uint32_t argb = poly_trace.captured[call][vertex].argb;
+                    if (argb == UINT32_C(0xffffffff)) white_core = 1;
+                    if ((argb >> 24) > 0 && (argb >> 24) < 255) {
+                        soft_edge = 1;
+                        /* This blue-biased blade must carry its hue through
+                         * every feather vertex, not fade neutral white. */
+                        CHECK((argb & 255) > ((argb >> 16) & 255));
+                    }
+                }
+            CHECK(white_core);
+            CHECK(soft_edge);
+        }
+        /* The opaque core reaches the live physical tip, before the glow
+         * fades beyond it. Prevent the old 78%-length white fan returning. */
+        {
+            int call, vertex, reaches_tip = 0;
+            for (call = 0; call < poly_trace.calls; ++call)
+                for (vertex = 0; vertex < 3; ++vertex) {
+                    const JPBScreenPolyVertex *point = &poly_trace.captured[call][vertex];
+                    if (fabsf(point->x - tip.vx) < .01f &&
+                        fabsf(point->y - tip.vy) < .01f &&
+                        fabsf(point->z - tip.vz) < .01f &&
+                        point->argb == UINT32_C(0xffffffff)) reaches_tip = 1;
+                }
+            CHECK(reaches_tip);
+        }
+        CHECK(poly_trace.material == jpb_FxAdditiveGlowMaterial());
+        {
+            const _Material *core = jpb_FxAlphaGlowMaterial();
+            const _Material *glow = jpb_FxAdditiveGlowMaterial();
+            const JPBSoftwareTexture *core_texture = core->texture;
+            const JPBSoftwareTexture *glow_texture = glow->texture;
+            CHECK(core != glow);
+            CHECK(core_texture != glow_texture);
+            CHECK(core_texture->materialType == 2);
+            CHECK(core_texture->pixels == glow_texture->pixels);
+            CHECK(core_texture->colorOverride == -1);
+        }
+        /* Slow motion must narrow the fan rather than switch it off. */
+        memset(&poly_trace, 0, sizeof(poly_trace));
+        tip.vy += 1; gGlobalTimer += 256;
+        jpb_DrawSaberFan(0, 0, &base, &tip, 1, UINT32_C(0x1f112233));
+        CHECK(poly_trace.calls == 63);
+        memset(&poly_trace, 0, sizeof(poly_trace));
+        gGlobalTimer += 256;
+        jpb_DrawSaberFan(0, 0, &base, &tip, 1, UINT32_C(0x1f112233));
+        CHECK(poly_trace.calls == 63);
+        /* Retained geometry belongs to one player/blade only. */
+        memset(&poly_trace, 0, sizeof(poly_trace));
+        jpb_DrawSaberFan(1, 0, &base, &tip, 0, 0);
+        jpb_DrawSaberFan(0, 1, &base, &tip, 0, 0);
+        jpb_DrawSaberFan(1, 0, &base, &tip, 1, UINT32_C(0x1f112233));
+        jpb_DrawSaberFan(0, 1, &base, &tip, 1, UINT32_C(0x1f112233));
+        CHECK(poly_trace.calls == 0);
+        memset(&poly_trace, 0, sizeof(poly_trace));
+        gGlobalTimer += 256;
+        jpb_DrawSaberFan(0, 0, &base, &tip, 1, UINT32_C(0x1f112233));
+        CHECK(poly_trace.calls == 0);
+        jpb_DrawSaberFan(
+            0, 0, &base, &tip, 0,
+            UINT32_C(0x1f112233));
+        CHECK(poly_trace.calls == 0);
+        /* Translation alone must not draw a sweep; stale history and large
+         * teleports must also seed a new blade instead of leaving a streak. */
+        jpb_DrawSaberFan(0, 0, &base, &tip, 1, UINT32_C(0x1f112233));
+        base.vx += 20; tip.vx += 20; gGlobalTimer += 256;
+        jpb_DrawSaberFan(0, 0, &base, &tip, 1, UINT32_C(0x1f112233));
+        CHECK(poly_trace.calls == 0);
+        tip.vy += 20; gGlobalTimer += 0x401;
+        jpb_DrawSaberFan(0, 0, &base, &tip, 1, UINT32_C(0x1f112233));
+        CHECK(poly_trace.calls == 0);
+        base.vx += 1024; tip.vx += 1024; tip.vy += 20;
+        jpb_DrawSaberFan(0, 0, &base, &tip, 1, UINT32_C(0x1f112233));
+        CHECK(poly_trace.calls == 0);
+        jpb_DrawSaberFan(0, 0, &base, &tip, 0, 0);
+        /* Ending an attack must discard even a newly retained broad fan. */
+        jpb_DrawSaberFan(0, 0, &base, &tip, 1, UINT32_C(0x1f112233));
+        tip.vy += 40; gGlobalTimer += 256;
+        jpb_DrawSaberFan(0, 0, &base, &tip, 1, UINT32_C(0x1f112233));
+        CHECK(poly_trace.calls == 63);
+        memset(&poly_trace, 0, sizeof(poly_trace));
+        jpb_DrawSaberFan(0, 0, &base, &tip, 0, 0);
+        jpb_DrawSaberFan(0, 0, &base, &tip, 1, UINT32_C(0x1f112233));
+        CHECK(poly_trace.calls == 0);
+        jpb_DrawSaberFan(0, 0, &base, &tip, 0, 0);
+        jpb_DrawSaberFan(1, 0, &base, &tip, 0, 0);
+        jpb_DrawSaberFan(0, 1, &base, &tip, 0, 0);
         whitematAdd = NULL;
         jpb_WHookSetScreenPolyHook(NULL, NULL);
     }

@@ -62,6 +62,7 @@
 #include "jpb/whook.h"
 #include "jpb/world.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -693,6 +694,189 @@ void jedi_DrawBlur(
     _NoScaleEndPoly();
 }
 
+/* New visual-only fan. Store blade vectors relative to the hilt so character
+ * translation cannot smear the saber, and every triangle has zero width at
+ * the hilt. The live tip alone remains the gameplay contact point. */
+typedef struct JPBSaberFanHistory {
+    _svector blade;
+    _svector previous_blade;
+    _svector base;
+    uint32_t stamp;
+    uint32_t motion_stamp;
+    int has_sweep;
+    int valid;
+} JPBSaberFanHistory;
+
+static JPBSaberFanHistory jpb_saber_fan_history[JPB_PLAYER_CAPACITY][2];
+
+/* A contiguous swept sector: curved tip, white interior and a colored fade.
+ * No separate glowing rods at the old blade or across the tip chord. */
+static void jpb_saber_fan_sector(const FVECTOR camera[3],
+    const _svector *current, const _svector *previous, uint32_t color)
+{
+    static const float angles[] = {0, .06f, .18f, .38f, .60f, .78f, .91f, 1};
+    static const float angular_alpha[] = {1, 1, 1, 1, 1, .75f, .22f, 0};
+    /* Keep the white sweep at full blade length. Only its outer glow
+     * extends beyond the physical tip; fading inside it shortened the fan. */
+    static const float radii[] = {0, .16f, 1.0f, 1.0125f, 1.03f, 1.05f};
+    static const float radial_alpha[] = {0, 1, 1, .65f, .18f, 0};
+    /* Opt-in diagnostic comparison; normal gameplay retains pure white. */
+    const char *cool_white = getenv("JPB_SABER_FAN_COOL_WHITE");
+    uint32_t core_rgb = cool_white && cool_white[0] == '1'
+        ? UINT32_C(0x00f0f8ff) : UINT32_C(0x00ffffff);
+    FVECTOR mesh[8][6];
+    uint32_t colors[8][6];
+    float current_length = sqrtf((float)current->vx * current->vx +
+        (float)current->vy * current->vy + (float)current->vz * current->vz);
+    float previous_length = sqrtf((float)previous->vx * previous->vx +
+        (float)previous->vy * previous->vy + (float)previous->vz * previous->vz);
+    int a, r, triangle, v;
+    if (current_length < 1 || previous_length < 1) return;
+    for (a = 0; a < 8; ++a) {
+        float t = angles[a];
+        float x = (1-t)*current->vx + t*previous->vx;
+        float y = (1-t)*current->vy + t*previous->vy;
+        float z = (1-t)*current->vz + t*previous->vz;
+        float length = sqrtf(x*x + y*y + z*z);
+        float scale;
+        if (length < 1) return;
+        scale = ((1-t)*current_length + t*previous_length) / length;
+        for (r = 0; r < 6; ++r) {
+            float weight = radii[r] * scale;
+            float tint = r < 3 ? 0 : (r == 3 ? .45f : 1);
+            /* A fading white tail inherits warm scene colors. Carry the
+             * saber hue through the feather, retaining a pure white core. */
+            float edge_tint = 1.0f - angular_alpha[a] * radial_alpha[r];
+            if (edge_tint > tint) tint = edge_tint;
+            uint32_t rgb = 0;
+            int channel;
+            mesh[a][r].vx = camera[0].vx + weight *
+                ((1-t)*(camera[1].vx-camera[0].vx) + t*(camera[2].vx-camera[0].vx));
+            mesh[a][r].vy = camera[0].vy + weight *
+                ((1-t)*(camera[1].vy-camera[0].vy) + t*(camera[2].vy-camera[0].vy));
+            mesh[a][r].vz = camera[0].vz + weight *
+                ((1-t)*(camera[1].vz-camera[0].vz) + t*(camera[2].vz-camera[0].vz));
+            if (mesh[a][r].vz <= 1) return;
+            for (channel = 0; channel < 24; channel += 8) {
+                float core_channel = (float)((core_rgb >> channel) & 255);
+                rgb |= (uint32_t)(core_channel + tint *
+                    (((color >> channel) & 255) - core_channel)) << channel;
+            }
+            colors[a][r] = rgb | ((uint32_t)(255 * angular_alpha[a] * radial_alpha[r]) << 24);
+        }
+    }
+    for (a = 0; a < 7; ++a) for (r = 0; r < 5; ++r) {
+        for (triangle = 0; triangle < (r == 0 ? 1 : 2); ++triangle) {
+            int ai[3] = {a, a+1, triangle ? a : a+1};
+            int ri[3] = {r, triangle ? r+1 : r, r+1};
+            /* The first radial band has a single hilt apex. */
+            if (r == 0) { ri[1] = 1; ai[2] = a; }
+            /* The white blade-length interior covers the background. Only
+             * the outer colored halo adds light to the scene. */
+            _StartPoly(3, r < 2 ? jpb_FxAlphaGlowMaterial() :
+                jpb_FxAdditiveGlowMaterial());
+            for (v = 0; v < 3; ++v) {
+                const FVECTOR *point = &mesh[ai[v]][ri[v]];
+                _SetVert(v, point->vx, point->vy, point->vz,
+                    colors[ai[v]][ri[v]], .99f, .99f);
+            }
+            _NoScaleEndPoly();
+        }
+    }
+}
+
+void jpb_DrawSaberFan(
+    int player_number,
+    int blade_slot,
+    const VECTOR *base,
+    const _svector *tip,
+    int attacking,
+    uint32_t color)
+{
+    JPBSaberFanHistory *history;
+    _svector current_base;
+    _svector current_blade;
+    _svector previous_tip;
+    _svector current_tip;
+    _svector outer_points[3];
+    _svector sweep_blade;
+    FVECTOR outer_camera[3];
+    int dx, dy, dz;
+    uint32_t rgb = color & UINT32_C(0x00ffffff);
+
+    if ((unsigned)player_number >= JPB_PLAYER_CAPACITY ||
+        (unsigned)blade_slot >= 2U) return;
+    history = &jpb_saber_fan_history[player_number][blade_slot];
+    if (!attacking || base == NULL || tip == NULL) {
+        history->valid = 0;
+        return;
+    }
+
+    current_base.vx = (int16_t)base->vx;
+    current_base.vy = (int16_t)base->vy;
+    current_base.vz = (int16_t)base->vz;
+    current_base.pad = 0;
+    current_blade.vx = (int16_t)(tip->vx - current_base.vx);
+    current_blade.vy = (int16_t)(tip->vy - current_base.vy);
+    current_blade.vz = (int16_t)(tip->vz - current_base.vz);
+    current_blade.pad = 0;
+
+    dx = current_base.vx - history->base.vx;
+    dy = current_base.vy - history->base.vy;
+    dz = current_base.vz - history->base.vz;
+    if (!history->valid || gGlobalTimer - history->stamp > 0x400U ||
+        dx * dx + dy * dy + dz * dz > 0x200 * 0x200) {
+        history->blade = current_blade;
+        history->base = current_base;
+        history->stamp = gGlobalTimer;
+        history->valid = 1;
+        history->has_sweep = 0;
+        return;
+    }
+
+    dx = current_blade.vx - history->blade.vx;
+    dy = current_blade.vy - history->blade.vy;
+    dz = current_blade.vz - history->blade.vz;
+    sweep_blade = history->blade;
+    if (dx || dy || dz) {
+        history->previous_blade = history->blade;
+        history->motion_stamp = gGlobalTimer;
+        history->has_sweep = dx * dx + dy * dy + dz * dz < 0x100 * 0x100;
+    } else if (history->has_sweep &&
+        gGlobalTimer - history->motion_stamp <= 256U) {
+        /* Animation poses can repeat between 60 Hz presentations. Keep the
+         * last sweep for that intervening half-tick, rather than flashing
+         * the background through it. Never extend it beyond one frame. */
+        sweep_blade = history->previous_blade;
+        dx = current_blade.vx - sweep_blade.vx;
+        dy = current_blade.vy - sweep_blade.vy;
+        dz = current_blade.vz - sweep_blade.vz;
+    }
+    /* Let the sweep narrow continuously as the blade slows. A minimum
+     * movement cutoff made the fan blink off between animation poses. */
+    if (dx * dx + dy * dy + dz * dz > 0 &&
+        dx * dx + dy * dy + dz * dz < 0x100 * 0x100) {
+        current_tip.vx = tip->vx;
+        current_tip.vy = tip->vy;
+        current_tip.vz = tip->vz;
+        current_tip.pad = 0;
+        previous_tip.vx = (int16_t)(current_base.vx + sweep_blade.vx);
+        previous_tip.vy = (int16_t)(current_base.vy + sweep_blade.vy);
+        previous_tip.vz = (int16_t)(current_base.vz + sweep_blade.vz);
+        previous_tip.pad = 0;
+        outer_points[0] = current_base;
+        outer_points[1] = current_tip;
+        outer_points[2] = previous_tip;
+        (void)fRotTransPers(
+            &CameraMatrix, outer_points, outer_camera, 3);
+        jpb_saber_fan_sector(outer_camera, &current_blade,
+            &sweep_blade, rgb);
+    }
+    history->blade = current_blade;
+    history->base = current_base;
+    history->stamp = gGlobalTimer;
+}
+
 /* 0xB1B00, 736 bytes, global, 15 named locals
  * jedi_FireWeapon
  * PDB type: int (long*, playerObject*)
@@ -1249,6 +1433,7 @@ static void jedi_draw_sabre_blade(
     playerObject *player,
     Mnode *base,
     Mnode *tip,
+    int blade_slot,
     uint32_t color)
 {
     _svector outer;
@@ -1265,6 +1450,10 @@ static void jedi_draw_sabre_blade(
             &inner)) {
         return;
     }
+    jpb_DrawSaberFan(
+        player->playernum, blade_slot,
+        &base->v3RotCenter, &outer,
+        (*player->pMotion)->Damage > 1, blade_color);
     fx_screenGlow(
         &outer,
         &inner,
@@ -1274,15 +1463,6 @@ static void jedi_draw_sabre_blade(
     fx_screenGlow(
         &outer, &inner,
         JPB_SABRE_NORMAL_CORE_WIDTH, UINT32_C(0xffffffff));
-    if (player->subOffset != 0 &&
-        (*player->pMotion)->Damage > 1) {
-        jedi_DrawBlur(
-            &base->v3RotCenter,
-            &base->v3Velocity,
-            &outer,
-            &tip->v3Velocity,
-            blade_color);
-    }
 }
 
 static void jedi_check_sabre_world_contact(
@@ -1414,6 +1594,10 @@ static void jedi_draw_long_sabre(
             &outer, &inner)) {
         return;
     }
+    jpb_DrawSaberFan(
+        player->playernum, 0,
+        &base->v3RotCenter, &outer,
+        (*player->pMotion)->Damage > 1, blade_color);
     fx_screenGlow(
         &outer,
         &inner,
@@ -1423,15 +1607,6 @@ static void jedi_draw_long_sabre(
     fx_screenGlow(
         &outer, &inner,
         JPB_SABRE_LONG_CORE_WIDTH, UINT32_C(0xffffffff));
-    if (player->subOffset != 0 &&
-        (*player->pMotion)->Damage > 1) {
-        jedi_DrawBlur(
-            &base->v3RotCenter,
-            &base->v3Velocity,
-            &outer,
-            &tip->v3Velocity,
-            blade_color);
-    }
 }
 
 int jedi_HandleSabre(
@@ -1500,7 +1675,7 @@ int jedi_HandleSabre(
         if (tip == NULL) {
             return 0;
         }
-        jedi_draw_sabre_blade(player, base, tip, color);
+        jedi_draw_sabre_blade(player, base, tip, 0, color);
         if (second_base_id != 0 || second_tip_id != 0) {
             Mnode *second_base = coll_GetNode(
                 player->playernum, second_base_id);
@@ -1517,6 +1692,7 @@ int jedi_HandleSabre(
                 player,
                 second_base,
                 second_tip,
+                1,
                 color);
         }
     }

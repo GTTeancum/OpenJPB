@@ -49,6 +49,13 @@ void jedi_DrawBlur(
     _svector *p2,
     _svector *v2,
     uint32_t color);
+void jpb_DrawSaberFan(
+    int player_number,
+    int blade_slot,
+    const VECTOR *base,
+    const _svector *tip,
+    int attacking,
+    uint32_t color);
 int jedi_FireWeapon(
     int32_t *cpad, playerObject *player);
 int jedi_GetAwardFlags(int player_number, int points);

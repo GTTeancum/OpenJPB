@@ -23,6 +23,7 @@
 #include "jpb/resources.h"
 #include "jpb/scene.h"
 #include "jpb/texture.h"
+#include "jpb/software_renderer.h"
 #include "jpb/whook.h"
 
 #include <math.h>
@@ -45,6 +46,30 @@ static physicsObject *gm_p0;
 static int32_t gm_radius1;
 static int32_t gm_radius2;
 static _particle_list *globalparticlelist;
+
+_Material *jpb_FxAdditiveGlowMaterial(void)
+{
+    return additive_glowtexture;
+}
+
+_Material *jpb_FxAlphaGlowMaterial(void)
+{
+    /* Both PC and nxdk cache _LoadTexture by filename, so loading a_glow
+     * twice with different options does not create independent blend modes.
+     * A non-owning descriptor view shares pixels while explicitly selecting
+     * alpha blending. Never mutate the cached glow used by other effects. */
+    static _Material core;
+    static JPBSoftwareTexture core_texture;
+    if (additive_glowtexture == NULL || additive_glowtexture->texture == NULL)
+        return NULL;
+    core = *additive_glowtexture;
+    core_texture = *(const JPBSoftwareTexture *)additive_glowtexture->texture;
+    core_texture.materialType = 2;
+    core_texture.colorOverride = -1;
+    core.texture = &core_texture;
+    core.colorOverride = -1;
+    return &core;
+}
 
 void jpb_FxSetScreenGlowHook(
     JPBFxScreenGlowHook hook, void *user_data)

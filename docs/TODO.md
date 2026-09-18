@@ -5,6 +5,7 @@
 1. Shared DLC implementation and Blender authoring.
 2. LIVE: Blender level importer review.
 3. Original Xbox port (nxdk/XEMU).
+4. LIVE: Level 2 pause-menu rendering.
 
 ## 1. Shared DLC Implementation and Blender Authoring
 
@@ -34,5 +35,9 @@ Maintain both PC and Xbox builds with shared gameplay and Xbox-only code under `
 - [ ] Verify specific sound effects and remaining audio behavior through native capture and gameplay review. Level-one music and a named Obi-Wan saber swing match native AC97 output; level-two Marsh ambient music also matches. The 9,599-frame soak recorded 765 SFX plays with zero allocation failures. Remaining effect identities and listening quality remain open.
 
 Current boot, diagnostics, and unresolved visual evidence: [Xbox port](../xbox/README.md).
+
+## 4. LIVE: Level 2 Pause-Menu Rendering
+
+- [ ] Level 2 pause menu appeared white during a process-local harness run. Recheck in normal interactive play to determine whether this is a game rendering issue or specific to harness-driven capture.
 
 Completed-work evidence: [native mod support](NATIVE_MOD_SUPPORT.md), [roster verification](MOD_ROSTER_REVIEW_20260913.md), and [live review](LIVE_REVIEW_20260913.md).
