@@ -8,11 +8,11 @@
 - Maintain both PC and Xbox builds. Keep gameplay shared where possible, isolate Xbox adapters under `xbox/`, and validate relevant changes on both targets. Xbox uses nxdk, never the official XDK.
 
 - Name future Windows game builds and deployed executables `OpenJPB.exe`. The CMake target remains `jpb_pc_game`.
-- Deploy every test-ready build to the game folder by default before marking an item ready for live review.
+- Deploy every test-ready PC build to the installed PC game folder by default before marking an item ready for live review. Keep all Xbox executables, staged assets, test ISOs, captures, and diagnostics inside the repository; the user retrieves Xbox release files from `xbox/build/`.
 - If deployment is blocked because the user is actively testing or the executable is locked, report deployment as pending and complete it as soon as the game process exits.
 
 # Repository hygiene
 
 - Keep Xbox test ISOs, XEMU captures, telemetry, and temporary profiling artifacts under the ignored repository-local `xbox/test-artifacts/` directory. Reuse its single `OpenJPB-current.iso` and clean disposable outputs after each run; never place test artifacts in external game or ISO folders.
-- The external `C:/Games/OpenJPB-Xbox` folder is release deployment only: keep `default.xbe` and `res/` there. Store the asset manifest under `xbox/build/`, and test control markers under `xbox/test-config/active/`; the XEMU launcher may copy markers into the release tree only while constructing a test ISO and must remove them before it exits.
+- Keep the staged Xbox disc under `xbox/build/staged-disc/`, the release XBE under `xbox/build/release/`, the asset manifest under `xbox/build/`, and test control markers under `xbox/test-config/active/`. The only project artifact deployed outside the repository is the PC `OpenJPB.exe` in the installed PC game folder.
 - Monitor free disk space before and after large Xbox tests. Preserve source assets, the staged game copy, current build products, and evidence needed for review; remove only verified disposable artifacts.

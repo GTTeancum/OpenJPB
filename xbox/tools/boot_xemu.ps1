@@ -1,5 +1,5 @@
 param(
-    [string]$AssetRoot = 'C:\Games\OpenJPB-Xbox',
+    [string]$AssetRoot = '',
     [string]$XemuRoot = 'C:\Games\Emulators\Xemu',
     [string]$NxdkRoot = 'C:\nxdk',
     [string]$IsoRoot = '',
@@ -13,6 +13,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $xboxRoot = Split-Path $PSScriptRoot -Parent
 $buildRoot = Join-Path $xboxRoot 'build'
+$assetRootPath = if ($AssetRoot) { [IO.Path]::GetFullPath($AssetRoot) } else { Join-Path $buildRoot 'staged-disc' }
 $isoRootPath = if ($IsoRoot) { [IO.Path]::GetFullPath($IsoRoot) } else { Join-Path $xboxRoot 'test-artifacts' }
 $testConfigRootPath = if ($TestConfigRoot) { [IO.Path]::GetFullPath($TestConfigRoot) } else { Join-Path $xboxRoot 'test-config/active' }
 New-Item -ItemType Directory -Path $isoRootPath -Force | Out-Null
@@ -36,7 +37,7 @@ Get-CimInstance Win32_Process -Filter "Name='xemu.exe'" | Where-Object {
 # above, and extract-xiso overwrites an existing output image.
 $isoName = 'OpenJPB-current.iso'
 $builtXbe = Join-Path $buildRoot 'release/default.xbe'
-$assetXbe = Join-Path $AssetRoot 'default.xbe'
+$assetXbe = Join-Path $assetRootPath 'default.xbe'
 if (!(Test-Path -LiteralPath $assetXbe) -or
     (Get-FileHash -LiteralPath $builtXbe).Hash -ne (Get-FileHash -LiteralPath $assetXbe).Hash) {
     Copy-Item -LiteralPath $builtXbe -Destination $assetXbe -Force
@@ -48,13 +49,13 @@ if (Test-Path -LiteralPath $testConfigRootPath -PathType Container) {
 Push-Location $isoRootPath
 try {
     foreach ($marker in $testMarkers) {
-        Copy-Item -LiteralPath $marker.FullName -Destination (Join-Path $AssetRoot $marker.Name) -Force
+        Copy-Item -LiteralPath $marker.FullName -Destination (Join-Path $assetRootPath $marker.Name) -Force
     }
-    & (Join-Path $NxdkRoot 'tools/extract-xiso/build/extract-xiso.exe') -c $AssetRoot $isoName *> (Join-Path $isoRootPath 'iso.log')
+    & (Join-Path $NxdkRoot 'tools/extract-xiso/build/extract-xiso.exe') -c $assetRootPath $isoName *> (Join-Path $isoRootPath 'iso.log')
     if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $isoName)) { throw 'Disc image creation failed.' }
 } finally {
     foreach ($marker in $testMarkers) {
-        Remove-Item -LiteralPath (Join-Path $AssetRoot $marker.Name) -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $assetRootPath $marker.Name) -Force -ErrorAction SilentlyContinue
     }
     Pop-Location
 }

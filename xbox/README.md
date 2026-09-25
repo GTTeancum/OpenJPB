@@ -137,7 +137,7 @@ layout must not be used as the Xbox library ABI.
 
 ## Separate assets and emulator
 
-`tools/stage_assets.py` copies resources to `C:/Games/OpenJPB-Xbox`; original
+`tools/stage_assets.py` copies resources to `xbox/build/staged-disc`; original
 files stay intact. The current **128px maximum is only a boot-test dataset**,
 not a final quality target. Its manifest records original/staged dimensions
 and hashes at repository-local `xbox/build/asset-manifest.json`. Final resizing must be selective and supported by measured RAM
@@ -153,15 +153,14 @@ XEMU instance, so repeated tests no longer accumulate full asset images.
 The ISO, captures, telemetry and other test outputs live under the ignored
 repository-local `xbox/test-artifacts/` directory. Test marker files live in
 `xbox/test-config/active/`; the launcher adds them only while constructing the
-ISO and removes them from the external release deployment afterward.
+ISO and removes them from the repository-local staged disc afterward.
 `tools/cleanup_test_isos.ps1` previews the old timestamped images and accepts
 `-Execute` for manual cleanup; it excludes the active image and checks that
 each candidate is directly inside the chosen ISO directory.
 `tools/cleanup_repo_artifacts.ps1` likewise previews generated ISOs left in
 `xbox/build`; its `-Execute` switch removes only named disposable ISO files
-directly under that build directory. The external `C:/Games/OpenJPB-Xbox`
-directory contains only release deployables; PC releases continue to deploy to
-the installed PC game folder.
+directly under that build directory. All Xbox outputs remain under the repository;
+PC `OpenJPB.exe` releases continue to deploy to the installed PC game folder.
 
 An `xbox-smoke.txt` file in `xbox/test-config/active/` opts into in-process input:
 Confirm the level intro at frame 30, 60 right frames starting at frame 60,

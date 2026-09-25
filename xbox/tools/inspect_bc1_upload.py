@@ -10,7 +10,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--port', type=int, default=9247)
     p.add_argument('--map', type=Path, default=Path('xbox/build/OpenJPB.map'))
-    p.add_argument('--assets', type=Path, default=Path('C:/Games/OpenJPB-Xbox/res'))
+    p.add_argument('--assets', type=Path, default=Path('xbox/build/staged-disc/res'))
     p.add_argument('--verify-full', action='store_true',
                    help='Read full live payloads and compare with matched XBT files')
     p.add_argument('--index', type=int, help='Inspect one texture-cache index')

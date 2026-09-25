@@ -69,7 +69,7 @@ with socket.create_connection(("127.0.0.1", 9247), timeout=2) as monitor:
 
     cpu_words = read(source, width * height)
     gpu_words = read(gpu, pitch * height // 4)
-    expected = Image.open("C:/Games/OpenJPB-Xbox/res/default/a_glow.tga").convert("RGBA")
+    expected = Image.open("xbox/build/staged-disc/res/default/a_glow.tga").convert("RGBA")
     issues = []
     for y in range(height):
         for x in range(width):

@@ -20,10 +20,10 @@ Validation:
   gating, white core/feather, hilt anchoring, translation, stale history and teleport reset.
 - Native PC captures inspected at frames 5, 7, 10, 14, 21 and 31: curved soft
   attack sweep, narrow edge-on sweep, and no lingering fan in recovery/idle.
-- PC proof: C:/Users/smmel/AppData/Local/Temp/jpb-fan-curved-sequence/
+- PC proof: out/migrated-temp-artifacts/saber-fan-20260917/jpb-fan-curved-sequence/
 - Xbox boot and six native captures inspected; these caught recovery/idle
   rather than the brief sweeping pose. Xbox fan appearance remains unverified.
-- Xbox evidence: C:/Users/smmel/AppData/Local/Temp/jpb-fan-curved-xbox-proof/
+- Xbox evidence: out/migrated-temp-artifacts/saber-fan-20260917/jpb-fan-curved-xbox-proof/
 - An overly broad test selection also ran 34 tests: 28 passed, six failed
   expectation matching (title character selection 580/581, menu handoffs
   757/758/759, attack smoke 779). These failures are untriaged; do not claim
@@ -42,7 +42,7 @@ Its colored tip fade occupies only the outer 5%, with alpha falling through
 alpha gap. The trailing angular fade remains gradual.
 
 PC native frames 7, 10 and 14 inspected in
-C:/Users/smmel/AppData/Local/Temp/jpb-fan-full-tip-proof/.
+out/migrated-temp-artifacts/saber-fan-20260917/jpb-fan-full-tip-proof/.
 A new regression check requires an opaque white vertex at the live blade tip.
 All three focused tests pass; PC and nxdk builds pass and both game-folder
 executables are updated. The running Xbox ISO/session is the preceding build;
@@ -71,7 +71,7 @@ in that region, maximum channel change 30. This verifies an actual rendering
 correction; it does not measure physical monitor response.
 
 Corrected captures inspected at frames 5, 7, 10 and 14:
-C:/Users/smmel/AppData/Local/Temp/jpb-fan-independent-alpha/.
+out/migrated-temp-artifacts/saber-fan-20260917/jpb-fan-independent-alpha/.
 Federation automated captures remained in the scripted opening, so those do
 not establish a saber appearance check. No monitor fault is diagnosed.
 PC and nxdk builds pass; three focused tests pass; both deployed executables
@@ -110,7 +110,7 @@ projection tests pass with the default. This is a diagnostic, not confirmation
 of symptom resolution and not a global display color adjustment.
 
 Isolated test executable and read-only asset junction:
-C:/Users/smmel/AppData/Local/Temp/jpb-saber-color-lab/
+out/migrated-temp-artifacts/saber-fan-20260917/jpb-saber-color-lab/
 32 horizontal-attack frames captured with cool white. Active swing frames
 7, 8, 9, 10, 12 and 14 visually inspected and show the expected subtle cooler
 core. Also captured 48 consecutive frames with horizontal attack presses at

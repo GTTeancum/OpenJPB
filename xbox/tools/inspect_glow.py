@@ -39,7 +39,7 @@ vertices=np.array(struct.unpack('<'+'f'*len(words),struct.pack('<'+'I'*len(words
 out=Path('xbox/build/xemu/glow-all-vertices')
 out.mkdir(parents=True,exist_ok=True)
 (out/'vertices.json').write_text(json.dumps(vertices.tolist(),indent=2))
-texture=np.asarray(Image.open('C:/Games/OpenJPB-Xbox/res/default/a_glow.tga').convert('RGBA'),dtype=float)/255
+texture=np.asarray(Image.open('xbox/build/staged-disc/res/default/a_glow.tga').convert('RGBA'),dtype=float)/255
 height,width=texture.shape[:2]
 canvas=np.zeros((960,1280,3))
 for tri in vertices.reshape(-1,3,11):
