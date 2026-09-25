@@ -1,4 +1,5 @@
 /build/
+/test-artifacts/
 /main.exe
 /main.lib
 *.obj

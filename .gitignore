@@ -3,6 +3,7 @@
 /build-*/
 /build_asan*/
 /out/
+/xbox/test-artifacts/
 /.tools/
 /ghidra_projects/
 /decompiler-export/

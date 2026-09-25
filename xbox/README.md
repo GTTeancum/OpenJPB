@@ -140,7 +140,7 @@ layout must not be used as the Xbox library ABI.
 `tools/stage_assets.py` copies resources to `C:/Games/OpenJPB-Xbox`; original
 files stay intact. The current **128px maximum is only a boot-test dataset**,
 not a final quality target. Its manifest records original/staged dimensions
-and hashes. Final resizing must be selective and supported by measured RAM
+and hashes at repository-local `xbox/build/asset-manifest.json`. Final resizing must be selective and supported by measured RAM
 budgets, preserving higher resolution where it matters. Movies are currently
 excluded from staging.
 
@@ -150,15 +150,20 @@ configuration. EEPROM is copied, HDD is snapshot-backed, input auto-binding
 is disabled, and no host keyboard/controller events are injected.
 The launcher now overwrites `OpenJPB-current.iso` after stopping that isolated
 XEMU instance, so repeated tests no longer accumulate full asset images.
+The ISO, captures, telemetry and other test outputs live under the ignored
+repository-local `xbox/test-artifacts/` directory. Test marker files live in
+`xbox/test-config/active/`; the launcher adds them only while constructing the
+ISO and removes them from the external release deployment afterward.
 `tools/cleanup_test_isos.ps1` previews the old timestamped images and accepts
 `-Execute` for manual cleanup; it excludes the active image and checks that
 each candidate is directly inside the chosen ISO directory.
 `tools/cleanup_repo_artifacts.ps1` likewise previews generated ISOs left in
 `xbox/build`; its `-Execute` switch removes only named disposable ISO files
-directly under that build directory. The launcher defaults to the D: ISO
-directory so a command without `-IsoRoot` no longer fills the source tree.
+directly under that build directory. The external `C:/Games/OpenJPB-Xbox`
+directory contains only release deployables; PC releases continue to deploy to
+the installed PC game folder.
 
-An `xbox-smoke.txt` file in the staged disc root opts into in-process input:
+An `xbox-smoke.txt` file in `xbox/test-config/active/` opts into in-process input:
 Confirm the level intro at frame 30, 60 right frames starting at frame 60,
 60 left frames, two jumps, and continuing attack presses every 20 frames.
 The overlay reports frame, elapsed milliseconds, pad bits and motion ID.
@@ -484,7 +489,7 @@ identity and listening review.
 
 The private asset pipeline stages 256 px BC1 MODEL textures alongside the
 128 px CPU TGAs. The first test loaded Obi-Wan and droid BC1 resources, but
-native captures in `D:/OpenJPB-Xbox-ISOs/model-bc1-review` showed dark and
+native captures in `xbox/test-artifacts/model-bc1-review` showed dark and
 noisy patches. `tools/inspect_bc1.py` decoded the staged images correctly;
 `tools/inspect_bc1_upload.py` confirmed the entire live `obi_arm.xbt` GPU
 payload matched its file. A diagnostic quad showed that its normal V range
@@ -495,11 +500,11 @@ within the intended texture; the same correction is applied to world and
 model paths in `src/gpu.c`. The diagnostic quad was removed.
 
 The corrected build's 2× native captures at frames 300, 700, 1,500 and 4,100
-are in `D:/OpenJPB-Xbox-ISOs/bc1-vhalf-world-model`. All four were inspected:
+are in `xbox/test-artifacts/bc1-vhalf-world-model`. All four were inspected:
 characters, FED geometry, saber and HUD render coherently throughout combat
 and after the StageExit reset. The frame-4,100 monitor reports 587 free pages,
 330 SFX plays and zero allocation failures. A fresh native AC97 recording in
-`D:/OpenJPB-Xbox-ISOs/bc1-vhalf-audio` has no clipped PCM samples. Three
+`xbox/test-artifacts/bc1-vhalf-audio` has no clipped PCM samples. Three
 segments match `01_FedFight1.wav` at a shared 7.34175-second offset
 (correlations 0.956–0.984), and `sabrsw05.wav` matches after subtracting the
 music with correlation 0.981. Wider visual and audio coverage remains open.
@@ -529,16 +534,16 @@ tiled output to a separate path. The tool checks that every reconstructed
 vertex is byte-identical except for V; both staged levels passed that check
 and the XLV structure validator.
 
-Native 2× XEMU captures in `D:/OpenJPB-Xbox-ISOs/marsh-rebased-bc1` show the
+Native 2× XEMU captures in `xbox/test-artifacts/marsh-rebased-bc1` show the
 grass floor, trees, Obi-Wan and HUD without the dark speckled strips seen in
 the earlier BC1 trial. Marsh frame 660 reaches the same player position and
 records 23 SFX plays with zero allocation failures. FED captures at frames
-500, 1,000 and 4,100 in `D:/OpenJPB-Xbox-ISOs/fed-rebased-bc1` retain the
+500, 1,000 and 4,100 in `xbox/test-artifacts/fed-rebased-bc1` retain the
 opening fight, droids, saber, world and HUD through a StageExit reset; frame
 4,100 has 333 free 4 KiB pages, 202 SFX plays and zero failures. Wider visual
 parity, later levels and level progression remain open.
 The same staged FED build also reached native XEMU frame 9,600 in
-`D:/OpenJPB-Xbox-ISOs/fed-rebased-longrun`: the captured frame still shows
+`xbox/test-artifacts/fed-rebased-longrun`: the captured frame still shows
 Obi-Wan, live droids, level geometry and HUD. The monitor recorded 599 SFX
 plays, zero allocation failures and the same 333 free 4 KiB pages, so the
 second BC1 payload did not cause a late memory decline in this route.
@@ -546,7 +551,7 @@ second BC1 payload did not cause a late memory decline in this route.
 The dark opening behind Marsh foliage also appears in a process-local,
 headless Windows `OpenJPB.exe --quickload marsh` capture, so it is present in
 the current PC rendering of this level. A separate native XEMU AC97 capture
-in `D:/OpenJPB-Xbox-ISOs/marsh-audio-review` contains 20.57 seconds of
+in `xbox/test-artifacts/marsh-audio-review` contains 20.57 seconds of
 audio, no clipped samples, and three segments matching staged
 `02_MarshAmbient1.wav` at the same 6.0395-second offset (correlations
 0.634–0.967). The capture establishes that ambient music is playing; it
@@ -558,12 +563,12 @@ Up played a running animation but moved the player backward into the spawn
 boundary. The Xbox pad adapter had left `player1InputType` at -1 and had not
 published the pad axes that the shared controller path requires. The adapter
 now sets controller mode and supplies axes with its digital direction bits.
-The native 2× XEMU captures in `D:/OpenJPB-Xbox-ISOs/marsh-pad-axes` show
+The native 2× XEMU captures in `xbox/test-artifacts/marsh-pad-axes` show
 Obi-Wan travelling into the forest and reaching Z=-6199 from Z=-7168. An
 independent 300-frame headless PC virtual-W run reaches the same final Z.
 Marsh frame 660 records 23 SFX plays with zero allocation failures; level-one
 regression frames 500 and 1,000 in
-`D:/OpenJPB-Xbox-ISOs/fed-pad-axes-regression` retain visible world, combat,
+`xbox/test-artifacts/fed-pad-axes-regression` retain visible world, combat,
 HUD and later movement with 75 SFX plays and zero failures. The staged
 level-select marker was removed after that review, restoring FED as the Xbox
 build's default start. The pad adapter now feeds raw Xbox stick axes and
@@ -572,18 +577,18 @@ process-local synthetic stick test in Marsh recorded `JPB_PAD_UP` at half
 deflection (frames 80-180), then `JPB_PAD_UP | JPB_PAD_ANALOG_MOVEMENT` at full
 deflection (frames 188-285); Obi-Wan advanced from Z=-7168 to Z=-6199. The
 native emulator-monitor trace is in
-`D:/OpenJPB-Xbox-ISOs/marsh-analog-telemetry/captures.json`. This verifies
+`xbox/test-artifacts/marsh-analog-telemetry/captures.json`. This verifies
 game-side stick mapping and the walk/run threshold; a physical controller
 and subjective analog feel remain unverified.
 
 After removing the Marsh and analog selectors, a fresh default FED disc
 booted at XEMU surface scale 2 with the shared controller mapper. Native
-captures in `D:/OpenJPB-Xbox-ISOs/fed-shared-controller-regression-2` show
+captures in `xbox/test-artifacts/fed-shared-controller-regression-2` show
 Obi-Wan, a live droid, textured corridor, saber and HUD during combat.
 The monitor reported zero SFX allocation failures and 333 free 4 KiB pages.
 `capture_smoke.py` now reads the active emulator configuration's screenshot
 directory by default; a follow-up native capture in
-`D:/OpenJPB-Xbox-ISOs/fed-auto-capture-path` verified that path resolution.
+`xbox/test-artifacts/fed-auto-capture-path` verified that path resolution.
 
 ### 512 px selective quality and combat profiling (2026-09-17)
 
@@ -592,8 +597,8 @@ Obi-Wan's head and torso from original 512–1024 px sources. Run
 `tools/upgrade_textures.py` against the original game and the private Xbox
 staging directory after initial staging; it updates only the selected BC1
 files and their manifest hashes. Native 2× captures in
-`D:/OpenJPB-Xbox-ISOs/fed-512-quality-retry` and
-`D:/OpenJPB-Xbox-ISOs/fed-512-batch384-visual` show textured FED geometry,
+`xbox/test-artifacts/fed-512-quality-retry` and
+`xbox/test-artifacts/fed-512-batch384-visual` show textured FED geometry,
 Obi-Wan, droids, the saber and HUD. The latter recorded zero SFX allocation
 failures and 185 free 4 KiB pages. The installed Windows executable was not
 replaced.
@@ -602,7 +607,7 @@ replaced.
 An early combat baseline around frames 417–763 was 23.2 FPS. Larger contiguous
 model batches and reuse of BMD color, camera and projected vertex work improve
 the current frames 300–700 interval to 26.6 FPS (sparse monitor sampling;
-`D:/OpenJPB-Xbox-ISOs/perf-fed-512-batch384.json`). When the active wave
+`xbox/test-artifacts/perf-fed-512-batch384.json`). When the active wave
 thins after frame 585, one-second intervals measure about 30 FPS. The frame
 300–700 target is still unmet: approximately 4,600 triangles per frame in the
 busy section fall to roughly 1,000–1,500 afterward. All 12 enemy classes and
@@ -617,7 +622,7 @@ windows, rather than frame numbers that shift with rendering speed, shows
 30.0–36.8 FPS over ticks 300–800 versus 21.7–28.9 FPS before batching.
 The subsequent Xbox-only inverse-depth cache gave mixed interval results
 (28.5–39.1 FPS); it is not evidence of a stable 60 FPS. One native 2× combat
-capture in `D:/OpenJPB-Xbox-ISOs/inverse-depth-smoke` shows Obi-Wan, a droid,
+capture in `xbox/test-artifacts/inverse-depth-smoke` shows Obi-Wan, a droid,
 saber, FED room and HUD without visible corruption. It recorded 57 SFX plays,
 zero allocation failures and 238 free 4 KiB pages. XEMU's native audio WAV
 contained 79 seconds of nonzero stereo PCM. The latest PC build and BMD,
@@ -648,7 +653,7 @@ test directory.
 
 Gameplay TrueType text now emits cached SDL_ttf glyph textures directly at
 the active output viewport. The score in the native 2× capture
-`D:/OpenJPB-Xbox-ISOs/captures/xemu-2026-09-17-11-00-56.png` is visibly
+`xbox/test-artifacts/captures/xemu-2026-09-17-11-00-56.png` is visibly
 sharper than the earlier enlarged 320×240 score. When both HUD card and text
 GPU hooks are active, the game skips the unused black/white software HUD
 composite; the first text attempt kept those buffers, exhausted free guest
@@ -713,7 +718,7 @@ the staged XBE again uses the verified direct-HUD baseline. This evidence
 points toward a broader change in face processing or GPU model submission,
 not another per-node check or small call-site rewrite.
 
-The next 2× native capture, `D:/OpenJPB-Xbox-ISOs/captures/xemu-2026-09-17-11-34-43.png`,
+The next 2× native capture, `xbox/test-artifacts/captures/xemu-2026-09-17-11-34-43.png`,
 still shows soft gameplay score text. The glyph sampler now uses point sampling
 because SDL_ttf already rasterizes antialiased coverage at the 640×480 output
 pixel size, but changing the sampler alone does not add detail to XEMU's
@@ -725,7 +730,7 @@ reverted before staging.
 
 The 480p acceptance pass after the model-array rollback used the staged direct
 renderer and one overwritten ISO. Its frame-650 native capture in
-`D:/OpenJPB-Xbox-ISOs/acceptance-480p-20260917` shows the FED doorway, Obi-Wan,
+`xbox/test-artifacts/acceptance-480p-20260917` shows the FED doorway, Obi-Wan,
 droids, and HUD with no missing polygons in that view. A 512-frame performance
 ring measured 23 ms median, 28 ms at the 95th percentile, and 38 ms worst.
 At frame 1,619, audio counters showed 150 SFX plays with zero allocation

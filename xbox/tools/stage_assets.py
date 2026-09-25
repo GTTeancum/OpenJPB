@@ -15,6 +15,9 @@ import struct
 p = argparse.ArgumentParser()
 p.add_argument('--game-root', type=Path, required=True)
 p.add_argument('--destination', type=Path, required=True)
+p.add_argument('--manifest', type=Path,
+               default=Path('xbox/build/asset-manifest.json'),
+               help='Repository-local staging manifest path')
 p.add_argument('--max-texture', type=int, default=128)
 p.add_argument('--ui-selection', type=Path,
                default=Path('xbox/ui-texture-quality.json'),
@@ -28,6 +31,7 @@ p.add_argument('--gpu-level', action='append',
 a = p.parse_args()
 source = (a.game_root / 'res').resolve()
 destination = a.destination.resolve()
+manifest_path = a.manifest.resolve()
 if destination == source or source in destination.parents or destination in source.parents:
     raise SystemExit('Destination must be separate from original resources')
 if a.max_texture < 16 or a.max_texture & (a.max_texture - 1):
@@ -123,6 +127,7 @@ for f in sorted(source.rglob('*')):
     if hashlib.sha256(f.read_bytes()).hexdigest() != original_hash:
         raise RuntimeError(f'Source changed during staging: {f}')
     records.append(record)
-(destination / 'asset-manifest.json').write_text(json.dumps(records, indent=2))
+manifest_path.parent.mkdir(parents=True, exist_ok=True)
+manifest_path.write_text(json.dumps(records, indent=2))
 print(json.dumps({'files': len(records), 'sourceBytes': sum(r['sourceBytes'] for r in records),
                   'stagedBytes': sum(r['stagedBytes'] for r in records)}))

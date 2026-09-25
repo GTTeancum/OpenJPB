@@ -1,9 +1,11 @@
 param(
-    [string]$IsoRoot = 'D:\OpenJPB-Xbox-ISOs',
+    [string]$IsoRoot = '',
     [switch]$Execute
 )
 $ErrorActionPreference = 'Stop'
-$root = (Resolve-Path -LiteralPath $IsoRoot).Path
+$xboxRoot = Split-Path $PSScriptRoot -Parent
+$selectedRoot = if ($IsoRoot) { $IsoRoot } else { Join-Path $xboxRoot 'test-artifacts' }
+$root = (Resolve-Path -LiteralPath $selectedRoot).Path
 if (-not (Test-Path -LiteralPath $root -PathType Container)) {
     throw "ISO directory does not exist: $root"
 }

@@ -16,6 +16,8 @@ from bc1 import encode as encode_bc1
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--game-root', type=Path, required=True)
 parser.add_argument('--destination', type=Path, required=True)
+parser.add_argument('--manifest', type=Path,
+                    default=Path('xbox/build/asset-manifest.json'))
 parser.add_argument('--selection', type=Path,
                     default=Path('xbox/texture-quality.json'))
 args = parser.parse_args()
@@ -27,7 +29,7 @@ if game == destination or game in destination.parents or destination in game.par
 selection = json.loads(args.selection.read_text())
 if not isinstance(selection, dict) or not selection:
     parser.error('Selection must be a nonempty path-to-size JSON object')
-manifest_path = destination / 'asset-manifest.json'
+manifest_path = args.manifest.resolve()
 manifest = json.loads(manifest_path.read_text())
 records = {record['path'].lower(): record for record in manifest}
 changed = []

@@ -2,7 +2,8 @@ param(
     [string]$AssetRoot = 'C:\Games\OpenJPB-Xbox',
     [string]$XemuRoot = 'C:\Games\Emulators\Xemu',
     [string]$NxdkRoot = 'C:\nxdk',
-    [string]$IsoRoot = 'D:\OpenJPB-Xbox-ISOs',
+    [string]$IsoRoot = '',
+    [string]$TestConfigRoot = '',
     [string]$CaptureRoot = '',
     [string]$AudioWavPath = '',
     [int]$MonitorPort = 9247,
@@ -10,8 +11,10 @@ param(
     [ValidateSet(64,128)][int]$MemoryMb = 64
 )
 $ErrorActionPreference = 'Stop'
-$buildRoot = Join-Path (Split-Path $PSScriptRoot -Parent) 'build'
-$isoRootPath = if ($IsoRoot) { [IO.Path]::GetFullPath($IsoRoot) } else { $buildRoot }
+$xboxRoot = Split-Path $PSScriptRoot -Parent
+$buildRoot = Join-Path $xboxRoot 'build'
+$isoRootPath = if ($IsoRoot) { [IO.Path]::GetFullPath($IsoRoot) } else { Join-Path $xboxRoot 'test-artifacts' }
+$testConfigRootPath = if ($TestConfigRoot) { [IO.Path]::GetFullPath($TestConfigRoot) } else { Join-Path $xboxRoot 'test-config/active' }
 New-Item -ItemType Directory -Path $isoRootPath -Force | Out-Null
 $captureRootPath = if ($CaptureRoot) { [IO.Path]::GetFullPath($CaptureRoot) } else { Join-Path $isoRootPath 'captures' }
 New-Item -ItemType Directory -Path $captureRootPath -Force | Out-Null
@@ -21,7 +24,7 @@ if (!(Test-Path -LiteralPath $configPath)) { throw 'Create the isolated xemu.tom
 $sourceEeprom = Join-Path $XemuRoot 'eeprom.bin'
 $testEeprom = Join-Path $runRoot 'eeprom-test.bin'
 $eepromArgs = @((Join-Path $PSScriptRoot 'prepare_test_eeprom.py'), '--source', $sourceEeprom, '--output', $testEeprom)
-if (Test-Path -LiteralPath (Join-Path $AssetRoot 'xbox-720p.txt')) { $eepromArgs += '--720p' }
+if (Test-Path -LiteralPath (Join-Path $testConfigRootPath 'xbox-720p.txt')) { $eepromArgs += '--720p' }
 & python @eepromArgs
 if ($LASTEXITCODE -ne 0) { throw 'Failed to prepare isolated XEMU EEPROM.' }
 # Stop only the prior emulator using this exact isolated configuration.
@@ -38,11 +41,23 @@ if (!(Test-Path -LiteralPath $assetXbe) -or
     (Get-FileHash -LiteralPath $builtXbe).Hash -ne (Get-FileHash -LiteralPath $assetXbe).Hash) {
     Copy-Item -LiteralPath $builtXbe -Destination $assetXbe -Force
 }
+$testMarkers = @()
+if (Test-Path -LiteralPath $testConfigRootPath -PathType Container) {
+    $testMarkers = @(Get-ChildItem -LiteralPath $testConfigRootPath -File -Filter 'xbox-*.txt')
+}
 Push-Location $isoRootPath
 try {
+    foreach ($marker in $testMarkers) {
+        Copy-Item -LiteralPath $marker.FullName -Destination (Join-Path $AssetRoot $marker.Name) -Force
+    }
     & (Join-Path $NxdkRoot 'tools/extract-xiso/build/extract-xiso.exe') -c $AssetRoot $isoName *> (Join-Path $isoRootPath 'iso.log')
     if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $isoName)) { throw 'Disc image creation failed.' }
-} finally { Pop-Location }
+} finally {
+    foreach ($marker in $testMarkers) {
+        Remove-Item -LiteralPath (Join-Path $AssetRoot $marker.Name) -Force -ErrorAction SilentlyContinue
+    }
+    Pop-Location
+}
 $isoPath = (Join-Path $isoRootPath $isoName).Replace('\','/')
 $config = Get-Content -LiteralPath $configPath -Raw
 $testEepromConfig = $testEeprom.Replace('\','/')

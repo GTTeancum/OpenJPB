@@ -9,6 +9,8 @@ from PIL import Image
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--game-root', type=Path, required=True)
 p.add_argument('--destination', type=Path, required=True)
+p.add_argument('--manifest', type=Path,
+               default=Path('xbox/build/asset-manifest.json'))
 p.add_argument('--selection', type=Path,
                default=Path('xbox/ui-texture-quality.json'))
 a = p.parse_args()
@@ -17,7 +19,7 @@ destination = a.destination.resolve()
 if game == destination or game in destination.parents or destination in game.parents:
     p.error('Source game and staged Xbox roots must be separate')
 selection = json.loads(a.selection.read_text())
-manifest_path = destination / 'asset-manifest.json'
+manifest_path = a.manifest.resolve()
 manifest = json.loads(manifest_path.read_text())
 records = {record['path'].lower(): record for record in manifest}
 changed = []

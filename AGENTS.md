@@ -13,5 +13,6 @@
 
 # Repository hygiene
 
-- Keep generated Xbox test ISOs, XEMU captures, and temporary profiling artifacts out of the source repository. Reuse a single ISO per test location and clean disposable outputs after each run; never accumulate timestamped full-game copies in `xbox/build`.
+- Keep Xbox test ISOs, XEMU captures, telemetry, and temporary profiling artifacts under the ignored repository-local `xbox/test-artifacts/` directory. Reuse its single `OpenJPB-current.iso` and clean disposable outputs after each run; never place test artifacts in external game or ISO folders.
+- The external `C:/Games/OpenJPB-Xbox` folder is release deployment only: keep `default.xbe` and `res/` there. Store the asset manifest under `xbox/build/`, and test control markers under `xbox/test-config/active/`; the XEMU launcher may copy markers into the release tree only while constructing a test ISO and must remove them before it exits.
 - Monitor free disk space before and after large Xbox tests. Preserve source assets, the staged game copy, current build products, and evidence needed for review; remove only verified disposable artifacts.
