@@ -3,12 +3,19 @@
   "default/a_dbfont.tga": 256,
   "default/a_dbfont_new.png": 256,
   "default/a_dbfont_new.tga": 256,
-  "effects/tga/a_meter_main.png": 256,
-  "effects/tga/a_meter_main.tga": 512,
   "effects/tga/a_meter_bars.png": 256,
   "effects/tga/a_meter_bars.tga": 256,
   "effects/tga/a_meter_lights.png": 256,
   "effects/tga/a_meter_lights.tga": 256,
+  "effects/tga/a_meter_main.png": 256,
+  "effects/tga/a_meter_main.tga": 512,
   "front/a_winsys0.png": 512,
-  "front/a_winsys0.tga": 512
+  "front/a_winsys0.tga": 512,
+  "front/JPB_SplashV3_Sharpened.png": 512,
+  "front/loadscreenbg.png": 512,
+  "front/loadscreenfg.png": 512,
+  "front/NewUI/BlueBackground.png": 512,
+  "front/winif0.png": 512,
+  "front/winif2.png": 512,
+  "front/winsys0.png": 512
 }

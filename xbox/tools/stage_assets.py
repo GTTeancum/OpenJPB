@@ -19,6 +19,8 @@ p.add_argument('--manifest', type=Path,
                default=Path('xbox/build/asset-manifest.json'),
                help='Repository-local staging manifest path')
 p.add_argument('--max-texture', type=int, default=128)
+p.add_argument('--front-texture', type=int, default=256,
+               help='Default cap for front-end images before explicit UI overrides')
 p.add_argument('--ui-selection', type=Path,
                default=Path('xbox/ui-texture-quality.json'),
                help='Source-capped UI texture resolutions')
@@ -36,6 +38,8 @@ if destination == source or source in destination.parents or destination in sour
     raise SystemExit('Destination must be separate from original resources')
 if a.max_texture < 16 or a.max_texture & (a.max_texture - 1):
     raise SystemExit('Texture limit must be a power of two, at least 16')
+if a.front_texture < 16 or a.front_texture & (a.front_texture - 1):
+    raise SystemExit('Front-end texture limit must be a power of two, at least 16')
 if a.gpu_world_texture < 16 or a.gpu_world_texture & (a.gpu_world_texture - 1):
     raise SystemExit('GPU texture limit must be a power of two, at least 16')
 if a.gpu_model_texture < 16 or a.gpu_model_texture & (a.gpu_model_texture - 1):
@@ -62,7 +66,9 @@ for f in sorted(source.rglob('*')):
         with Image.open(f) as im:
             record['originalSize'] = list(im.size)
             gpu_image = im.copy()
-            limit = ui_quality.get(rel.as_posix().lower(), a.max_texture)
+            default_limit = (a.front_texture if rel.parts[0].lower() == 'front'
+                             else a.max_texture)
+            limit = ui_quality.get(rel.as_posix().lower(), default_limit)
             im.thumbnail((limit, limit), Image.Resampling.LANCZOS)
             record['stagedSize'] = list(im.size)
             # Uncompressed TGA remains compatible with the native reader.

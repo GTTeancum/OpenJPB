@@ -318,13 +318,263 @@ _TTF_Font *LoadFont(int fontStyle, int pointSize)
     }
     return *slot;
 }
+/*
+ * nxdk's 32-bit newlib vsnprintf currently stalls when a va_list borrowed
+ * from one of the recovered text writers contains a string conversion.  The
+ * retail writers use only strings, characters, padded integers and pointer
+ * values here.  Keep the workaround local to Xbox so the PC reconstruction
+ * continues to use the platform formatter verbatim.
+ */
+#if defined(JPB_XBOX)
+static void jpb_xbox_format_append(
+    char *destination, size_t capacity, size_t *length, char value)
+{
+    if (*length + 1 < capacity) {
+        destination[*length] = value;
+    }
+    ++*length;
+}
+
+static void jpb_xbox_format_string(
+    char *destination, size_t capacity, size_t *length,
+    const char *value, int width, int left_adjust, int precision)
+{
+    size_t value_length;
+    int padding;
+
+    if (value == NULL) {
+        value = "(null)";
+    }
+    value_length = strlen(value);
+    if (precision >= 0 && value_length > (size_t)precision) {
+        value_length = (size_t)precision;
+    }
+    padding = width > (int)value_length ? width - (int)value_length : 0;
+    if (!left_adjust) {
+        while (padding-- > 0) {
+            jpb_xbox_format_append(destination, capacity, length, ' ');
+        }
+    }
+    for (size_t i = 0; i < value_length; ++i) {
+        jpb_xbox_format_append(destination, capacity, length, value[i]);
+    }
+    if (left_adjust) {
+        while (padding-- > 0) {
+            jpb_xbox_format_append(destination, capacity, length, ' ');
+        }
+    }
+}
+
+static void jpb_xbox_format_unsigned(
+    char *destination, size_t capacity, size_t *length,
+    unsigned long long value, unsigned radix, int uppercase,
+    int negative, int width, int left_adjust, int zero_pad,
+    int alternate, int pointer_value)
+{
+    char reversed[32];
+    const char *digits = uppercase
+        ? "0123456789ABCDEF" : "0123456789abcdef";
+    int digit_count = 0;
+    int prefix_length = negative ? 1 : 0;
+    int padding;
+
+    do {
+        reversed[digit_count++] = digits[value % radix];
+        value /= radix;
+    } while (value != 0 && digit_count < (int)sizeof(reversed));
+    if ((alternate || pointer_value) && radix == 16) {
+        prefix_length += 2;
+    }
+    padding = width - prefix_length - digit_count;
+    if (padding < 0) {
+        padding = 0;
+    }
+    if (!left_adjust && !zero_pad) {
+        while (padding-- > 0) {
+            jpb_xbox_format_append(destination, capacity, length, ' ');
+        }
+    }
+    if (negative) {
+        jpb_xbox_format_append(destination, capacity, length, '-');
+    }
+    if ((alternate || pointer_value) && radix == 16) {
+        jpb_xbox_format_append(destination, capacity, length, '0');
+        jpb_xbox_format_append(destination, capacity, length,
+            uppercase ? 'X' : 'x');
+    }
+    if (!left_adjust && zero_pad) {
+        while (padding-- > 0) {
+            jpb_xbox_format_append(destination, capacity, length, '0');
+        }
+    }
+    while (digit_count-- > 0) {
+        jpb_xbox_format_append(
+            destination, capacity, length, reversed[digit_count]);
+    }
+    if (left_adjust) {
+        while (padding-- > 0) {
+            jpb_xbox_format_append(destination, capacity, length, ' ');
+        }
+    }
+}
+
+static void jpb_xbox_vformat(
+    char *destination, size_t capacity, const char *format,
+    va_list *arguments)
+{
+    size_t length = 0;
+
+    while (*format != '\0') {
+        int left_adjust = 0;
+        int zero_pad = 0;
+        int alternate = 0;
+        int width = 0;
+        int precision = -1;
+        int length_modifier = 0;
+        char conversion;
+
+        if (*format != '%') {
+            jpb_xbox_format_append(
+                destination, capacity, &length, *format++);
+            continue;
+        }
+        ++format;
+        if (*format == '%') {
+            jpb_xbox_format_append(destination, capacity, &length, '%');
+            ++format;
+            continue;
+        }
+        for (;;) {
+            if (*format == '-') left_adjust = 1;
+            else if (*format == '0') zero_pad = 1;
+            else if (*format == '#') alternate = 1;
+            else if (*format == '+' || *format == ' ') {
+                /* The recovered UI does not use explicit positive signs. */
+            } else break;
+            ++format;
+        }
+        if (*format == '*') {
+            width = va_arg(*arguments, int);
+            if (width < 0) {
+                left_adjust = 1;
+                width = -width;
+            }
+            ++format;
+        } else {
+            while (*format >= '0' && *format <= '9') {
+                width = width * 10 + (*format++ - '0');
+            }
+        }
+        if (*format == '.') {
+            ++format;
+            precision = 0;
+            if (*format == '*') {
+                precision = va_arg(*arguments, int);
+                ++format;
+            } else {
+                while (*format >= '0' && *format <= '9') {
+                    precision = precision * 10 + (*format++ - '0');
+                }
+            }
+        }
+        if (*format == 'l') {
+            length_modifier = 1;
+            if (format[1] == 'l') {
+                length_modifier = 2;
+                ++format;
+            }
+            ++format;
+        } else if (*format == 'z') {
+            length_modifier = 3;
+            ++format;
+        } else if (*format == 'h') {
+            /* Integers shorter than int are promoted through varargs. */
+            ++format;
+            if (*format == 'h') ++format;
+        }
+        conversion = *format;
+        if (conversion != '\0') ++format;
+        if (conversion == 's') {
+            jpb_xbox_format_string(destination, capacity, &length,
+                va_arg(*arguments, const char *), width, left_adjust,
+                precision);
+        } else if (conversion == 'c') {
+            char one[2] = {(char)va_arg(*arguments, int), '\0'};
+            jpb_xbox_format_string(destination, capacity, &length,
+                one, width, left_adjust, -1);
+        } else if (conversion == 'd' || conversion == 'i') {
+            long long signed_value;
+            unsigned long long magnitude;
+            if (length_modifier == 2)
+                signed_value = va_arg(*arguments, long long);
+            else if (length_modifier == 1)
+                signed_value = va_arg(*arguments, long);
+            else if (length_modifier == 3)
+                signed_value = (long long)va_arg(*arguments, ptrdiff_t);
+            else
+                signed_value = va_arg(*arguments, int);
+            magnitude = signed_value < 0
+                ? (unsigned long long)(-(signed_value + 1)) + 1
+                : (unsigned long long)signed_value;
+            jpb_xbox_format_unsigned(destination, capacity, &length,
+                magnitude, 10, 0, signed_value < 0, width,
+                left_adjust, zero_pad, 0, 0);
+        } else if (conversion == 'u' || conversion == 'x' ||
+                   conversion == 'X' || conversion == 'o') {
+            unsigned long long value;
+            if (length_modifier == 2)
+                value = va_arg(*arguments, unsigned long long);
+            else if (length_modifier == 1)
+                value = va_arg(*arguments, unsigned long);
+            else if (length_modifier == 3)
+                value = (unsigned long long)va_arg(*arguments, size_t);
+            else
+                value = va_arg(*arguments, unsigned int);
+            jpb_xbox_format_unsigned(destination, capacity, &length,
+                value, conversion == 'o' ? 8u :
+                    (conversion == 'u' ? 10u : 16u),
+                conversion == 'X', 0, width, left_adjust, zero_pad,
+                alternate, 0);
+        } else if (conversion == 'p') {
+            jpb_xbox_format_unsigned(destination, capacity, &length,
+                (uintptr_t)va_arg(*arguments, void *), 16, 0, 0, width,
+                left_adjust, zero_pad, 0, 1);
+        } else {
+            /* Preserve an unknown conversion visibly instead of stalling. */
+            jpb_xbox_format_append(destination, capacity, &length, '%');
+            if (conversion != '\0') {
+                jpb_xbox_format_append(
+                    destination, capacity, &length, conversion);
+            }
+        }
+    }
+    if (capacity != 0) {
+        destination[length < capacity ? length : capacity - 1] = '\0';
+    }
+}
+#endif
+
 static uint16_t *jpb_text_format_utf16(
-    char formatted_string[512], char *format, va_list arguments)
+    char formatted_string[512], char *format, va_list *arguments)
 {
     unsigned short *utf_string = NULL;
+#if defined(JPB_XBOX)
+    extern volatile unsigned jpb_XboxTextDrawPhase;
+    jpb_XboxTextDrawPhase = 20;
+#endif
 
-    (void)vsnprintf(formatted_string, 512, format, arguments);
+#if defined(JPB_XBOX)
+    jpb_xbox_vformat(formatted_string, 512, format, arguments);
+#else
+    (void)vsnprintf(formatted_string, 512, format, *arguments);
+#endif
+#if defined(JPB_XBOX)
+    jpb_XboxTextDrawPhase = 21;
+#endif
     ConvertToUTF16(formatted_string, &utf_string);
+#if defined(JPB_XBOX)
+    jpb_XboxTextDrawPhase = 22;
+#endif
     return (uint16_t *)(void *)utf_string;
 }
 
@@ -340,8 +590,12 @@ static int jpb_text_draw_2d(
     int depth_enabled,
     float depth,
     char *format,
-    va_list arguments)
+    va_list *arguments)
 {
+#if defined(JPB_XBOX)
+    extern volatile unsigned jpb_XboxTextDrawPhase;
+    jpb_XboxTextDrawPhase = 1;
+#endif
     char formatted_string[512];
     uint16_t *utf_string;
     SCREENRECT destination;
@@ -360,14 +614,23 @@ static int jpb_text_draw_2d(
         currentFontStyle = font_style;
         currentlyLoadedFont = LoadFont(font_style, point_size);
     }
+#if defined(JPB_XBOX)
+    jpb_XboxTextDrawPhase = 2;
+#endif
     utf_string = jpb_text_format_utf16(
         formatted_string, format, arguments);
+#if defined(JPB_XBOX)
+    jpb_XboxTextDrawPhase = 3;
+#endif
     SizeText(
         currentlyLoadedFont,
         point_size,
         (const unsigned short *)(const void *)utf_string,
         &width,
         &height);
+#if defined(JPB_XBOX)
+    jpb_XboxTextDrawPhase = 4;
+#endif
     if ((mode & 0x7f) == 1) {
         x -= width;
     } else if ((mode & 0x7f) == 2) {
@@ -395,6 +658,9 @@ static int jpb_text_draw_2d(
             point_size,
             color);
     }
+#if defined(JPB_XBOX)
+    jpb_XboxTextDrawPhase = 5;
+#endif
     if (jpb_text_draw_hook != NULL) {
         jpb_text_draw_hook(
             jpb_text_draw_user_data,
@@ -410,6 +676,9 @@ static int jpb_text_draw_2d(
             depth,
             utf_string);
     }
+#if defined(JPB_XBOX)
+    jpb_XboxTextDrawPhase = 6;
+#endif
     free(utf_string);
     return width;
 }
@@ -434,7 +703,7 @@ int SDLTextWrite(
     va_start(arguments, format);
     width = jpb_text_draw_2d(
         tint, 255, mode, x, y, 1.0f, 1.0f,
-        italic != 0, 0, 0.0f, format, arguments);
+        italic != 0, 0, 0.0f, format, &arguments);
     va_end(arguments);
     return width;
 }
@@ -461,7 +730,7 @@ int SDLTextWriteScale(
     va_start(arguments, format);
     width = jpb_text_draw_2d(
         tint, alpha, mode, x, y, scale, scaleAdjustment,
-        font_style, 0, 0.0f, format, arguments);
+        font_style, 0, 0.0f, format, &arguments);
     va_end(arguments);
     return width;
 }
@@ -501,7 +770,7 @@ int SDLTextWriteScale3D(
     }
     va_start(arguments, format);
     utf_string = jpb_text_format_utf16(
-        formatted_string, format, arguments);
+        formatted_string, format, &arguments);
     va_end(arguments);
     SizeText(
         currentlyLoadedFont,
@@ -561,7 +830,7 @@ int SDLTextWriteScaleDepth(
     va_start(arguments, format);
     width = jpb_text_draw_2d(
         tint, alpha, mode, x, y, scale, scaleAdjustment,
-        font_style, 1, depth, format, arguments);
+        font_style, 1, depth, format, &arguments);
     va_end(arguments);
     return width;
 }
@@ -595,7 +864,7 @@ int SDLTextWriteScaleMM(
     width = jpb_text_draw_2d(
         tint, alpha, mode, x, y, scale,
         scaleAdjustmentMM,
-        font_style, 0, 0.0f, format, arguments);
+        font_style, 0, 0.0f, format, &arguments);
     va_end(arguments);
     return width;
 }
@@ -624,7 +893,7 @@ int SDLTextWriteScaleMMDepth(
     width = jpb_text_draw_2d(
         tint, alpha, mode, x, y, scale,
         scaleAdjustmentMM,
-        font_style, 1, depth, format, arguments);
+        font_style, 1, depth, format, &arguments);
     va_end(arguments);
     return width;
 }

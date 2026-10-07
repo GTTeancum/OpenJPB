@@ -6,6 +6,10 @@
 #define JPB_XBOX_CANVAS_WIDTH 426
 #define JPB_XBOX_CANVAS_HEIGHT 240
 int jpb_XboxGpuInit(void);
+/* Release transient uploaded textures after a front-end/runtime owner ends.
+ * Shutdown also releases pbkit so the Xbox video mode can be changed safely. */
+void jpb_XboxGpuGarbageCollect(void);
+void jpb_XboxGpuShutdown(void);
 const JPBSoftwareLevelMesh *jpb_XboxLoadLevel(const char *path);
 void jpb_XboxLevelSetFrustum(const MATRIX *, float, float);
 int jpb_XboxLevelChunkVisible(unsigned batch, unsigned first);
@@ -23,6 +27,9 @@ int jpb_XboxGpuModelBegin(void *, JPBSoftwareFramebuffer *, JPBSoftwareDepthBuff
 int jpb_XboxGpuEffectsBegin(void *, JPBSoftwareFramebuffer *, JPBSoftwareDepthBuffer *);
 int jpb_XboxGpuComposite(void *, enum JPBGameRuntimeGameplayCompositeStage,
     const JPBSoftwareFramebuffer *, JPBSoftwareRenderStats *);
+/* Upload a complete software frame and draw it as a centered 4:3 image.
+ * The output backbuffer remains black outside that image. */
+int jpb_XboxGpuPresentFrontend(const JPBSoftwareFramebuffer *);
 int jpb_XboxGpuHudScreenDraws(void *, const JPBGameRuntimeScreenDraw *,
     size_t, JPBSoftwareFramebuffer *);
 int jpb_XboxGpuHudTextDraws(void *, const JPBGameRuntimeTextDraw *,

@@ -627,6 +627,11 @@ int jpb_GameRuntimeInitWithPlayerAssets(
     const char *cad_path,
     const char *bmd_path,
     int player_model_id);
+/* Install the same front-end draw and texture hooks as a gameplay runtime,
+ * without retaining level, model, collision, or resident-effect data.  This
+ * lets memory-constrained targets release the complete menu asset set before
+ * constructing a level. */
+int jpb_GameRuntimeInitFrontend(JPBGameRuntime *runtime);
 const char *jpb_GameRuntimeLastFailureStage(void);
 int jpb_GameRuntimeAddEnemyAssets(
     JPBGameRuntime *runtime,

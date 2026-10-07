@@ -2,6 +2,7 @@
    This backend is under construction; material pass parity and HUD composition
    must be verified before it replaces the software diagnostic renderer. */
 #include "gpu.h"
+#include "presentation.h"
 #include "jpb/level_world.h"
 #include "jpb/level.h"
 #include "jpb/material.h"
@@ -30,6 +31,9 @@ typedef struct XboxTexture {
 } XboxTexture;
 static XboxTexture textures[512];
 static unsigned texture_count;
+static uint32_t *frontend_texture;
+static int frontend_texture_width,frontend_texture_height;
+static unsigned frontend_texture_pitch;
 volatile unsigned jpb_XboxTextureCount;
 volatile unsigned jpb_XboxRawTextureBytes;
 /* At most 512 resident textures; a 1024-slot table keeps triangle lookups
@@ -59,6 +63,7 @@ static uint32_t white = 0xffffffff;
 static unsigned submitted_batches, submitted_vertices;
 static int model_pass;
 static float output_x_per_canvas=2.0f,output_y_per_canvas=2.0f;
+static float output_top;
 #define JPB_XBOX_MODEL_BATCH_VERTICES 384
 #define JPB_XBOX_MODEL_ARRAY_BYTES (384u * 1024u)
 typedef struct XboxModelArrayVertex {
@@ -367,8 +372,10 @@ int jpb_XboxGpuInit(void)
 void jpb_XboxGpuBegin(void)
 {
     VIDEO_MODE output_mode=XVideoGetMode();
+    JPBXboxPresentation presentation=jpb_XboxPresentation(output_mode);
     output_x_per_canvas=(float)output_mode.width/JPB_XBOX_CANVAS_WIDTH;
-    output_y_per_canvas=(float)output_mode.height/JPB_XBOX_CANVAS_HEIGHT;
+    output_y_per_canvas=(float)presentation.height/JPB_XBOX_CANVAS_HEIGHT;
+    output_top=(float)presentation.top;
     flush_model_batch();
     commit_model_commands();
     jpb_XboxGpuStage=10;
@@ -431,6 +438,13 @@ void jpb_XboxGpuPresent(void)
 {
     flush_model_batch();
     commit_model_commands();
+    VIDEO_MODE mode=XVideoGetMode();
+    JPBXboxPresentation presentation=jpb_XboxPresentation(mode);
+    if(presentation.top){
+        pb_fill(0,0,mode.width,presentation.top,0);
+        pb_fill(0,presentation.top+presentation.height,mode.width,
+            mode.height-presentation.top-presentation.height,0);
+    }
     uint64_t frequency=KeQueryPerformanceFrequency();
     if(frequency){
         jpb_XboxModelTriangleUs=(unsigned)(model_triangle_ticks*1000000u/frequency);
@@ -529,7 +543,7 @@ static void flush_model_batch(void)
             float z=1.00010001f-1.00010001f*(inverse/10240.0f);
             int tint=v->red>0 && v->green>0 && v->blue>0 && v->alpha>0;
             out->position[0]=v->x*output_x_per_canvas;
-            out->position[1]=v->y*output_y_per_canvas;
+            out->position[1]=output_top+v->y*output_y_per_canvas;
             out->position[2]=z*16777215;
             out->position[3]=1;
             out->color[0]=tint?v->red/255.0f:1;
@@ -573,7 +587,7 @@ static void flush_model_batch(void)
                 v->v*inverse*v_scale,0,inverse);
             p=pb_push4f(p,NV097_SET_VERTEX_DATA4F_M,
                 v->x*output_x_per_canvas,
-                v->y*output_y_per_canvas,z*16777215,1);
+                output_top+v->y*output_y_per_canvas,z*16777215,1);
         }
         p=pb_push1(p,NV097_SET_BEGIN_END,NV097_SET_BEGIN_END_OP_END);
     }
@@ -595,6 +609,40 @@ static void flush_model_batch(void)
     model_batch_count=0;
     ++jpb_XboxModelBatchFlushes;
     model_batch_ticks+=KeQueryPerformanceCounter()-batch_started;
+}
+
+void jpb_XboxGpuGarbageCollect(void)
+{
+    while(pb_busy()){}
+    for(unsigned i=0;i<texture_count;++i){
+        if(textures[i].pixels)MmFreeContiguousMemory(textures[i].pixels);
+    }
+    memset(textures,0,sizeof(textures));
+    memset(texture_hash,0,sizeof(texture_hash));
+    texture_count=0;
+    jpb_XboxTextureCount=0;
+    jpb_XboxRawTextureBytes=0;
+    last_texture=NULL;
+    triangle_state_texture=NULL;
+    model_batch_texture=NULL;
+    if(frontend_texture){
+        MmFreeContiguousMemory(frontend_texture);
+        frontend_texture=NULL;
+    }
+    frontend_texture_width=frontend_texture_height=0;
+    frontend_texture_pitch=0;
+}
+
+void jpb_XboxGpuShutdown(void)
+{
+    jpb_XboxGpuGarbageCollect();
+    if(model_array_vertices){
+        MmFreeContiguousMemory(model_array_vertices);
+        model_array_vertices=NULL;
+    }
+    model_array_enabled=0;
+    jpb_XboxModelArrayActive=0;
+    pb_kill();
 }
 
 int jpb_XboxGpuTriangle(void *unused, const JPBSoftwareMaterialVertex *a,
@@ -717,7 +765,7 @@ int jpb_XboxGpuTriangle(void *unused, const JPBSoftwareMaterialVertex *a,
             v->u*inverse*(entry->linear?entry->width:1),
             v->v*inverse*texture_v_scale(entry), 0, inverse);
         p = pb_push4f(p, NV097_SET_VERTEX_DATA4F_M,
-            v->x*output_x_per_canvas,v->y*output_y_per_canvas,
+            v->x*output_x_per_canvas,output_top+v->y*output_y_per_canvas,
             z*16777215, 1);
     }
     p = pb_push1(p, NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_END);
@@ -848,6 +896,11 @@ int jpb_XboxGpuLevel(void *user, const JPBSoftwareLevelMesh *mesh, JPBLevelFbxMe
         constants[24]=16777215; constants[25]=0.1f;
         constants[26]=constants[27]=0;
         jpb_XboxLevelSetFrustum(view,constants[12],constants[13]);
+        /* Preserve the authored frustum and shader bytecode. Only compress
+           projected Y around the existing framebuffer center for 4:3. */
+        VIDEO_MODE output_mode=XVideoGetMode();
+        JPBXboxPresentation presentation=jpb_XboxPresentation(output_mode);
+        constants[13]*=(float)presentation.height/(float)output_mode.height;
         p=pb_push1(p,NV097_SET_TRANSFORM_PROGRAM_START,32);
         p=pb_push1(p,NV097_SET_TRANSFORM_CONSTANT_LOAD,96);
         pb_push(p++,NV097_SET_TRANSFORM_CONSTANT,28); memcpy(p,constants,sizeof(constants)); p+=28;
@@ -1041,11 +1094,83 @@ int jpb_XboxGpuComposite(void *user, enum JPBGameRuntimeGameplayCompositeStage s
                 (i&2)?(float)fb->height:0,0,1);
             p=pb_push4f(p,NV097_SET_VERTEX_DATA4F_M,
                 (i&1)?(float)output_mode.width:0,
-                (i&2)?(float)output_mode.height:0,0,1);
+                output_top+((i&2)?output_y_per_canvas*JPB_XBOX_CANVAS_HEIGHT:0),0,1);
         }
         p=pb_push1(p,NV097_SET_BEGIN_END,NV097_SET_BEGIN_END_OP_END);
         pb_end(p);
     }
+    return 1;
+}
+
+int jpb_XboxGpuPresentFrontend(const JPBSoftwareFramebuffer *fb)
+{
+    VIDEO_MODE output_mode = XVideoGetMode();
+    JPBXboxPresentation area=jpb_XboxPresentation(output_mode);
+    uint32_t *p;
+
+    if (fb == NULL || fb->pixels == NULL || fb->width <= 0 ||
+        fb->height <= 0 || fb->stridePixels < fb->width ||
+        output_mode.width <= 0 || output_mode.height <= 0) {
+        return 0;
+    }
+    if (frontend_texture_width != fb->width ||
+        frontend_texture_height != fb->height) {
+        while (pb_busy()) {}
+        if (frontend_texture != NULL)
+            MmFreeContiguousMemory(frontend_texture);
+        frontend_texture_width = fb->width;
+        frontend_texture_height = fb->height;
+        frontend_texture_pitch = ((unsigned)fb->width * 4u + 63u) & ~63u;
+        frontend_texture = MmAllocateContiguousMemoryEx(
+            frontend_texture_pitch * (unsigned)fb->height,
+            0, 0x03ffafff, 0, PAGE_READWRITE | PAGE_WRITECOMBINE);
+    }
+    if (frontend_texture == NULL) return 0;
+
+    while (pb_busy()) {}
+    for (int y = 0; y < fb->height; ++y) {
+        memcpy(
+            frontend_texture +
+                (size_t)y * (frontend_texture_pitch / 4u),
+            fb->pixels + (size_t)y * (size_t)fb->stridePixels,
+            (size_t)fb->width * sizeof(uint32_t));
+    }
+
+    flush_model_batch();
+    commit_model_commands();
+    p = pb_begin();
+    p = pb_push1(p, NV097_SET_TRANSFORM_PROGRAM_START, 0);
+    p = pb_push1(p, NV097_SET_DEPTH_TEST_ENABLE, 0);
+    p = pb_push1(p, NV097_SET_DEPTH_MASK, 0);
+    p = pb_push1(p, NV097_SET_ALPHA_TEST_ENABLE, 0);
+    p = pb_push1(p, NV097_SET_BLEND_ENABLE, 0);
+    p = pb_push1(p, NV097_SET_TEXTURE_ADDRESS, 0x00050505);
+    p = pb_push1(p, NV097_SET_TEXTURE_CONTROL0, 0x4003ffc0);
+    p = pb_push1(p, NV097_SET_TEXTURE_FILTER, 0x02022000);
+    p = pb_push1(p, NV097_SET_TEXTURE_CONTROL1,
+        frontend_texture_pitch << 16);
+    p = pb_push1(p, NV097_SET_TEXTURE_IMAGE_RECT,
+        ((unsigned)fb->width << 16) | (unsigned)fb->height);
+    p = pb_push2(p, NV097_SET_TEXTURE_OFFSET,
+        (uint32_t)frontend_texture & 0x03ffffff,
+        1 | (2 << 4) |
+            (NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8R8G8B8 << 8) |
+            (1 << 16));
+    p = pb_push1(p, NV097_SET_BEGIN_END,
+        NV097_SET_BEGIN_END_OP_TRIANGLE_STRIP);
+    for (unsigned i = 0; i < 4; ++i) {
+        p = pb_push4f(p, NV097_SET_VERTEX_DATA4F_M + 3 * 16,
+            1, 1, 1, 1);
+        p = pb_push4f(p, NV097_SET_VERTEX_DATA4F_M + 9 * 16,
+            (i & 1) ? (float)fb->width : 0,
+            (i & 2) ? (float)fb->height : 0, 0, 1);
+        p = pb_push4f(p, NV097_SET_VERTEX_DATA4F_M,
+            (i & 1) ? (float)area.width : 0,
+            (float)area.top + ((i & 2) ? (float)area.height : 0), 0, 1);
+    }
+    p = pb_push1(p, NV097_SET_BEGIN_END,
+        NV097_SET_BEGIN_END_OP_END);
+    pb_end(p);
     return 1;
 }
 
@@ -1223,15 +1348,16 @@ int jpb_XboxGpuHudTextDraws(void *user,
        output_mode.width<=0 || output_mode.height<=0 ||
        draw_count>JPB_GAME_RUNTIME_TEXT_DRAW_CAPACITY)return 0;
     context.viewport_width=output_mode.width;
-    context.viewport_height=output_mode.height;
+    JPBXboxPresentation presentation=jpb_XboxPresentation(output_mode);
+    context.viewport_height=presentation.height;
     /* 720x480 widescreen uses non-square display pixels. Glyph bitmaps are
        rasterized at the vertical output density, then narrowed in raw pixels
        so they regain square proportions when displayed as 16:9. At 720p the
        ratio is one and no correction is applied. */
     context.horizontal_scale=
-        ((float)output_mode.width/(float)output_mode.height)/(16.0f/9.0f);
+        ((float)output_mode.width/(float)presentation.height)/(16.0f/9.0f);
     float sx=(float)output_mode.width/(float)framebuffer->width;
-    float sy=(float)output_mode.height/(float)framebuffer->height;
+    float sy=(float)presentation.height/(float)framebuffer->height;
     triangle_state_texture=NULL;
     model_pass=0;
     uint32_t *p=pb_begin();

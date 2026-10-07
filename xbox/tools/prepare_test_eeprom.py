@@ -20,7 +20,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--720p", action="store_true", dest="enable_720p")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--720p", action="store_true", dest="enable_720p")
+    modes.add_argument("--480i-4x3", action="store_true", dest="standard_480i")
     args = parser.parse_args()
 
     data = bytearray(args.source.read_bytes())
@@ -28,10 +30,13 @@ def main() -> None:
         raise ValueError("Invalid source EEPROM or user checksum")
     original = bytes(data)
     flags = struct.unpack_from("<I", data, 0x94)[0]
-    # Xbox EEPROM display bits: widescreen, 480p, and optionally 720p.
-    flags |= 0x10000 | 0x80000
-    if args.enable_720p:
-        flags |= 0x20000
+    # nxdk hal/video.h: widescreen, letterbox, 480p, 720p, 1080i.
+    # Start from a deterministic video configuration, retaining other flags.
+    flags &= ~(0x10000 | 0x100000 | 0x80000 | 0x20000 | 0x40000)
+    if not args.standard_480i:
+        flags |= 0x10000 | 0x80000
+        if args.enable_720p:
+            flags |= 0x20000
     struct.pack_into("<I", data, 0x94, flags)
     struct.pack_into("<I", data, 0x60, 0)
     struct.pack_into("<I", data, 0x60, checksum(data) ^ 0xFFFFFFFF)

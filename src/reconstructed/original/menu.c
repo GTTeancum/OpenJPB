@@ -5216,9 +5216,16 @@ void menu_mainLoop(void)
 {
     uint32_t *definition;
     uint16_t mode;
+#if defined(JPB_XBOX)
+    extern volatile unsigned jpb_XboxMenuMainPhase;
+    jpb_XboxMenuMainPhase = 1;
+#endif
 
     menuVars.menuModeSP &= 7u;
     menu_readControl();
+#if defined(JPB_XBOX)
+    jpb_XboxMenuMainPhase = 2;
+#endif
     /*
      * Retail RVA 0xCB1FF routes every non-menu gameplay frame through the
      * pause/abort owner, then returns without interpreting the menu stack.
@@ -5260,13 +5267,34 @@ void menu_mainLoop(void)
             menu_pushMenu(0x9f);
             goto finish;
         }
+#if defined(JPB_XBOX)
+        jpb_XboxMenuMainPhase = 10;
+#endif
         menu_demoMovie();
+#if defined(JPB_XBOX)
+        jpb_XboxMenuMainPhase = 11;
+        /* The retail movie callback blocks. The nxdk adapter queues the
+           exact same request and plays it after this frame unwinds. */
+        {
+            extern int jpb_XboxUiMoviesPending(void);
+            if (jpb_XboxUiMoviesPending()) goto finish;
+        }
+#endif
         menu_mainMenu(startMdef);
+#if defined(JPB_XBOX)
+        jpb_XboxMenuMainPhase = 12;
+#endif
         GetWindowSize(&window_width, &window_height);
         (void)window_width;
         (void)window_height;
         if (GameStruct.gameMode != 6 && GameStruct.gameMode != 7) {
+#if defined(JPB_XBOX)
+            jpb_XboxMenuMainPhase = 13;
+#endif
             winDrawBackground(5);
+#if defined(JPB_XBOX)
+            jpb_XboxMenuMainPhase = 14;
+#endif
         }
         if ((menuVars.fcount & UINT16_C(0x3f)) < 0x1f) {
             const char *prompt = allText[
@@ -5303,6 +5331,9 @@ void menu_mainLoop(void)
         (void)SDLTextWriteScaleMM(
             15, 255, 2, (int)x, (int)y,
             1.5f, 0, "%s", allText[289]);
+#if defined(JPB_XBOX)
+        jpb_XboxMenuMainPhase = 15;
+#endif
         goto finish;
     }
     if (mode == 0x0d) {

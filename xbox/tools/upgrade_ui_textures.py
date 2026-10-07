@@ -13,20 +13,33 @@ p.add_argument('--manifest', type=Path,
                default=Path('xbox/build/asset-manifest.json'))
 p.add_argument('--selection', type=Path,
                default=Path('xbox/ui-texture-quality.json'))
+p.add_argument('--front-limit', type=int, default=256,
+               help='Source-capped maximum dimension for front-end images')
 a = p.parse_args()
 game = a.game_root.resolve()
 destination = a.destination.resolve()
 if game == destination or game in destination.parents or destination in game.parents:
     p.error('Source game and staged Xbox roots must be separate')
 selection = json.loads(a.selection.read_text())
+if a.front_limit < 16 or a.front_limit & (a.front_limit - 1):
+    p.error('Front-end texture limit must be a power of two, at least 16')
 manifest_path = a.manifest.resolve()
 manifest = json.loads(manifest_path.read_text())
 records = {record['path'].lower(): record for record in manifest}
 changed = []
-for rel, limit in selection.items():
+targets = {
+    record['path']: a.front_limit
+    for record in manifest
+    if record['path'].lower().startswith('front/') and
+       Path(record['path']).suffix.lower() in
+       ('.tga', '.png', '.bmp', '.jpg', '.jpeg')
+}
+targets.update(selection)
+for rel, limit in targets.items():
     if (not isinstance(rel, str) or not isinstance(limit, int) or
             limit < 16 or limit & (limit - 1) or
-            Path(rel).suffix.lower() not in ('.tga', '.png')):
+            Path(rel).suffix.lower() not in
+            ('.tga', '.png', '.bmp', '.jpg', '.jpeg')):
         p.error(f'Invalid UI texture selection: {rel}: {limit}')
     record = records.get(rel.lower())
     if not record:

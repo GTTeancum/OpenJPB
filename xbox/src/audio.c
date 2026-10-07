@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <string.h>
 #include <pbkit/pbkit.h>
+#include "audio.h"
 
 extern FILE *jpb_XboxFopen(const char *,const char *);
 enum { RATE=48000, VOICES=64, CACHE_BYTES=1280*1024,
@@ -62,6 +63,27 @@ typedef struct Music {
 } Music;
 static Music music={.volume=128};
 
+enum { MOVIE_RING_FRAMES=32768 };
+typedef struct MovieAudio {
+    int16_t ring[MOVIE_RING_FRAMES*2];
+    unsigned read_frame,write_frame;
+    unsigned underruns,queued_frames;
+    int active,playing;
+} MovieAudio;
+static MovieAudio movie_audio;
+
+static void movie_audio_sample(int *left,int *right)
+{
+    if(!movie_audio.playing){*left=0;*right=0;return;}
+    if(movie_audio.read_frame==movie_audio.write_frame){
+        *left=0;*right=0;++movie_audio.underruns;return;
+    }
+    unsigned at=(movie_audio.read_frame&(MOVIE_RING_FRAMES-1))*2;
+    *left=movie_audio.ring[at];
+    *right=movie_audio.ring[at+1];
+    ++movie_audio.read_frame;
+}
+
 static int music_sample(int channel)
 {
     if(!music.active || music.paused)return 0;
@@ -92,24 +114,28 @@ static void mix(void *unused,Uint8 *output,int bytes)
     (void)unused;
     int16_t *out=(int16_t *)output;
     for(int f=0;f<bytes/4;++f) {
-        int left=music_sample(0),right=music_sample(1);
-        for(unsigned i=0;i<VOICES;++i) {
-            Voice *v=&voices[i];
-            if(!v->sample || v->paused)continue;
-            if(v->frame>=v->sample->frames) {
-                if(!v->loops) {v->sample=NULL;continue;}
-                if(v->loops>0)--v->loops;
-                v->frame=0;
+        int left=0,right=0;
+        if(movie_audio.active)movie_audio_sample(&left,&right);
+        else {
+            left=music_sample(0);right=music_sample(1);
+            for(unsigned i=0;i<VOICES;++i) {
+                Voice *v=&voices[i];
+                if(!v->sample || v->paused)continue;
+                if(v->frame>=v->sample->frames) {
+                    if(!v->loops) {v->sample=NULL;continue;}
+                    if(v->loops>0)--v->loops;
+                    v->frame=0;
+                }
+                int gain=v->volume*(255-v->distance)/255;
+                if(v->total_fade) {
+                    if(!v->fade) {v->sample=NULL;continue;}
+                    gain=(int)((uint64_t)gain*v->fade/v->total_fade);
+                    --v->fade;
+                }
+                left+=v->sample->pcm[v->frame*2]*gain/128*v->left/255;
+                right+=v->sample->pcm[v->frame*2+1]*gain/128*v->right/255;
+                ++v->frame;
             }
-            int gain=v->volume*(255-v->distance)/255;
-            if(v->total_fade) {
-                if(!v->fade) {v->sample=NULL;continue;}
-                gain=(int)((uint64_t)gain*v->fade/v->total_fade);
-                --v->fade;
-            }
-            left+=v->sample->pcm[v->frame*2]*gain/128*v->left/255;
-            right+=v->sample->pcm[v->frame*2+1]*gain/128*v->right/255;
-            ++v->frame;
         }
         out[f*2]=(int16_t)(left>32767?32767:left< -32768?-32768:left);
         out[f*2+1]=(int16_t)(right>32767?32767:right< -32768?-32768:right);
@@ -128,6 +154,72 @@ static void mix(void *unused,Uint8 *output,int bytes)
     }
 #endif
     ++callbacks;
+}
+
+int jpb_XboxAudioMovieBegin(unsigned rate,unsigned channels)
+{
+    if(!device || rate!=RATE || channels!=2)return 0;
+    SDL_LockAudioDevice(device);
+    memset(&movie_audio,0,sizeof(movie_audio));
+    movie_audio.active=1;
+    SDL_UnlockAudioDevice(device);
+    return 1;
+}
+
+int jpb_XboxAudioMovieQueue(
+    const float *samples,unsigned frames,unsigned channels)
+{
+    unsigned available;
+    if(!device || !samples || channels!=2 || !movie_audio.active)return 0;
+    SDL_LockAudioDevice(device);
+    available=MOVIE_RING_FRAMES-(movie_audio.write_frame-movie_audio.read_frame);
+    if(frames>available){SDL_UnlockAudioDevice(device);return 0;}
+    for(unsigned i=0;i<frames;++i){
+        unsigned at=((movie_audio.write_frame+i)&(MOVIE_RING_FRAMES-1))*2;
+        float left=samples[i*2],right=samples[i*2+1];
+        int l=(int)(left*32767.0f),r=(int)(right*32767.0f);
+        movie_audio.ring[at]=(int16_t)(l>32767?32767:l< -32768?-32768:l);
+        movie_audio.ring[at+1]=(int16_t)(r>32767?32767:r< -32768?-32768:r);
+    }
+    movie_audio.write_frame+=frames;
+    movie_audio.queued_frames+=frames;
+    SDL_UnlockAudioDevice(device);
+    return 1;
+}
+
+unsigned jpb_XboxAudioMovieBufferedFrames(void)
+{
+    unsigned result;
+    if(!device)return 0;
+    SDL_LockAudioDevice(device);
+    result=movie_audio.write_frame-movie_audio.read_frame;
+    SDL_UnlockAudioDevice(device);
+    return result;
+}
+
+unsigned jpb_XboxAudioMoviePlayedFrames(void)
+{
+    unsigned result;
+    if(!device)return 0;
+    SDL_LockAudioDevice(device);
+    result=movie_audio.read_frame;
+    SDL_UnlockAudioDevice(device);
+    return result;
+}
+
+void jpb_XboxAudioMovieStart(void)
+{
+    if(!device)return;
+    SDL_LockAudioDevice(device);movie_audio.playing=1;SDL_UnlockAudioDevice(device);
+}
+
+void jpb_XboxAudioMovieEnd(void)
+{
+    if(!device)return;
+    SDL_LockAudioDevice(device);
+    movie_audio.active=movie_audio.playing=0;
+    movie_audio.read_frame=movie_audio.write_frame=0;
+    SDL_UnlockAudioDevice(device);
 }
 
 static unsigned le16(FILE *file)

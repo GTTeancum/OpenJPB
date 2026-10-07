@@ -133,12 +133,15 @@ static unsigned char theoraplay_convert_component(float component)
     else if (component > 255.0f) {
         component = 255.0f;
     }
+    /* CVTSS2SI and SETSS require SSE1, supported by the Xbox CPU.
+     * Only the packed integer conversion below requires SSE2. */
     rounded = _mm_cvtss_si32(_mm_set_ss(component));
     return (unsigned char)rounded;
 }
 
 /* The shipped converters (0x1062C0 / 0x106A10) process sixteen pixels
  * with packed float arithmetic. Keep the operation order and MXCSR rounding. */
+#if !defined(JPB_XBOX)
 static void theoraplay_convert_four(
     __m128i y, __m128i cb, __m128i cr, unsigned char *destination)
 {
@@ -165,6 +168,7 @@ static void theoraplay_convert_four(
         _mm_or_si128(r, _mm_or_si128(_mm_slli_epi32(g, 8), _mm_slli_epi32(b, 16))));
     _mm_storeu_si128((__m128i *)destination, rgba);
 }
+#endif
 
 static unsigned char *ConvertVideoFrame420ToRGBCommon(
     const th_info *info, const th_img_plane *planes)
@@ -193,6 +197,7 @@ static unsigned char *ConvertVideoFrame420ToRGBCommon(
             (size_t)(info->pic_height - row - 1U) * info->pic_width * 4U;
         unsigned int column = 0;
 
+#if !defined(JPB_XBOX)
         for (; column + 16 <= info->pic_width; column += 16) {
             const __m128i zero = _mm_setzero_si128();
             const __m128i y = _mm_loadu_si128((const __m128i *)(y_source + column));
@@ -219,6 +224,7 @@ static unsigned char *ConvertVideoFrame420ToRGBCommon(
                 _mm_unpackhi_epi16(cbh, zero), _mm_unpackhi_epi16(crh, zero),
                 destination + column * 4U + 48);
         }
+#endif
         for (; column < info->pic_width; ++column) {
             const float luma =
                 ((float)y_source[column] - 16.0f) * luma_scale * 255.0f;
@@ -488,11 +494,19 @@ int THEORAPLAY_isInitialized(THEORAPLAY_Decoder *decoder)
 #if defined(JPB_THEORAPLAY_CODEC_AVAILABLE)
 static void WorkerThread(THEORAPLAY_Decoder *decoder);
 
+#if defined(JPB_XBOX)
+static DWORD WINAPI WorkerThreadEntry(void *userdata)
+{
+    WorkerThread((THEORAPLAY_Decoder *)userdata);
+    return 0;
+}
+#else
 static void *WorkerThreadEntry(void *userdata)
 {
     WorkerThread((THEORAPLAY_Decoder *)userdata);
     return NULL;
 }
+#endif
 
 /* 0x107720, 294 bytes, global, 5 named locals
  * THEORAPLAY_startDecode

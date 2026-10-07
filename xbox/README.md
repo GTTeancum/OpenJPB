@@ -13,6 +13,40 @@ are historical; the later sections record current evidence. Physical-pad feel,
 later-level progression, final visual fidelity, remaining effects and steady
 30 fps in heavy combat are still unverified or unfinished.
 
+## Display and movie work (2026-10-07)
+
+The current display contract is full-frame 16:9 for gameplay, menus and movies.
+Standard 4:3 480i presents that same composition in the middle 360 lines of the
+480-line signal. There is no crop and no separate 4:3 gameplay camera. The
+world shader is unchanged; CPU projection and screen-space draws share the
+presentation mapping in `src/presentation.h`.
+
+`tools/boot_xemu.ps1` reads `xbox-4x3-480i.txt` from the test-marker directory.
+It sets both the isolated Xbox EEPROM (standard interlaced mode) and XEMU's
+4:3 display aspect. Without the marker it uses widescreen 480p and XEMU 16:9.
+Both paths retain 2x XEMU scaling. Never use emulator stretching as proof of
+the other mode.
+
+The shared menu owner renders through a 640x360 software canvas. Phase-owned
+menu textures are released before gameplay. Front-end images are capped at
+256 px, with selected backgrounds and window artwork at 512 px; HUD priorities
+remain in `ui-texture-quality.json`.
+
+Stage movies using `python xbox/tools/stage_movies.py --game-root <PC-game-root>
+--set all`. The script uses 512x288 all-intra Theora, 20 ms preferred Ogg pages,
+and stereo 48 kHz Vorbis. It fully decodes both streams before replacing each
+staged file. Interframe encodes previously produced block-QPI errors. Runtime
+movie audio uses a dedicated bounded feeder and its consumed-sample clock;
+video uploads at decode resolution and scales on the GPU.
+
+Current evidence is under `test-artifacts/`: `presentation-4x3-fed` and
+`presentation-wide-fed` show intact FED gameplay; native captures dated
+16:02:04 and 16:07:42 show letterboxed 4:3 and full-frame widescreen menus.
+Movie synchronization and the full gameplay handoff remain under verification;
+these captures alone do not establish a complete playback pass.
+
+The sections below are historical bring-up records.
+
 ## Current evidence (2026-09-16)
 
 - `build/release/default.xbe` links and boots under XEMU 0.8.136.

@@ -6231,6 +6231,55 @@ void jpb_GameRuntimeUseUiTextureCache(JPBGameRuntime *runtime)
     }
 }
 
+int jpb_GameRuntimeInitFrontend(JPBGameRuntime *runtime)
+{
+    const char *front_path;
+
+    if (runtime == NULL) {
+        game_runtime_set_failure_stage("frontend:invalid-arguments");
+        return JPB_GAME_RUNTIME_INVALID_ARGUMENT;
+    }
+    game_runtime_set_failure_stage("none");
+    memset(runtime, 0, sizeof(*runtime));
+
+    /* The exact menu owner publishes 132 ordinary entries, 15 level
+     * previews, 23 score portraits, 77 input glyphs, and lazy per-character
+     * portrait/saber resources.  The cache stores only decoded, staged target
+     * assets and is destroyed at the front-end/gameplay ownership boundary. */
+    runtime->uiTextureCache = game_runtime_create_texture_cache(512, -1);
+    front_path = resource_getPath(
+        "JPB_SplashV3_Sharpened.png", JPB_RESOURCE_FRONT);
+    if (runtime->uiTextureCache == NULL || front_path == NULL ||
+        !game_runtime_file_directory(
+            front_path,
+            runtime->uiTextureCache->directory,
+            sizeof(runtime->uiTextureCache->directory))) {
+        return game_runtime_fail(
+            runtime, "frontend:ui-texture-cache",
+            JPB_GAME_RUNTIME_OUT_OF_MEMORY);
+    }
+
+    jpb_TextureSetPlatformHooks(
+        game_runtime_load_material_texture,
+        NULL,
+        runtime->uiTextureCache);
+    jpb_WHookSetDrawTextureHook(
+        game_runtime_capture_draw_texture, runtime);
+    jpb_WHookSetDrawTextureClippedHook(
+        game_runtime_capture_draw_texture_clipped, runtime);
+    jpb_WHookSetDrawUITextUTF16Hook(
+        game_runtime_capture_ui_text_utf16, runtime);
+    jpb_WHookSetDrawUITextUTF163DHook(
+        game_runtime_capture_ui_text_utf16_3d, runtime);
+    runtime->drawTextureHookReady = 1;
+    jpb_WHookSetClearWindowHook(
+        game_runtime_capture_clear_window, runtime);
+    runtime->clearWindowHookReady = 1;
+    jpb_PortableTextInstallHooks();
+    runtime->textHookReady = 1;
+    return JPB_GAME_RUNTIME_OK;
+}
+
 #if defined(JPB_XBOX)
 void jpb_GameRuntimeSetGameplayHudScreenDrawHook(
     JPBGameRuntime *runtime,
@@ -8113,6 +8162,9 @@ int jpb_GameRuntimeTitleFrame(
     JPBGameRuntime *runtime,
     JPBSoftwareFramebuffer *framebuffer)
 {
+#if defined(JPB_XBOX)
+    extern volatile unsigned jpb_XboxTitleFramePhase;
+#endif
     unsigned menu_mode;
     unsigned initial_menu_mode = menuVars.menuMode[menuVars.menuModeSP & 7u];
 
@@ -8149,7 +8201,13 @@ int jpb_GameRuntimeTitleFrame(
     scaleAdjustment = getScaleAdjustment();
     scaleAdjustmentMM = getScaleAdjustmentMM();
     runtime->clearWindowRequested = 0;
+#if defined(JPB_XBOX)
+    jpb_XboxTitleFramePhase = 1;
+#endif
     menu_mainLoop();
+#if defined(JPB_XBOX)
+    jpb_XboxTitleFramePhase = 2;
+#endif
 
     if (runtime->clearWindowRequested) {
         game_runtime_clear_framebuffer(
@@ -8159,9 +8217,15 @@ int jpb_GameRuntimeTitleFrame(
     /* Hardware and software must interleave panels, labels, and inline
      * controls by the same recovered depth order. A final text-only pass
      * exposes completed-award labels through the newer foreground panels. */
+#if defined(JPB_XBOX)
+    jpb_XboxTitleFramePhase = 3;
+#endif
     if (jpb_GameRuntimeRenderTitleDraws(runtime, framebuffer) != JPB_GAME_RUNTIME_OK) {
         return JPB_GAME_RUNTIME_RENDER_FAILED;
     }
+#if defined(JPB_XBOX)
+    jpb_XboxTitleFramePhase = 4;
+#endif
     menu_mode = menuVars.menuMode[menuVars.menuModeSP & 7u];
 
     /* State 0x66 owns the recovered load-screen draw path. */

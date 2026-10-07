@@ -25,7 +25,13 @@ if (!(Test-Path -LiteralPath $configPath)) { throw 'Create the isolated xemu.tom
 $sourceEeprom = Join-Path $XemuRoot 'eeprom.bin'
 $testEeprom = Join-Path $runRoot 'eeprom-test.bin'
 $eepromArgs = @((Join-Path $PSScriptRoot 'prepare_test_eeprom.py'), '--source', $sourceEeprom, '--output', $testEeprom)
-if (Test-Path -LiteralPath (Join-Path $testConfigRootPath 'xbox-720p.txt')) { $eepromArgs += '--720p' }
+$standard480i = Test-Path -LiteralPath (Join-Path $testConfigRootPath 'xbox-4x3-480i.txt')
+$hd720p = Test-Path -LiteralPath (Join-Path $testConfigRootPath 'xbox-720p.txt')
+if ($standard480i -and $hd720p) { throw '4:3 480i and 720p test markers conflict.' }
+if ($standard480i) { $eepromArgs += '--480i-4x3' }
+elseif ($hd720p) { $eepromArgs += '--720p' }
+$displayAspect = if ($standard480i) { '4x3' } else { '16x9' }
+$windowSize = if ($standard480i) { '960x720' } else { '1280x720' }
 & python @eepromArgs
 if ($LASTEXITCODE -ne 0) { throw 'Failed to prepare isolated XEMU EEPROM.' }
 # Stop only the prior emulator using this exact isolated configuration.
@@ -65,9 +71,9 @@ $testEepromConfig = $testEeprom.Replace('\','/')
 $config = [regex]::Replace($config, '(?m)^eeprom_path\s*=.*$', "eeprom_path='$testEepromConfig'")
 $capturePath = $captureRootPath.Replace('\','/')
 $config = [regex]::Replace($config, '(?m)^screenshot_dir\s*=.*$', "screenshot_dir='$capturePath'")
-$config = [regex]::Replace($config, '(?m)^startup_size\s*=.*$', "startup_size='1280x720'")
+$config = [regex]::Replace($config, '(?m)^startup_size\s*=.*$', "startup_size='$windowSize'")
 if ($config -notmatch '(?m)^\[display\.window\]') {
-    $config = $config.TrimEnd() + "`n[display.window]`nstartup_size='1280x720'`n"
+    $config = $config.TrimEnd() + "`n[display.window]`nstartup_size='$windowSize'`n"
 }
 if ($config -match '(?m)^\[display\.quality\]') {
     $config = [regex]::Replace($config, '(?m)^surface_scale\s*=.*$', "surface_scale=$RenderScale")
@@ -75,7 +81,7 @@ if ($config -match '(?m)^\[display\.quality\]') {
     $config = $config.TrimEnd() + "`n[display.quality]`nsurface_scale=$RenderScale`n"
 }
 $config = [regex]::Replace($config, '(?ms)^\[display\.ui\]\s*.*?(?=^\[|\z)', '')
-$config = $config.TrimEnd() + "`n[display.ui]`nfit='scale'`naspect_ratio='16x9'`n"
+$config = $config.TrimEnd() + "`n[display.ui]`nfit='scale'`naspect_ratio='$displayAspect'`n"
 $config = [regex]::Replace($config, '(?ms)^\[sys\]\s*.*?(?=^\[|\z)', '')
 $config = $config.TrimEnd() + "`n[sys]`nmem_limit='$MemoryMb'`n"
 $config = [regex]::Replace($config, "(?m)^dvd_path\s*=.*$", "dvd_path='$isoPath'")
@@ -91,7 +97,7 @@ try {
     )
     if ($AudioWavPath) {
         $audioPath = [IO.Path]::GetFullPath($AudioWavPath).Replace('\','/')
-        $launchArgs += @('-audio', "driver=wav,path=$audioPath")
+        $launchArgs += @('-audio', "driver=wav,path=`"$audioPath`"")
     }
     $process = Start-Process -FilePath (Join-Path $XemuRoot 'xemu.exe') -ArgumentList $launchArgs -WorkingDirectory $isoRootPath -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $isoRootPath 'stdout.log') -RedirectStandardError (Join-Path $isoRootPath 'stderr.log')
 } finally {
