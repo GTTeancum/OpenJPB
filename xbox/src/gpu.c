@@ -61,6 +61,11 @@ volatile unsigned jpb_XboxGpuStage;
 volatile unsigned jpb_XboxGpuLastPass;
 static uint32_t white = 0xffffffff;
 static unsigned submitted_batches, submitted_vertices;
+/* Level batches in the last frame: [0] in this pass, [1] rejected by the
+   authored cull mesh, [2] outside the frustum, [3] submitted. */
+volatile unsigned jpb_XboxLevelDrawStats[4];
+/* Diagnostic: bit n enables level pass n (poke through the monitor). */
+volatile unsigned jpb_XboxLevelPassMask=7;
 static int model_pass;
 static float output_x_per_canvas=2.0f,output_y_per_canvas=2.0f;
 static float output_top;
@@ -214,7 +219,12 @@ static int load_bc1_texture(XboxTexture *entry, const char *name, int model)
     return 1;
 }
 
-static XboxTexture *resolve(const JPBSoftwareTexture *texture,const char *world_name)
+/* tile: the caller samples with wrap addressing (level geometry). NV2A
+   linear textures cannot wrap, so a power-of-two translucent texture is then
+   uploaded swizzled; the linear layout stays for effects, where it fixed the
+   translucent card artifacts. */
+static XboxTexture *resolve(const JPBSoftwareTexture *texture,const char *world_name,
+    int tile)
 {
     const uint32_t *source = texture ? texture->pixels : &white;
     unsigned width = texture ? texture->width : 1;
@@ -226,9 +236,13 @@ static XboxTexture *resolve(const JPBSoftwareTexture *texture,const char *world_
         jpb_XboxBc1LastMaterialType=texture?texture->materialType:~0u;
         if(texture && texture->materialType==0)++jpb_XboxBc1Eligible;
     }
+    int power_of_two=!(width&(width-1)) && !(height&(height-1));
+    int linear=width<4 || height<4 ||
+        (texture && texture->materialType!=0 && !(tile && power_of_two));
     if (last_texture && last_texture->source == source &&
         last_texture->source_width == width &&
-        last_texture->source_height == height) {
+        last_texture->source_height == height &&
+        last_texture->linear == linear) {
         if (world_name) ++jpb_XboxBc1CacheHits;
         return last_texture;
     }
@@ -238,15 +252,13 @@ static XboxTexture *resolve(const JPBSoftwareTexture *texture,const char *world_
     while(texture_hash[bucket]){
         XboxTexture *cached=&textures[texture_hash[bucket]-1];
         if (cached->source == source && cached->source_width == width &&
-            cached->source_height == height){
+            cached->source_height == height && cached->linear == linear){
             if(world_name)++jpb_XboxBc1CacheHits;
             last_texture=cached;
             return cached;
         }
         bucket=(bucket+1)&1023u;
     }
-    int linear=width<4 || height<4 ||
-        (texture && texture->materialType!=0);
     if (!source || !width || !height || width>2048 || height>2048 ||
         (!linear && ((width & (width-1)) || (height & (height-1)))) ||
         texture_count == 512)
@@ -380,6 +392,7 @@ void jpb_XboxGpuBegin(void)
     commit_model_commands();
     jpb_XboxGpuStage=10;
     submitted_batches=submitted_vertices=0;
+    memset((void *)jpb_XboxLevelDrawStats,0,sizeof(jpb_XboxLevelDrawStats));
     glow_triangles=0;
     model_triangle_ticks=effects_triangle_ticks=model_batch_ticks=0;
     command_resets=0;
@@ -402,6 +415,7 @@ void jpb_XboxGpuBegin(void)
         NV097_SET_CONTROL0_STENCIL_WRITE_ENABLE);
     p=pb_push1(p,NV097_SET_DEPTH_TEST_ENABLE,1);
     p=pb_push1(p,NV097_SET_DEPTH_MASK,1);
+    p=pb_push1(p,NV097_SET_ALPHA_TEST_ENABLE,0);
     pb_end(p);
 }
 
@@ -412,6 +426,7 @@ void jpb_XboxGpuSetCanvas(int width, int height)
     output_x_per_canvas=(float)output_mode.width/(float)width;
     output_y_per_canvas=(float)presentation.height/(float)height;
     uint32_t *p=pb_begin();
+    p=pb_push1(p,NV097_SET_ALPHA_TEST_ENABLE,0);
     p=pb_push1(p,NV097_SET_DEPTH_TEST_ENABLE,0);
     p=pb_push1(p,NV097_SET_DEPTH_MASK,0);
     p=pb_push1(p,NV097_SET_BLEND_ENABLE,1);
@@ -431,6 +446,7 @@ int jpb_XboxGpuModelBegin(void *user, JPBSoftwareFramebuffer *fb, JPBSoftwareDep
     uint32_t *p=pb_begin();
     p=pb_push1(p,NV097_SET_DEPTH_TEST_ENABLE,1);
     p=pb_push1(p,NV097_SET_DEPTH_MASK,1);
+    p=pb_push1(p,NV097_SET_ALPHA_TEST_ENABLE,0);
     p=pb_push1(p,NV097_SET_BLEND_ENABLE,1);
     p=pb_push1(p,NV097_SET_BLEND_FUNC_SFACTOR,NV097_SET_BLEND_FUNC_SFACTOR_V_SRC_ALPHA);
     p=pb_push1(p,NV097_SET_BLEND_FUNC_DFACTOR,NV097_SET_BLEND_FUNC_DFACTOR_V_ONE_MINUS_SRC_ALPHA);
@@ -687,7 +703,7 @@ int jpb_XboxGpuTriangle(void *unused, const JPBSoftwareMaterialVertex *a,
                 break;
             }
     }
-    XboxTexture *entry = resolve(texture,NULL);
+    XboxTexture *entry = resolve(texture,NULL,0);
     if (!entry) {
         JPB_TRIANGLE_END();
         return 0;
@@ -887,6 +903,12 @@ int jpb_XboxGpuLevel(void *user, const JPBSoftwareLevelMesh *mesh, JPBLevelFbxMe
     flush_model_batch();
     commit_model_commands();
     jpb_XboxGpuStage=50+(unsigned)pass;
+    /* Transparent and glass level passes are deferred until after the
+       models. Leaving the model state set made world textures resolve to
+       same-named MODEL BC1 files (Palace leaf1 drew as the yellow model
+       leaf). */
+    model_pass=0;
+    triangle_state_texture=NULL;
     jpb_XboxGpuLastPass=(unsigned)pass;
     (void)user;
     if (mesh) {
@@ -924,24 +946,34 @@ int jpb_XboxGpuLevel(void *user, const JPBSoftwareLevelMesh *mesh, JPBLevelFbxMe
             packed?1.0f:1.0f/255.0f,0,0,0);
         p=pb_push1(p,NV097_SET_DEPTH_MASK,pass!=JPB_LEVEL_FBX_PASS_GLASS);
         p=pb_push1(p,NV097_SET_BLEND_ENABLE,pass!=JPB_LEVEL_FBX_PASS_OPAQUE);
+        /* PC PSWorld discards transparent-pass fragments below 0.1 alpha. */
+        p=pb_push1(p,NV097_SET_ALPHA_TEST_ENABLE,pass==JPB_LEVEL_FBX_PASS_TRANSPARENT);
+        p=pb_push1(p,NV097_SET_ALPHA_FUNC,NV097_SET_ALPHA_FUNC_V_GEQUAL);
+        p=pb_push1(p,NV097_SET_ALPHA_REF,26);
         p=pb_push1(p,NV097_SET_BLEND_FUNC_SFACTOR,NV097_SET_BLEND_FUNC_SFACTOR_V_SRC_ALPHA);
         p=pb_push1(p,NV097_SET_BLEND_FUNC_DFACTOR,NV097_SET_BLEND_FUNC_DFACTOR_V_ONE_MINUS_SRC_ALPHA);
         pb_end(p);
         for (unsigned i=0;i<mesh->batchCount;++i) {
             const JPBSoftwareLevelBatch *batch=&mesh->batches[i];
-            if (batch->pass!=pass || !jpb_ShouldDrawFbxMesh(mesh->levelIndex,pass,batch->meshCount,batch->meshIndex,batch->meshName)) continue;
+            if (batch->pass!=pass || !(jpb_XboxLevelPassMask&(1u<<pass))) continue;
+            ++jpb_XboxLevelDrawStats[0];
+            if (!jpb_ShouldDrawFbxMesh(mesh->levelIndex,pass,batch->meshCount,batch->meshIndex,batch->meshName)) {
+                ++jpb_XboxLevelDrawStats[1];
+                continue;
+            }
             /* Do not decode/upload materials for an entirely invisible batch. */
             int visible=0;
             for(unsigned first=0;first<batch->vertexCount;first+=252)
                 if(jpb_XboxLevelChunkVisible(i,first)) { visible=1; break; }
-            if(!visible)continue;
+            if(!visible){++jpb_XboxLevelDrawStats[2];continue;}
+            ++jpb_XboxLevelDrawStats[3];
             JPBSoftwareTexture texture={0};
             if (batch->textureName[0] && !resolver(textures_user,batch->textureName,&texture)) {
                 debugPrint("GPU texture lookup failed: %s\n",batch->textureName);
                 return JPB_SOFTWARE_RENDER_INVALID_ARGUMENT;
             }
             XboxTexture *entry=resolve(batch->textureName[0] ? &texture : NULL,
-                pass==JPB_LEVEL_FBX_PASS_OPAQUE?batch->textureName:NULL);
+                pass==JPB_LEVEL_FBX_PASS_OPAQUE?batch->textureName:NULL,1);
             if (!entry) {
                 debugPrint("GPU upload failed: %s %ux%u cache=%u\n",batch->textureName,
                     (unsigned)texture.width,(unsigned)texture.height,texture_count);
@@ -1286,6 +1318,7 @@ int jpb_XboxGpuHudScreenDraws(void *user,
     uint32_t *p=pb_begin();
     p=pb_push1(p,NV097_SET_DEPTH_TEST_ENABLE,0);
     p=pb_push1(p,NV097_SET_DEPTH_MASK,0);
+    p=pb_push1(p,NV097_SET_ALPHA_TEST_ENABLE,0);
     p=pb_push1(p,NV097_SET_BLEND_ENABLE,1);
     pb_end(p);
     for(size_t i=0;i<draw_count;++i){
@@ -1462,6 +1495,7 @@ int jpb_XboxGpuHudTextDraws(void *user,
     uint32_t *p=pb_begin();
     p=pb_push1(p,NV097_SET_DEPTH_TEST_ENABLE,0);
     p=pb_push1(p,NV097_SET_DEPTH_MASK,0);
+    p=pb_push1(p,NV097_SET_ALPHA_TEST_ENABLE,0);
     p=pb_push1(p,NV097_SET_BLEND_ENABLE,1);
     pb_end(p);
     for(size_t i=0;i<draw_count;++i){

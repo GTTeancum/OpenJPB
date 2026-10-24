@@ -12,6 +12,7 @@ void jpb_XboxGpuGarbageCollect(void);
 void jpb_XboxGpuShutdown(void);
 const JPBSoftwareLevelMesh *jpb_XboxLoadLevel(const char *path);
 void jpb_XboxUnloadLevel(void);
+const JPBSoftwareLevelMesh *jpb_XboxLoadLevelFromMesh(const JPBSoftwareLevelMesh *source);
 int jpb_XboxAuthoredImageSize(const char *filename, int16_t *width, int16_t *height);
 void jpb_XboxLevelSetFrustum(const MATRIX *, float, float);
 int jpb_XboxLevelChunkVisible(unsigned batch, unsigned first);

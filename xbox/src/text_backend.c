@@ -8,12 +8,21 @@
 
 extern FILE *jpb_XboxFopen(const char *,const char *);
 typedef struct XboxFace { TTF_Font *font; int size; unsigned used; } XboxFace;
+/* Gameplay HUDs use up to seven sizes per font (Hangar's countdown and
+   rescue panels); fewer slots reopened faces from disc every frame. */
+enum { XBOX_FONT_FACES = 12 };
 typedef struct XboxFont {
     TTF_Font *font; char path[512]; int size;
-    unsigned clock; XboxFace faces[6];
+    unsigned clock; XboxFace faces[XBOX_FONT_FACES];
 } XboxFont;
+/* Font face opens and the last requested sizes (monitor diagnostics). */
+volatile unsigned jpb_XboxFontOpens;
+volatile int jpb_XboxFontSizes[16];
+static unsigned font_size_cursor;
 static TTF_Font *open_face(const char *path,int size)
 {
+    ++jpb_XboxFontOpens;
+    jpb_XboxFontSizes[font_size_cursor++&15u]=size;
     FILE *file=jpb_XboxFopen(path,"rb");
     if(!file)return NULL;
     SDL_RWops *rw=SDL_RWFromFP(file,SDL_TRUE);
@@ -35,7 +44,7 @@ static int set_size(XboxFont *owner,int size)
 {
     if(owner->size==size)return 0;
     unsigned slot=0;
-    for(unsigned i=0;i<6;++i) {
+    for(unsigned i=0;i<XBOX_FONT_FACES;++i) {
         if(owner->faces[i].font && owner->faces[i].size==size) {
             owner->font=owner->faces[i].font;owner->size=size;
             owner->faces[i].used=++owner->clock;
@@ -56,7 +65,7 @@ static SDL_Surface *render(XboxFont *owner,Uint16 ch,SDL_Color color)
 {return TTF_RenderGlyph_Blended(owner->font,ch,color);}
 static int ascent(XboxFont *owner){return TTF_FontAscent(owner->font);}
 static void close_font(XboxFont *owner)
-{for(unsigned i=0;i<6;++i)if(owner->faces[i].font)TTF_CloseFont(owner->faces[i].font);free(owner);}
+{for(unsigned i=0;i<XBOX_FONT_FACES;++i)if(owner->faces[i].font)TTF_CloseFont(owner->faces[i].font);free(owner);}
 void *jpb_StaticTextGetSymbol(const char *name)
 {
 #define SYMBOL(n,fn) if(!strcmp(name,n))return (void *)(fn)

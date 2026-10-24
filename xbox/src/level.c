@@ -205,6 +205,77 @@ fail:
     return NULL;
 }
 
+/* Levels without an FBX (mini2) are drawn from their JPX data, as on PC
+   (jpb_SoftwareBuildJpxLevelMesh). Copy that mesh into the same resident,
+   unindexed (XLV v1) layout the GPU path draws. */
+const JPBSoftwareLevelMesh *jpb_XboxLoadLevelFromMesh(
+    const JPBSoftwareLevelMesh *source)
+{
+    size_t total=0;
+    unsigned bound_total=0;
+    jpb_XboxUnloadLevel();
+    if(!source || !source->batches || !source->batchCount ||
+       source->batchCount>4096)return NULL;
+    for(size_t i=0;i<source->batchCount;++i){
+        if(source->batches[i].vertexCount%3)return NULL;
+        total+=source->batches[i].vertexCount;
+        bound_total+=(unsigned)(source->batches[i].vertexCount/252+1);
+    }
+    packed_vertices=1;
+    batches=calloc(source->batchCount,sizeof(*batches));
+    names=calloc(source->batchCount,sizeof(*names));
+    bounds=calloc(bound_total,sizeof(*bounds));
+    bound_starts=calloc(source->batchCount,sizeof(*bound_starts));
+    vertices=MmAllocateContiguousMemoryEx(total*sizeof(PackedLevelVertex),
+        0,0x03ffafff,0,PAGE_READWRITE|PAGE_WRITECOMBINE);
+    if(!batches || !names || !bounds || !bound_starts || !vertices){
+        jpb_XboxUnloadLevel();
+        return NULL;
+    }
+    jpb_XboxLevelResidentVertexBytes=(unsigned)(total*sizeof(PackedLevelVertex));
+    size_t offset=0;
+    unsigned bound_count=0;
+    for(size_t i=0;i<source->batchCount;++i){
+        const JPBSoftwareLevelBatch *in=&source->batches[i];
+        PackedLevelVertex *target=((PackedLevelVertex *)vertices)+offset;
+        for(size_t j=0;j<in->vertexCount;++j){
+            const JPBSoftwareLevelVertex *v=&in->vertices[j];
+            target[j].position=v->position;
+            target[j].u=v->u;target[j].v=v->v;
+            target[j].color[0]=pack_color(v->red);
+            target[j].color[1]=pack_color(v->green);
+            target[j].color[2]=pack_color(v->blue);
+            target[j].color[3]=pack_color(v->alpha);
+            target[j].uvScrollU=v->uvScrollU;
+            target[j].uvScrollV=v->uvScrollV;
+        }
+        if(in->textureName)snprintf(names[i],256,"%s",in->textureName);
+        if(in->meshName)snprintf(names[i]+256,128,"%s",in->meshName);
+        batches[i]=*in;
+        batches[i].vertices=(const JPBSoftwareLevelVertex *)target;
+        batches[i].textureName=names[i];
+        batches[i].meshName=names[i]+256;
+        bound_starts[i]=bound_count;
+        for(size_t first=0;first<in->vertexCount;first+=252){
+            ChunkBounds *box=&bounds[bound_count++];
+            size_t count=in->vertexCount-first;
+            if(count>252)count=252;
+            for(size_t k=0;k<count;++k){
+                const float *position=(const float *)&target[first+k];
+                for(unsigned axis=0;axis<3;++axis){
+                    if(!k || position[axis]<box->low[axis])box->low[axis]=position[axis];
+                    if(!k || position[axis]>box->high[axis])box->high[axis]=position[axis];
+                }
+            }
+        }
+        offset+=in->vertexCount;
+    }
+    mesh.batches=batches;mesh.batchCount=source->batchCount;
+    mesh.levelIndex=source->levelIndex;
+    mesh.vertices=total;mesh.triangles=total/3;
+    return &mesh;
+}
+
 const uint16_t *jpb_XboxLevelIndices(unsigned batch)
 {
     return indices?indices+index_starts[batch]:NULL;

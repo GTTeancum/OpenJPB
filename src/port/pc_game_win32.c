@@ -1902,7 +1902,9 @@ static int pc_front_end_requests_gameplay(
         }
         return 1;
     }
-    if (mode != 0x66 || LevelSelect < 1 || LevelSelect > 14) {
+    /* Corus1's results owner continues into Corus2 (level 15) through the
+     * same load-screen state. */
+    if (mode != 0x66 || LevelSelect < 1 || LevelSelect > 15) {
         return 0;
     }
     if (level_index != NULL) {

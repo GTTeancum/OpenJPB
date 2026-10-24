@@ -1809,6 +1809,8 @@ struct JPBGameRuntimeEnemyState {
     size_t classCount;
 };
 
+
+
 static void game_runtime_observe_player_process(
     JPBPlayerProcessPhase phase,
     int index,
@@ -5622,6 +5624,7 @@ static void game_runtime_observe_enemy_created(
     JPBGameRuntimeEnemyClass *asset_class;
     sceneObject *scene;
     int reused_active_slot;
+    int model_slot;
 
     if (runtime == NULL || runtime->enemyState == NULL ||
         enemy == NULL || enemy->pPlace == NULL) {
@@ -5647,10 +5650,16 @@ static void game_runtime_observe_enemy_created(
     scene = (sceneObject *)enemy->pPlayer->playerRoot.pParent;
     actor->scene = scene;
     actor->model = (modelObject *)scene->pModel;
-    if ((uint32_t)asset_class->modelId >= JPB_MODEL_NAME_COUNT ||
+    /* The retail level loader stores the level actor table's Kaadu model
+     * (0x19) in slot 0x21 (loader.c, the actor-name loop); the constructed
+     * actor's model was built from that archive. */
+    model_slot = asset_class->modelId == 0x19 ? 0x21 : asset_class->modelId;
+    if ((uint32_t)model_slot >= JPB_MODEL_NAME_COUNT ||
         !game_runtime_bind_relocated_bmd_view(
             &asset_class->bmdView,
-            maModelData[asset_class->modelId],
+            maModelData[model_slot] != NULL
+                ? maModelData[model_slot]
+                : maModelData[asset_class->modelId],
             actor->model)) {
         game_runtime_set_failure_detail(
             "enemy-observer:model-view",

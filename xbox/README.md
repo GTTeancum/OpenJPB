@@ -54,8 +54,32 @@ Evidence is under `test-artifacts/pad/` (native XEMU screenshots).
   at 64 px (`tools/shrink_cpu_textures.py`). In-game free memory in FED went
   from about 1.5 MB to 6.8 MB with one player and from 52 KB to 6.5 MB with
   two. `jpb_XboxHeapKiB` and `jpb_XboxTextureCacheKiB` expose the allocator
-  and texture-cache footprint. Freed heap is retained by dlmalloc for reuse.
-  About 60 KB of free memory is still lost per level round trip.
+  and texture-cache footprint. About 60 KB of free memory is still lost per
+  level round trip.
+- **Heap layout across levels.** dlmalloc served blocks between 64 and 256 KiB
+  from shared heap segments, which small long-lived allocations then pinned:
+  after Hangar → Core → Mini1, FED had 1.1 MB free against 7.8 MB on a fresh
+  boot, with 7 MB stranded inside the heap where contiguous GPU allocations
+  cannot use it. `main()` lowers the direct-mapping threshold to 64 KiB and
+  the level hand-offs call `dlmalloc_trim`; the same chain now reaches FED
+  with 7.7 MB free, and Palace starts with 3 MB instead of 0.6 MB.
+- **All levels staged.** `tools/build_levels.py` builds the XLV geometry for
+  every level with an FBX source; Mini2 (no FBX) builds its mesh from the JPX
+  scene at load time, as the PC hardware path does. `tools/chain_levels.py`
+  plays through levels in one session by completing each through `nextLevel`.
+  Every story level loads and plays, including Corus1 → Corus2 (level 15 was
+  rejected by the hand-off on both PC and Xbox).
+- **Kaadu race.** Shared `game_runtime.c` binds the Kaadu enemy (model 0x19)
+  to model slot 0x21, matching the retail loader remap; the mount was
+  invisible on both targets.
+- **Palace plants.** Deferred transparent level passes kept the previous model
+  pass's state, so world textures resolved to same-named model BC1 files
+  (the plants drew yellow with ragged edges). The level path now resets that
+  state; power-of-two translucent level textures upload swizzled so they can
+  wrap, and the transparent pass discards fragments below 0.1 alpha like PC
+  PSWorld.
+- **Fonts.** The text backend keeps 12 open font faces (was 6); Hangar's HUD
+  reopened faces every frame, costing 259 ms per frame (now 36 ms).
 
 Staging order after `stage_assets.py` and the texture upgrades:
 `write_image_sizes.py`, then `shrink_cpu_textures.py`.

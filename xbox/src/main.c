@@ -10,6 +10,7 @@
 #include "jpb/menu.h"
 #include "jpb/texture.h"
 #include "jpb/camera.h"
+#include "jpb/physics.h"
 #include <hal/video.h>
 #include <hal/debug.h>
 #include <windows.h>
@@ -29,7 +30,9 @@
 
 static JPBGameRuntime runtime;
 static uint32_t pixels[JPB_XBOX_CANVAS_WIDTH * JPB_XBOX_CANVAS_HEIGHT];
-enum { JPB_XBOX_FRONTEND_WIDTH=640, JPB_XBOX_FRONTEND_HEIGHT=360 };
+/* 960x540 keeps menu text above the shared minimum point size, so its
+   proportions match PC; the GPU draws it at the output resolution. */
+enum { JPB_XBOX_FRONTEND_WIDTH=960, JPB_XBOX_FRONTEND_HEIGHT=540 };
 extern int jpb_XboxInspectImage(const char *, int *, int *);
 extern int jpb_XboxLoadImage(const char *, int, int, uint32_t *, int);
 extern int jpb_XboxControllerInit(void);
@@ -116,6 +119,7 @@ extern volatile uintptr_t jpb_XboxSlowSpriteFunction;
 extern volatile int jpb_XboxSlowSpriteNum;
 /* Emulator-monitor evidence for the process-local controller smoke. */
 volatile int32_t jpb_XboxPlayerTelemetry[6];
+volatile float jpb_XboxWorldDebug[15];
 
 /* Test markers read once at startup. */
 static int gpu_initialized;
@@ -149,6 +153,9 @@ static int marker_present(const char *path)
 struct jpb_dlmallinfo { size_t arena, ordblks, smblks, hblks, hblkhd,
     usmblks, fsmblks, uordblks, fordblks, keepcost; };
 extern struct jpb_dlmallinfo dlmallinfo(void);
+extern int dlmalloc_trim(size_t pad);
+extern int dlmallopt(int param, int value);
+#define JPB_M_MMAP_THRESHOLD (-3)
 /* KiB: [0] heap footprint, [1] in use, [2] free inside the heap,
    [3] directly mapped large blocks. */
 volatile unsigned jpb_XboxHeapKiB[4];
@@ -285,7 +292,8 @@ static int front_end_requests_gameplay(int *level_index, int *game_mode)
         *game_mode=6;
         return 1;
     }
-    if(mode==0x66 && selected>=1 && selected<=14){
+    /* Corus1's results continue into Corus2 (level 15) the same way. */
+    if(mode==0x66 && selected>=1 && selected<=15){
         *level_index=selected;
         *game_mode=4;
         return 1;
@@ -462,6 +470,10 @@ static void start_gameplay(int level, int game_mode)
     free(frontend_pixels);
     frontend_pixels=NULL;
     if(gpu_initialized)jpb_XboxGpuGarbageCollect();
+    /* Return wholly free heap segments: a large level's high-water mark
+       otherwise stays reserved and starves the next level's contiguous GPU
+       allocations. */
+    dlmalloc_trim(0);
     jpb_XboxSessionPages[1]=free_pages();
 
     jpb_XboxStartupPhase=5;
@@ -550,7 +562,18 @@ static void start_gameplay(int level, int game_mode)
     player1InputType=1;
     if(gpu_initialized){
         const JPBSoftwareLevelMesh *mesh=runtime.levelRenderMesh;
-        if(!mesh)fatal("Packed level load failed");
+        if(!mesh){
+            /* No FBX for this level (mini2): build its mesh from the JPX
+               scene, as the PC hardware path does. */
+            JPBSoftwareOwnedLevelMesh owned={0};
+            if(jpb_SoftwareBuildJpxLevelMesh(&runtime.scene,&owned)==
+               JPB_SOFTWARE_RENDER_OK){
+                owned.mesh.levelIndex=level;
+                mesh=jpb_XboxLoadLevelFromMesh(&owned.mesh);
+            }
+            jpb_SoftwareFreeOwnedLevelMesh(&owned);
+        }
+        if(!mesh)fatal("Level %d geometry load failed",level);
         jpb_GameRuntimeSetLevelRenderMesh(&runtime,mesh);
         jpb_GameRuntimeSetLevelRenderHook(&runtime,jpb_XboxGpuLevel,NULL);
         jpb_GameRuntimeSetModelRenderHooks(&runtime,jpb_XboxGpuModelBegin,
@@ -581,6 +604,7 @@ static void return_to_front_end(void)
     memset(menuTextures,0,sizeof(menuTextures));
     memset(controlTextures,0,sizeof(controlTextures));
     if(gpu_initialized)jpb_XboxGpuGarbageCollect();
+    dlmalloc_trim(0);
     jpb_XboxSessionPages[5]=free_pages();
     result=jpb_GameRuntimeInitFrontend(&runtime);
     if(result!=JPB_GAME_RUNTIME_OK)
@@ -728,7 +752,7 @@ static void run_gameplay(int marsh_smoke)
         jpb_XboxCompositeUploadMs=(unsigned)(runtime.profileLastCompositeUploadSeconds*1000.0f);
         jpb_XboxCompositeFinishMs=(unsigned)(runtime.profileLastCompositeFinishSeconds*1000.0f);
         jpb_XboxFramePhase=3;
-        if (smoke) {
+        {
             sceneObject *scene = (sceneObject *)runtime.player->playerRoot.pParent;
             if (scene) {
                 jpb_XboxPlayerTelemetry[0] = scene->v3WorldPosition.vx;
@@ -739,6 +763,16 @@ static void run_gameplay(int marsh_smoke)
             jpb_XboxPlayerTelemetry[4] = (int32_t)controller_bits;
             jpb_XboxPlayerTelemetry[5] = (int32_t)runtime.enemyDamageProcessedCount;
         }
+        /* World positions for monitor diagnosis: physics slots 0-3
+           (players, then mounts such as Mini2's Kaaduses) and the camera. */
+        for(unsigned i=0;i<4;++i){
+            jpb_XboxWorldDebug[i*3]=maPhysicsData[i].pos.vx;
+            jpb_XboxWorldDebug[i*3+1]=maPhysicsData[i].pos.vy;
+            jpb_XboxWorldDebug[i*3+2]=maPhysicsData[i].pos.vz;
+        }
+        jpb_XboxWorldDebug[12]=(float)gCamera.campos.vx;
+        jpb_XboxWorldDebug[13]=(float)gCamera.campos.vy;
+        jpb_XboxWorldDebug[14]=(float)gCamera.campos.vz;
         if (result != 0)
             fatal("Frame failed %d; RAM free pages %u", result, free_pages());
         if (gpu) {
@@ -831,6 +865,11 @@ int main(void)
     int skip_frontend;
     int title_smoke;
     int level=1, game_mode=4;
+    /* Give every block of 64 KiB or more its own system region (default
+       256 KiB). Level data between those sizes otherwise fills shared heap
+       segments that small long-lived allocations then pin, stranding ~7 MB
+       after a few levels that contiguous GPU allocations cannot use. */
+    dlmallopt(JPB_M_MMAP_THRESHOLD,64*1024);
     jpb_XboxStartupPhase=1;
     if(marker_present("D:\\xbox-720p.txt")){video_width=1280;video_height=720;}
     skip_frontend=marker_present("D:\\xbox-skip-frontend.txt");
