@@ -3,8 +3,7 @@
 ## Tracked Items
 
 1. Shared DLC implementation and Blender authoring.
-2. LIVE: Blender level importer review.
-3. Original Xbox port (nxdk/XEMU).
+2. Original Xbox port (nxdk/XEMU).
 4. LIVE: Level 2 pause-menu rendering.
 
 ## 1. Shared DLC Implementation and Blender Authoring
@@ -15,13 +14,7 @@ Implement the completed [shared package design](DLC_PACKAGE_DESIGN.md). Keep exi
 - [ ] Extend the existing Blender BMD/CAD tools into the shared package pipeline: rig/profile validation, animation and gameplay-event mapping, materials, and package build/export validation. Existing BMD/CAD import/export is already available; see [character tools](BLENDER_CHARACTER_TOOLS.md).
 - [ ] Validate the shared pipeline with an updated animated character. Document remaining limitations.
 
-## 2. LIVE: Blender Level Importer Review
-
-- [ ] Review the imported scene in Blender. Complete level export remains separate implementation work above.
-
-Usage and limits: [Blender level import](BLENDER_LEVEL_IMPORT.md).
-
-## 3. Original Xbox Port (nxdk/XEMU)
+## 2. Original Xbox Port (nxdk/XEMU)
 
 Maintain both PC and Xbox builds with shared gameplay and Xbox-only code under `xbox/`. Use nxdk, a separate copy of game assets, and XEMU at 2× resolution. Crowded-wave phase timing found about 3.9 ms of vertex transforms and 11.3 ms of face processing per frame; tested node-frustum rejection and inline transforms did not raise tick-aligned FPS. The next performance change must tackle face processing or GPU model submission at a broader level.
 
@@ -34,7 +27,7 @@ Maintain both PC and Xbox builds with shared gameplay and Xbox-only code under `
 
 Current boot, diagnostics, and unresolved visual evidence: [Xbox port](../xbox/README.md).
 
-## 4. LIVE: Level 2 Pause-Menu Rendering
+## 3. LIVE: Level 2 Pause-Menu Rendering
 
 - [ ] Level 2 pause menu appeared white during a process-local harness run. Recheck in normal interactive play to determine whether this is a game rendering issue or specific to harness-driven capture.
 
