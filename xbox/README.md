@@ -13,6 +13,65 @@ are historical; the later sections record current evidence. Physical-pad feel,
 later-level progression, final visual fidelity, remaining effects and steady
 30 fps in heavy combat are still unverified or unfinished.
 
+## XEMU playtest pass (2026-10-24, XEMU 0.8.139)
+
+The build now plays as a complete game loop rather than a single level:
+title, menus, level, pause/quit, results, next level and back to the menus.
+Evidence is under `test-artifacts/pad/` (native XEMU screenshots).
+
+- **GPU renderer is the default.** It no longer depends on the
+  `xbox-gpu.txt` test marker, which a retail disc would not carry.
+  `xbox-software-renderer.txt` selects the old diagnostic renderer.
+- **Saves.** Options and campaign progress are written to
+  `E:\UDATA\<title id>\SAVEDATA0` and flushed to disk; they survive a
+  console reset. The license screen is not shown (it was accepted with the PC
+  copy). Main-menu Quit returns to the dashboard.
+- **Front end at 60 FPS.** Menu art and text are drawn by the GPU in the
+  recovered panel/text order (`jpb_GameRuntimeSetTitleTextDrawRenderHook`);
+  the software 640×360 composite ran at about 8 FPS, and menu animation is
+  stepped per frame, so menus also ran in slow motion.
+- **Game loop.** `main.c` follows the PC host hand-off: options, players and
+  difficulty are republished around the canonical constructor, the results
+  screen and Quit return to the menus, and the next level loads from the menu
+  owner's request. Unlike PC, the level is released before the menus run
+  again; 64 MB cannot hold both. The level loader now frees the previous
+  level (it leaked several MiB per load).
+- **Reduced 2D images.** Staging shrinks menu/HUD sheets, but menu code cuts
+  them in authored pixel coordinates. `tools/write_image_sizes.py` writes
+  `res/xbox-image-sizes.txt`; the runtime reports those sizes as material
+  sizes and the GPU maps rectangles onto the stored pixels. This restored the
+  level-select slots and icons, the results portrait and the HUD pickup icon.
+- **Results screen movers.** Shared `menu.c` addressed mover trigger flags at
+  `menuVars + 0x231`, valid only for the x64 layout. The address is now derived
+  from `mmvTriggers` (unchanged on PC).
+- **Movie audio.** Movie samples are scaled by music volume × `VideoVolume`,
+  captured per request as on PC (0 for the warning/logo, 0.45 for the intro and
+  level films). The soundtracks peak about 1.5× full scale, so unscaled
+  playback hard-clipped (the reported crackle).
+- **Two players.** Both controller ports are read; player two has its own
+  menu cursor, character and in-game input, and the second actor is loaded.
+- **Memory.** CPU copies of textures that the GPU draws from BC1 are staged
+  at 64 px (`tools/shrink_cpu_textures.py`). In-game free memory in FED went
+  from about 1.5 MB to 6.8 MB with one player and from 52 KB to 6.5 MB with
+  two. `jpb_XboxHeapKiB` and `jpb_XboxTextureCacheKiB` expose the allocator
+  and texture-cache footprint. Freed heap is retained by dlmalloc for reuse.
+  About 60 KB of free memory is still lost per level round trip.
+
+Staging order after `stage_assets.py` and the texture upgrades:
+`write_image_sizes.py`, then `shrink_cpu_textures.py`.
+
+### Driving XEMU (test only)
+
+`boot_xemu.ps1 -GdbPort 9248` opens XEMU's GDB stub. `tools/xemu_pad.py`
+writes a remote pad record in the guest (two ports), reads guest counters
+through the monitor and takes native screenshots, e.g.
+`python xbox/tools/xemu_pad.py "press A" "wait 60" "shot menu"`. A step
+prefixed `p2` drives port two; `poke` writes guest memory for fixtures
+(`poke nextLevel 2 1` completes the current level). `to_main_menu.ps1`,
+`to_level_select.ps1` and `cycle_level.ps1` script the common routes. The
+retail input path ignores the remote pad until a debugger writes its magic
+word.
+
 ## Display and movie work (2026-10-07)
 
 The current display contract is full-frame 16:9 for gameplay, menus and movies.

@@ -47,6 +47,21 @@ typedef int (*JPBGameRuntimeImageLoadHook)(
 void jpb_GameRuntimeSetImageHooks(
     JPBGameRuntimeImageInspectHook inspect_hook,
     JPBGameRuntimeImageLoadHook load_hook);
+#if defined(JPB_XBOX)
+/* The Xbox asset copy stores reduced 2D images. The hook reports the authored
+ * size, published as the material size so menu/HUD code sees PC dimensions;
+ * renderers map those coordinates onto the stored pixels. */
+typedef int (*JPBGameRuntimeAuthoredImageSizeHook)(
+    const char *texture_name, int16_t *width, int16_t *height);
+void jpb_GameRuntimeSetAuthoredImageSizeHook(
+    JPBGameRuntimeAuthoredImageSizeHook hook);
+struct JPBGameRuntimeTextureCache;
+size_t jpb_GameRuntimeTextureCacheBytes(
+    const struct JPBGameRuntimeTextureCache *cache);
+const char *jpb_GameRuntimeTextureCacheEntry(
+    const struct JPBGameRuntimeTextureCache *cache, size_t index,
+    size_t *width, size_t *height);
+#endif
 
 enum {
     JPB_GAME_RUNTIME_ENEMY_CAPACITY =
@@ -313,6 +328,9 @@ typedef struct JPBGameRuntime {
     void *gameplayHudScreenDrawUserData;
     JPBGameRuntimeTextDrawRenderHook gameplayHudTextDrawHook;
     void *gameplayHudTextDrawUserData;
+    /* Front-end text drawn by the GPU in the recovered panel/text order. */
+    JPBGameRuntimeTextDrawRenderHook titleTextDrawRenderHook;
+    void *titleTextDrawRenderUserData;
 #endif
     JPBGameRuntimeLoadScreenPresentHook loadScreenPresentHook;
     void *loadScreenPresentUserData;
@@ -697,6 +715,10 @@ void jpb_GameRuntimeSetGameplayHudScreenDrawHook(
     JPBGameRuntimeScreenDrawRenderHook hook,
     void *user_data);
 void jpb_GameRuntimeSetGameplayHudTextDrawHook(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeTextDrawRenderHook hook,
+    void *user_data);
+void jpb_GameRuntimeSetTitleTextDrawRenderHook(
     JPBGameRuntime *runtime,
     JPBGameRuntimeTextDrawRenderHook hook,
     void *user_data);

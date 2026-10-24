@@ -1430,6 +1430,15 @@ static int game_runtime_flush_ordered_title_draws(
                         batch, batch_count, framebuffer)) return 0;
                 batch_count = 0;
             }
+#if defined(JPB_XBOX)
+            if (hardware && runtime->titleTextDrawRenderHook != NULL) {
+                if (!runtime->titleTextDrawRenderHook(
+                        runtime->titleTextDrawRenderUserData,
+                        &runtime->textDraws[draws[index].index], 1,
+                        framebuffer)) return 0;
+                continue;
+            }
+#endif
             game_runtime_flush_text_draw(
                 runtime,
                 framebuffer,
@@ -1499,6 +1508,37 @@ struct JPBGameRuntimeTextureCache {
     size_t textureCapacity;
     size_t loadedTextureCount;
 };
+
+#if defined(JPB_XBOX)
+/* Decoded texture bytes held by a cache (Xbox memory diagnostics). */
+size_t jpb_GameRuntimeTextureCacheBytes(
+    const JPBGameRuntimeTextureCache *cache)
+{
+    size_t bytes = 0;
+    size_t index;
+
+    if (cache == NULL) return 0;
+    for (index = 0; index < cache->textureCount; ++index) {
+        const JPBGameRuntimeTexture *entry = &cache->textures[index];
+        if (entry->pixels != NULL) {
+            bytes += entry->texture.stridePixels *
+                entry->texture.height * sizeof(uint32_t);
+        }
+    }
+    return bytes;
+}
+
+const char *jpb_GameRuntimeTextureCacheEntry(
+    const JPBGameRuntimeTextureCache *cache, size_t index,
+    size_t *width, size_t *height)
+{
+    if (cache == NULL || index >= cache->textureCount) return NULL;
+    *width = cache->textures[index].pixels != NULL
+        ? cache->textures[index].texture.width : 0;
+    *height = cache->textures[index].texture.height;
+    return cache->textures[index].name;
+}
+#endif
 
 struct JPBGameRuntimeSecondPlayerState {
     JPBAnimationBlend animationBlend;
@@ -2547,6 +2587,16 @@ void jpb_GameRuntimeSetImageHooks(
     game_runtime_image_load_hook = load_hook;
 }
 
+#if defined(JPB_XBOX)
+static JPBGameRuntimeAuthoredImageSizeHook game_runtime_authored_size_hook;
+
+void jpb_GameRuntimeSetAuthoredImageSizeHook(
+    JPBGameRuntimeAuthoredImageSizeHook hook)
+{
+    game_runtime_authored_size_hook = hook;
+}
+#endif
+
 static int game_runtime_path_with_extension(
     const char *source,
     const char *extension,
@@ -3066,6 +3116,12 @@ static void *game_runtime_load_material_texture(
             }
             *width = (int16_t)entry->texture.width;
             *height = (int16_t)entry->texture.height;
+#if defined(JPB_XBOX)
+            if (game_runtime_authored_size_hook != NULL) {
+                (void)game_runtime_authored_size_hook(
+                    filename, width, height);
+            }
+#endif
             entry->texture.materialType =
                 (int32_t)(option & UINT32_C(0xff));
             entry->texture.descriptorIndex = (int32_t)index;
@@ -6299,6 +6355,16 @@ void jpb_GameRuntimeSetGameplayHudTextDrawHook(
     if (runtime != NULL) {
         runtime->gameplayHudTextDrawHook = hook;
         runtime->gameplayHudTextDrawUserData = user_data;
+    }
+}
+void jpb_GameRuntimeSetTitleTextDrawRenderHook(
+    JPBGameRuntime *runtime,
+    JPBGameRuntimeTextDrawRenderHook hook,
+    void *user_data)
+{
+    if (runtime != NULL) {
+        runtime->titleTextDrawRenderHook = hook;
+        runtime->titleTextDrawRenderUserData = user_data;
     }
 }
 #endif

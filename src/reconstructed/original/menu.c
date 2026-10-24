@@ -3206,6 +3206,18 @@ void menu_drawReconnect(void)
         menuTextures[241], gDST, NULL, color, 0.99f);
 }
 
+/*
+ * Retail addresses mover trigger flags as menuVars + 0x231 indexed by the
+ * trigger ID (0x81-0x86), i.e. mmvTriggers[id - 0x81] in the x64 layout.
+ * Derive the base from the field so the 32-bit Xbox layout addresses the
+ * same flags; the x64 address is unchanged.
+ */
+static uint8_t *menu_moverTriggerBytes(void)
+{
+    return (uint8_t *)(void *)&menuVars +
+        offsetof(MENUVARS, mmvTriggers) - 0x81u;
+}
+
 /* 0xC5690, 364 bytes, global, 1 named locals
  * menu_drawScoreMovers
  * PDB type: void (<no type>)
@@ -3242,7 +3254,7 @@ void menu_drawScoreMovers(void)
             break;
         case 0x36: {
             const uint8_t *trigger_bytes =
-                (const uint8_t *)(const void *)&menuVars + 0x231;
+                menu_moverTriggerBytes();
             unsigned trigger =
                 control->mmvSrc[(uint16_t)(control->mmvPtr - 1u)];
 
@@ -4326,7 +4338,7 @@ void menu_handleMovers(void)
             break;
         case 0x36: {
             const uint8_t *trigger_bytes =
-                (const uint8_t *)(const void *)&menuVars + 0x231;
+                menu_moverTriggerBytes();
             unsigned trigger =
                 control->mmvSrc[(uint16_t)(control->mmvPtr - 1u)];
 
@@ -5872,14 +5884,14 @@ static void menu_nextMMV(MMVDEF *control)
             continue;
         case 0x35: {
             uint8_t *trigger_bytes =
-                (uint8_t *)(void *)&menuVars + 0x231;
+                menu_moverTriggerBytes();
 
             trigger_bytes[command[1]] = 1;
             break;
         }
         case 0x36: {
             const uint8_t *trigger_bytes =
-                (const uint8_t *)(const void *)&menuVars + 0x231;
+                menu_moverTriggerBytes();
 
             if (trigger_bytes[command[1]] != 0) {
                 control->mmvCounter = 2;
@@ -5888,7 +5900,7 @@ static void menu_nextMMV(MMVDEF *control)
         }
         case 0x37: {
             uint8_t *trigger_bytes =
-                (uint8_t *)(void *)&menuVars + 0x231;
+                menu_moverTriggerBytes();
 
             trigger_bytes[command[1]] = 0;
             break;

@@ -7,6 +7,7 @@ param(
     [string]$CaptureRoot = '',
     [string]$AudioWavPath = '',
     [int]$MonitorPort = 9247,
+    [int]$GdbPort = 0,
     [ValidateRange(1,10)][int]$RenderScale = 2,
     [ValidateSet(64,128)][int]$MemoryMb = 64
 )
@@ -95,6 +96,8 @@ try {
         '-config_path', ('"' + $configPath + '"'), '-monitor',
         "tcp:127.0.0.1:$MonitorPort,server,nowait", '-snapshot'
     )
+    # Test-only GDB stub used by tools/xemu_pad.py to write the remote pad.
+    if ($GdbPort -gt 0) { $launchArgs += @('-gdb', "tcp:127.0.0.1:$GdbPort") }
     if ($AudioWavPath) {
         $audioPath = [IO.Path]::GetFullPath($AudioWavPath).Replace('\','/')
         $launchArgs += @('-audio', "driver=wav,path=`"$audioPath`"")

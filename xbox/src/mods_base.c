@@ -1,12 +1,23 @@
-/* Initial Xbox milestone uses stock assets only. No mod/save success is faked. */
+/* The Xbox build uses stock assets only: saves are the plain retail payload
+   with no mod sidecar. */
 #include "jpb/mods.h"
 #include <stdio.h>
 int jpb_ModsLoad(const char *p,char *e,size_t n){if(e&&n)snprintf(e,n,"Xbox mod loading not implemented");return 0;}
 void jpb_ModsReset(void){}
 void jpb_ModResetProgress(void){}
-int jpb_ModSaveCommit(const char*p,const void*d,size_t n,const int m[2]){return 0;}
-int jpb_ModSaveRestore(const char*p,const void*d,size_t n,int m[2]){return -1;}
-const char *jpb_ModSaveError(void){return "Xbox mod saves not implemented";}
+int jpb_ModSaveCommit(const char*p,const void*d,size_t n,const int m[2])
+{
+    FILE *file;
+    size_t written;
+    (void)m;
+    if(!p||!*p||!d)return 0;
+    file=fopen(p,"wb");
+    if(!file)return 0;
+    written=fwrite(d,1,n,file);
+    return (fclose(file)==0)&&written==n;
+}
+int jpb_ModSaveRestore(const char*p,const void*d,size_t n,int m[2]){return 0;}
+const char *jpb_ModSaveError(void){return "";}
 int jpb_ModRecordLevel(int m,int l,uint32_t s){return 0;}
 int jpb_ModLevelPlayed(int m,int l){return 0;}
 uint32_t jpb_ModLevelScore(int m,int l){return 0;}

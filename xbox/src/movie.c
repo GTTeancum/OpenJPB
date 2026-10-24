@@ -4,6 +4,8 @@
 #include "presentation.h"
 #include "jpb/theoraplay.h"
 #include "jpb/input.h"
+#include "jpb/game.h"
+#include "jpb/menu.h"
 #include <hal/video.h>
 #include <windows.h>
 #include <pbkit/pbkit.h>
@@ -106,7 +108,10 @@ static DWORD WINAPI feed_movie_audio(void *opaque)
         if(!packet)packet=THEORAPLAY_getAudio(feed->decoder);
         if(packet){
             if(!feed->active){
-                if(!jpb_XboxAudioMovieBegin(packet->freq,packet->channels)){
+                /* Movie soundtracks peak well above full scale; the game
+                   plays them at music volume times VideoVolume. */
+                float gain=(float)OptionStruct.musicVolume*0.0078125f*VideoVolume;
+                if(!jpb_XboxAudioMovieBegin(packet->freq,packet->channels,gain)){
                     feed->failed=1;break;
                 }
                 feed->active=1;

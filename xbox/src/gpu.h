@@ -11,6 +11,8 @@ int jpb_XboxGpuInit(void);
 void jpb_XboxGpuGarbageCollect(void);
 void jpb_XboxGpuShutdown(void);
 const JPBSoftwareLevelMesh *jpb_XboxLoadLevel(const char *path);
+void jpb_XboxUnloadLevel(void);
+int jpb_XboxAuthoredImageSize(const char *filename, int16_t *width, int16_t *height);
 void jpb_XboxLevelSetFrustum(const MATRIX *, float, float);
 int jpb_XboxLevelChunkVisible(unsigned batch, unsigned first);
 const uint16_t *jpb_XboxLevelIndices(unsigned batch);
@@ -19,6 +21,9 @@ void jpb_XboxLevelDecodeVertex(const JPBSoftwareLevelBatch *, unsigned,
     JPBSoftwareLevelVertex *);
 int jpb_XboxLevelChunkNeedsDepthClip(unsigned batch, unsigned first);
 void jpb_XboxGpuBegin(void);
+/* After jpb_XboxGpuBegin: map screen/text draws from a width x height logical
+ * canvas (the front end's 640x360) and select alpha-blended 2D state. */
+void jpb_XboxGpuSetCanvas(int width, int height);
 void jpb_XboxGpuPresent(void);
 void jpb_XboxGpuTransparencyProbe(void);
 void jpb_XboxGpuStats(unsigned frame, unsigned elapsed, unsigned pad, int motion);

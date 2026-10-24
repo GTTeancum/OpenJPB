@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <math.h>
 #include <xboxkrnl/xboxkrnl.h>
+#include <pbkit/pbkit.h>
 
 static JPBSoftwareLevelMesh mesh;
 static JPBSoftwareLevelBatch *batches;
@@ -59,8 +60,23 @@ void jpb_XboxLevelDecodeVertex(const JPBSoftwareLevelBatch *batch,
     out->uvScrollU=v->uvScrollU;out->uvScrollV=v->uvScrollV;
 }
 
+void jpb_XboxUnloadLevel(void)
+{
+    /* The GPU may still be reading the vertex array of the last frame. */
+    if (packed_vertices) while (pb_busy()) {}
+    if (vertices) MmFreeContiguousMemory(vertices);
+    free(batches); free(names); free(bounds); free(bound_starts);
+    free(indices); free(index_starts);
+    indices=NULL; index_starts=NULL; bounds=NULL; bound_starts=NULL;
+    vertices=NULL; batches=NULL; names=NULL;
+    memset(&mesh,0,sizeof(mesh));
+    jpb_XboxLevelResidentVertexBytes=0;
+}
+
 const JPBSoftwareLevelMesh *jpb_XboxLoadLevel(const char *path)
 {
+    /* One level is resident at a time; release the previous one. */
+    jpb_XboxUnloadLevel();
     jpb_XboxLevelLoadStage=1;
     uint32_t header[5];
     FILE *file = fopen(path, "rb");
@@ -70,9 +86,9 @@ const JPBSoftwareLevelMesh *jpb_XboxLoadLevel(const char *path)
         goto fail;
     uint32_t unique_total=header[4];
     if(header[1]==2 && (fread(&unique_total,4,1,file)!=1 || unique_total>header[4]))goto fail;
-    FILE *gpu_flag=fopen("D:\\xbox-gpu.txt","rb");
-    packed_vertices=gpu_flag!=NULL;
-    if(gpu_flag)fclose(gpu_flag);
+    FILE *software_flag=fopen("D:\\xbox-software-renderer.txt","rb");
+    packed_vertices=software_flag==NULL;
+    if(software_flag)fclose(software_flag);
     batches = calloc(header[3], sizeof(*batches));
     names = calloc(header[3], sizeof(*names));
     {
@@ -185,11 +201,7 @@ const JPBSoftwareLevelMesh *jpb_XboxLoadLevel(const char *path)
     return &mesh;
 fail:
     fclose(file);
-    if (vertices) MmFreeContiguousMemory(vertices);
-    free(batches); free(names); free(bounds); free(bound_starts);
-    free(indices); free(index_starts); indices=NULL; index_starts=NULL;
-    bounds=NULL; bound_starts=NULL;
-    vertices=NULL; batches=NULL; names=NULL;
+    jpb_XboxUnloadLevel();
     return NULL;
 }
 

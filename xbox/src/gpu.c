@@ -405,6 +405,21 @@ void jpb_XboxGpuBegin(void)
     pb_end(p);
 }
 
+void jpb_XboxGpuSetCanvas(int width, int height)
+{
+    VIDEO_MODE output_mode=XVideoGetMode();
+    JPBXboxPresentation presentation=jpb_XboxPresentation(output_mode);
+    output_x_per_canvas=(float)output_mode.width/(float)width;
+    output_y_per_canvas=(float)presentation.height/(float)height;
+    uint32_t *p=pb_begin();
+    p=pb_push1(p,NV097_SET_DEPTH_TEST_ENABLE,0);
+    p=pb_push1(p,NV097_SET_DEPTH_MASK,0);
+    p=pb_push1(p,NV097_SET_BLEND_ENABLE,1);
+    p=pb_push1(p,NV097_SET_BLEND_FUNC_SFACTOR,NV097_SET_BLEND_FUNC_SFACTOR_V_SRC_ALPHA);
+    p=pb_push1(p,NV097_SET_BLEND_FUNC_DFACTOR,NV097_SET_BLEND_FUNC_DFACTOR_V_ONE_MINUS_SRC_ALPHA);
+    pb_end(p);
+}
+
 int jpb_XboxGpuModelBegin(void *user, JPBSoftwareFramebuffer *fb, JPBSoftwareDepthBuffer *depth)
 {
     flush_model_batch();
@@ -1174,6 +1189,82 @@ int jpb_XboxGpuPresentFrontend(const JPBSoftwareFramebuffer *fb)
     return 1;
 }
 
+/* Authored sizes of 2D images that staging reduced (tools/write_image_sizes.py).
+   Menu and HUD code cut sub-images in authored pixel coordinates. */
+typedef struct XboxImageSize {
+    char path[60];
+    uint16_t width, height;
+} XboxImageSize;
+static XboxImageSize *image_sizes;
+static unsigned image_size_count;
+static int image_sizes_loaded;
+
+static void load_image_sizes(void)
+{
+    FILE *file;
+    char line[128];
+    unsigned capacity=0;
+    image_sizes_loaded=1;
+    file=fopen("D:\\res\\xbox-image-sizes.txt","rb");
+    if(!file)return;
+    while(fgets(line,sizeof(line),file)){
+        XboxImageSize entry;
+        unsigned width,height;
+        if(sscanf(line,"%59s %u %u",entry.path,&width,&height)!=3)continue;
+        entry.width=(uint16_t)width;
+        entry.height=(uint16_t)height;
+        if(image_size_count==capacity){
+            unsigned grown=capacity?capacity*2:256;
+            XboxImageSize *resized=realloc(image_sizes,grown*sizeof(*resized));
+            if(!resized)break;
+            image_sizes=resized;
+            capacity=grown;
+        }
+        image_sizes[image_size_count++]=entry;
+    }
+    fclose(file);
+}
+
+/* Authored size for a material path such as D:\res\front\x.png, or for a
+   bare file name when it is unique in the table. Registered with the shared
+   runtime as its authored-size hook. */
+int jpb_XboxAuthoredImageSize(const char *filename,int16_t *width,int16_t *height)
+{
+    char key[60];
+    const char *rel,*base;
+    size_t length=0;
+    int found=-1;
+    if(!image_sizes_loaded)load_image_sizes();
+    if(!filename || !image_size_count)return 0;
+    rel=NULL;
+    base=filename;
+    for(const char *at=filename;*at;++at){
+        if(*at=='\\'||*at=='/')base=at+1;
+        if((at[0]=='r'||at[0]=='R')&&(at[1]=='e'||at[1]=='E')&&
+           (at[2]=='s'||at[2]=='S')&&(at[3]=='\\'||at[3]=='/')&&
+           (at==filename||at[-1]=='\\'||at[-1]=='/'))rel=at+4;
+    }
+    if(!rel)rel=base;
+    for(;rel[length]&&length+1<sizeof(key);++length){
+        char c=rel[length];
+        key[length]=c=='\\'?'/':(c>='A'&&c<='Z'?(char)(c+32):c);
+    }
+    key[length]=0;
+    for(unsigned i=0;i<image_size_count;++i){
+        const char *path=image_sizes[i].path;
+        const char *slash=strrchr(path,'/');
+        if(strcmp(path,key)==0){found=(int)i;break;}
+        if(rel==base && strcmp(slash?slash+1:path,key)==0){
+            if(found>=0)return 0; /* ambiguous bare name */
+            found=(int)i;
+        }
+    }
+    if(found<0)return 0;
+    *width=(int16_t)image_sizes[found].width;
+    *height=(int16_t)image_sizes[found].height;
+    return 1;
+}
+
 /* Draw HUD source textures at the active output viewport. The software
    composite still handles text; card coordinates come from the logical
    canvas, which can be widened independently for a future 16:9 mode. */
@@ -1245,6 +1336,14 @@ int jpb_XboxGpuHudScreenDraws(void *user,
         float src_top=draw->hasSource?draw->source.top:0;
         float src_right=draw->hasSource?draw->source.right:(float)source->width;
         float src_bottom=draw->hasSource?draw->source.bottom:(float)source->height;
+        /* Source rectangles are in the material's authored size; staged
+           2D images may be smaller (jpb_XboxAuthoredImageSize). */
+        if(draw->hasSource && draw->textureWidth>0 && draw->textureHeight>0){
+            float sx=(float)source->width/(float)draw->textureWidth;
+            float sy=(float)source->height/(float)draw->textureHeight;
+            src_left*=sx;src_right*=sx;
+            src_top*=sy;src_bottom*=sy;
+        }
         float width=(float)(draw->destination.right-draw->destination.left);
         float height=(float)(draw->destination.bottom-draw->destination.top);
         float u0=(src_left+(src_right-src_left)*

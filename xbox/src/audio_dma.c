@@ -40,8 +40,8 @@
 //  buffers with PCM out successfully.
 
 static volatile LONG analogBufferCount;
-static volatile LONG recoveredHalts;
-static volatile LONG recoveredBuffers;
+volatile LONG recoveredHalts; /* read by tools via the map */
+volatile LONG recoveredBuffers;
 static unsigned nextCompletion;
 
 // global reference to the ac97 device

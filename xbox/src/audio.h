@@ -4,7 +4,8 @@
 int jpb_XboxAudioInit(void);
 void jpb_XboxAudioPump(void);
 
-int jpb_XboxAudioMovieBegin(unsigned rate, unsigned channels);
+/* gain scales decoded samples before conversion (PC pc_movie_float_to_s16). */
+int jpb_XboxAudioMovieBegin(unsigned rate, unsigned channels, float gain);
 int jpb_XboxAudioMovieQueue(
     const float *samples, unsigned frames, unsigned channels);
 unsigned jpb_XboxAudioMovieBufferedFrames(void);

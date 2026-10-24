@@ -8,9 +8,12 @@
 #include "jpb/sprite.h"
 #include "jpb/game.h"
 #include "jpb/menu.h"
+#include "jpb/texture.h"
+#include "jpb/camera.h"
 #include <hal/video.h>
 #include <hal/debug.h>
 #include <windows.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -21,6 +24,7 @@
 #include "audio.h"
 #include "movie.h"
 #include "ui.h"
+#include "save.h"
 #include <pbkit/pbkit.h>
 
 static JPBGameRuntime runtime;
@@ -30,8 +34,13 @@ extern int jpb_XboxInspectImage(const char *, int *, int *);
 extern int jpb_XboxLoadImage(const char *, int, int, uint32_t *, int);
 extern int jpb_XboxControllerInit(void);
 extern int jpb_XboxMemorySelfTest(void);
-extern void jpb_XboxControllerPoll(JPBControllerState *state);
+extern void jpb_XboxControllerUpdate(void);
+extern void jpb_XboxControllerRead(int pad, JPBControllerState *state);
+extern int jpb_XboxControllerConnected(int pad);
+/* Player one's mapped pad bits (test sequences may replace them) and player
+   two's, served to the shared input layer by read_controller. */
 static uint32_t controller_bits;
+static uint32_t player_two_bits;
 /* Read-only marker for native emulator-monitor smoke synchronization. */
 volatile unsigned jpb_XboxSmokeFrame;
 volatile unsigned jpb_XboxStartupPhase;
@@ -47,6 +56,8 @@ volatile unsigned jpb_XboxFrontendFrame;
 volatile unsigned jpb_XboxFrontendMode;
 volatile unsigned jpb_XboxFrontendFreePages;
 volatile unsigned jpb_XboxFrontendPhase;
+/* Front-end frame cost: [0] title frame, [1] presentation, [2] whole frame. */
+volatile unsigned jpb_XboxFrontendMs[3];
 volatile unsigned jpb_XboxTitleFramePhase;
 volatile unsigned jpb_XboxMenuMainPhase;
 volatile unsigned jpb_XboxTextDrawPhase;
@@ -55,6 +66,17 @@ volatile unsigned jpb_XboxSmokeInputPhase;
 volatile unsigned jpb_XboxUiSmokeStep;
 volatile unsigned jpb_XboxUiModeHistoryCount;
 volatile unsigned jpb_XboxUiModeHistory[32];
+/* Front-end/gameplay ownership changes: [0] gameplay starts, [1] returns to
+   the front end, [2] last started level, [3] last game mode. */
+volatile unsigned jpb_XboxSessionStats[4];
+/* Free 4 KiB pages at ownership checkpoints of the latest round trip:
+   [0] gameplay request, [1] front end released, [2] runtime built,
+   [3] constructor done, [4] movies done, [5] gameplay released,
+   [6] front end rebuilt. */
+volatile unsigned jpb_XboxSessionPages[8];
+/* Menu owner state for emulator-monitor diagnosis: menu mode, score mode,
+   mover count, mover states 0-3, game mode. */
+volatile unsigned jpb_XboxMenuDebug[8];
 volatile unsigned jpb_XboxFrameMs;
 volatile unsigned jpb_XboxRuntimeMs;
 volatile unsigned jpb_XboxSceneMs;
@@ -94,6 +116,64 @@ extern volatile uintptr_t jpb_XboxSlowSpriteFunction;
 extern volatile int jpb_XboxSlowSpriteNum;
 /* Emulator-monitor evidence for the process-local controller smoke. */
 volatile int32_t jpb_XboxPlayerTelemetry[6];
+
+/* Test markers read once at startup. */
+static int gpu_initialized;
+static int frontend_smoke;
+static int smoke, tick_smoke, fixed_step_benchmark, analog_smoke;
+static int transparency_probe;
+static uint32_t *frontend_pixels;
+
+static void fatal(const char *format, ...)
+{
+    char message[256];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(message, sizeof(message), format, args);
+    va_end(args);
+    if (gpu_initialized) pb_show_debug_screen();
+    debugPrint("%s\n", message);
+    for (;;) Sleep(1000);
+}
+
+static int marker_present(const char *path)
+{
+    FILE *flag = fopen(path, "rb");
+    if (!flag) return 0;
+    fclose(flag);
+    return 1;
+}
+
+/* nxdk's pdclib malloc is dlmalloc; its statistics separate live heap use
+   from memory the heap holds for reuse. */
+struct jpb_dlmallinfo { size_t arena, ordblks, smblks, hblks, hblkhd,
+    usmblks, fsmblks, uordblks, fordblks, keepcost; };
+extern struct jpb_dlmallinfo dlmallinfo(void);
+/* KiB: [0] heap footprint, [1] in use, [2] free inside the heap,
+   [3] directly mapped large blocks. */
+volatile unsigned jpb_XboxHeapKiB[4];
+/* KiB of decoded CPU textures: world, player, enemy, UI, default caches. */
+volatile unsigned jpb_XboxTextureCacheKiB[5];
+/* Poke jpb_XboxCacheDumpRequest to 1 to list cached textures as text. */
+volatile unsigned jpb_XboxCacheDumpRequest;
+char jpb_XboxCacheDump[16384];
+static void sample_heap(void)
+{
+    struct jpb_dlmallinfo info=dlmallinfo();
+    jpb_XboxHeapKiB[0]=(unsigned)((info.arena+info.hblkhd)>>10);
+    jpb_XboxHeapKiB[1]=(unsigned)(info.uordblks>>10);
+    jpb_XboxHeapKiB[2]=(unsigned)(info.fordblks>>10);
+    jpb_XboxHeapKiB[3]=(unsigned)(info.hblkhd>>10);
+}
+
+static unsigned free_pages(void)
+{
+    MM_STATISTICS memory={0};
+    memory.Length=sizeof(memory);
+    MmQueryStatistics(&memory);
+    return memory.AvailablePages;
+}
+
 static int load_visual_level(const char *fbx_path, int level_index, void *user)
 {
     char path[512];
@@ -103,12 +183,7 @@ static int load_visual_level(const char *fbx_path, int level_index, void *user)
     for(char *p=path;*p;++p)if(*p=='/')*p='\\';
     const JPBSoftwareLevelMesh *mesh=jpb_XboxLoadLevel(path);
     jpb_XboxVisualLevelLoaded=mesh!=NULL;
-    {
-        MM_STATISTICS memory={0};
-        memory.Length=sizeof(memory);
-        MmQueryStatistics(&memory);
-        jpb_XboxFreePagesAfterVisualLevel=memory.AvailablePages;
-    }
+    jpb_XboxFreePagesAfterVisualLevel=free_pages();
     if(!mesh || mesh->levelIndex!=level_index)return 0;
     jpb_GameRuntimeSetLevelRenderMesh((JPBGameRuntime *)user,mesh);
     return 1;
@@ -116,337 +191,326 @@ static int load_visual_level(const char *fbx_path, int level_index, void *user)
 static uint32_t read_controller(int32_t pad_index, void *unused)
 {
     (void)unused;
-    return pad_index == 0 ? controller_bits : 0;
+    return pad_index == 0 ? controller_bits :
+        pad_index == 1 ? player_two_bits : 0;
 }
 
-int main(void)
+/* The menu canvas exists only while the front end owns the frame; gameplay
+   needs the memory. Movies also decode into it. */
+static JPBSoftwareFramebuffer frontend_framebuffer(void)
 {
-    JPBSoftwareFramebuffer fb = { pixels, JPB_XBOX_CANVAS_WIDTH,
-        JPB_XBOX_CANVAS_HEIGHT, JPB_XBOX_CANVAS_WIDTH };
-    JPBSoftwareRenderStats stats;
-    int result;
-    unsigned frame = 0;
-    unsigned previous_frame_started = 0;
-    int smoke = 0;
-    int tick_smoke = 0;
-    int fixed_step_benchmark = 0;
-    unsigned smoke_start_tick = 0;
-    unsigned smoke_previous_phase = 30;
-    int analog_smoke=0;
-    int gpu = 0;
-    int gpu_initialized = 0;
-    int transparency_probe=0;
-    char level_path[160]="D:\\res\\level\\jpx\\fed\\fed.jpx";
-    char player_cad_path[128]="D:\\res\\animation\\obi_wan.cad";
-    char player_bmd_path[128]="D:\\res\\MODEL\\obi_wan.bmd";
-    char player_combo_path[128]="D:\\res\\combo\\obi_wan.cmb";
-    int selected_model=0;
-    int marsh_smoke=0;
-    DWORD started;
-    int video_width=720,video_height=480;
-    int skip_frontend=0;
-    int frontend_smoke=0;
-    int movie_smoke=0;
-    int title_smoke=0;
-    int gpu_requested=0;
-    uint32_t *frontend_pixels=NULL;
-    jpb_XboxStartupPhase=1;
-    FILE *hd_marker=fopen("D:\\xbox-720p.txt","rb");
-    if(hd_marker){fclose(hd_marker);video_width=1280;video_height=720;}
-    {
-        FILE *flag=fopen("D:\\xbox-skip-frontend.txt","rb");
-        if(flag){skip_frontend=1;fclose(flag);}
-        flag=fopen("D:\\xbox-ui-smoke.txt","rb");
-        if(flag){frontend_smoke=1;fclose(flag);}
-        flag=fopen("D:\\xbox-movie-smoke.txt","rb");
-        if(flag){movie_smoke=1;fclose(flag);}
-        flag=fopen("D:\\xbox-title-smoke.txt","rb");
-        if(flag){title_smoke=1;fclose(flag);}
-        flag=fopen("D:\\xbox-gpu.txt","rb");
-        if(flag){gpu_requested=1;fclose(flag);}
-    }
-    jpb_XboxStartupPhase=2;
-    if (!XVideoSetMode(video_width, video_height, 32, REFRESH_DEFAULT)) {
-        jpb_XboxVideoModeResult=0;
-        debugPrint("Xbox video mode unavailable: %dx%d; using 480p\n",
-            video_width,video_height);
-        video_width=720;
-        video_height=480;
-        if (!XVideoSetMode(video_width, video_height, 32, REFRESH_DEFAULT)) {
-            debugPrint("Xbox 480p video mode unavailable\n");
-            for (;;) Sleep(1000);
-        }
-    } else {
-        jpb_XboxVideoModeResult=1;
-    }
-    jpb_XboxStartupPhase=3;
-    if (!jpb_XboxMemorySelfTest()) {
-        debugPrint("Xbox memory boundary self-test FAILED\n");
-        for(;;)Sleep(1000);
-    }
-    jpb_XboxStartupPhase=4;
-    /* An isolated disc marker selects another canonical level for the
-       process-local XEMU smoke. It never drives host or emulator UI input. */
-    {
-        FILE *selection=fopen("D:\\xbox-start-level.txt","rb");
-        if(selection){
-            char name[32]={0};
-            if(fgets(name,sizeof(name),selection) && strncmp(name,"marsh",5)==0 &&
-               (name[5]=='\0' || name[5]=='\r' || name[5]=='\n'))
-                strcpy(level_path,"D:\\res\\level\\jpx\\marsh\\marsh.jpx");
-            fclose(selection);
-        }
-    }
-    marsh_smoke=strstr(level_path,"\\marsh\\")!=NULL;
-    debugPrint("OpenJPB Xbox: loading %s\n",level_path);
-    {
-        const char *path = level_path;
-        FILE *probe = fopen(path, "rb");
-        debugPrint("Disc probe: file=%p errno=%d\n", probe, errno);
-        if (probe) {
-            long size;
-            int seek_result = fseek(probe, 0, SEEK_END);
-            size = ftell(probe);
-            debugPrint("Disc probe: seek=%d size=%ld\n", seek_result, size);
-            fclose(probe);
-        }
-    }
-    jpb_ResourceSetBasePath("D:\\");
-    jpb_GameRuntimeSetImageHooks(jpb_XboxInspectImage, jpb_XboxLoadImage);
-    /* The shared menu owner lays out a 16:9 canvas; presentation maps it
-       to either a widescreen output or letterboxed standard television. */
-    if(!skip_frontend){
+    JPBSoftwareFramebuffer fb={0};
+    if(!frontend_pixels){
         frontend_pixels=(uint32_t *)calloc(
             (size_t)JPB_XBOX_FRONTEND_WIDTH*JPB_XBOX_FRONTEND_HEIGHT,
             sizeof(*frontend_pixels));
-        if(!frontend_pixels){
-            debugPrint("Front-end framebuffer allocation failed\n");
-            for(;;)Sleep(1000);
-        }
-        JPBSoftwareFramebuffer frontend_fb={frontend_pixels,
-            JPB_XBOX_FRONTEND_WIDTH,JPB_XBOX_FRONTEND_HEIGHT,
-            JPB_XBOX_FRONTEND_WIDTH};
-        unsigned frontend_frame=0;
-        unsigned smoke_mode=UINT_MAX;
-        unsigned smoke_mode_frames=0;
-        if(gpu_requested){
-            if(!gpu_initialized){
-                result=jpb_XboxGpuInit();
-                jpb_XboxGpuInitResult=result;
-                if(result!=0){
-                    debugPrint("Front-end GPU init failed %d\n",result);
-                    for(;;)Sleep(1000);
+        if(!frontend_pixels)fatal("Front-end framebuffer allocation failed");
+    }
+    fb.pixels=frontend_pixels;
+    fb.width=fb.stridePixels=JPB_XBOX_FRONTEND_WIDTH;
+    fb.height=JPB_XBOX_FRONTEND_HEIGHT;
+    return fb;
+}
+
+static void play_queued_movies(void)
+{
+    unsigned movie;
+    int flags;
+    while(jpb_XboxUiTakeMovie(&movie,&flags)){
+        JPBSoftwareFramebuffer fb=frontend_framebuffer();
+        (void)flags;
+        if(!jpb_XboxMoviePlay(movie,&fb,gpu_initialized,frontend_smoke))
+            debugPrint("Movie %u failed; continuing\n",movie);
+    }
+}
+
+static void set_title_render_hooks(void)
+{
+    if(!gpu_initialized)return;
+    /* Menu artwork and text go straight to the GPU in the recovered
+       panel/text order; compositing the 640x360 canvas in software held the
+       front end near 8 FPS. */
+    jpb_GameRuntimeSetTitleScreenDrawRenderHook(&runtime,
+        jpb_XboxGpuHudScreenDraws,NULL);
+    jpb_GameRuntimeSetTitleTextDrawRenderHook(&runtime,
+        jpb_XboxGpuHudTextDraws,NULL);
+}
+
+/* Map both controller ports for this frame. Player one's continuous stick
+   axes are returned for the caller (test sequences may replace them);
+   player two's are published directly, matching the PC XInput provider. */
+static void read_players(int in_menu, float *axis_x, float *axis_y)
+{
+    JPBControllerState state;
+    jpb_XboxControllerUpdate();
+    jpb_XboxControllerRead(0,&state);
+    controller_bits=jpb_InputMapControllerState(&state,
+        OptionStruct.WalkLimit[0],OptionStruct.RunLimit[0],
+        OptionStruct.ControllerConfig[0],in_menu,axis_x,axis_y);
+    jpb_XboxControllerRead(1,&state);
+    player_two_bits=jpb_InputMapControllerState(&state,
+        OptionStruct.WalkLimit[1],OptionStruct.RunLimit[1],
+        OptionStruct.ControllerConfig[1],in_menu,&g_p2X,&g_p2Y);
+    player1InputType=1;
+    player2InputType=1;
+    p2Connected=jpb_XboxControllerConnected(1);
+}
+
+/* Host transitions recovered by the PC port (pc_front_end_requests_*). The
+   menu owner publishes the selection; the host performs the load. */
+static int front_end_requests_gameplay(int *level_index, int *game_mode)
+{
+    unsigned stack=menuVars.menuModeSP&7u;
+    unsigned mode=menuVars.menuMode[stack];
+    int selected=(int)(uint8_t)LevelSelect;
+
+    /* New Game returns from difficulty to state 4; the recovered character
+       selector is state 0x0e (same bridge as the PC host). */
+    if(mode==4 && stack!=0 &&
+       (menuVars.menuMode[(stack-1u)&7u]==0x37 ||
+        menuVars.menuMode[(stack-1u)&7u]==0x99)){
+        menu_initPlayerSelect();
+        menu_pushMenu(0x0e);
+        return 0;
+    }
+    if(GameStruct.gameMode==6 && GameStruct.inMenuFlag==0){
+        int next=0;
+        if(SaveGameStruct.validFlag!=0 && SaveGameStruct.lastlevel>=1 &&
+           SaveGameStruct.lastlevel<=14)next=SaveGameStruct.lastlevel;
+        else if(GameStruct.CurrentLevel>=1 && GameStruct.CurrentLevel<=14)
+            next=(int)(uint8_t)GameStruct.CurrentLevel;
+        else if(LevelSelect>=1 && LevelSelect<=14)next=selected;
+        if(!next)return 0;
+        *level_index=next;
+        *game_mode=6;
+        return 1;
+    }
+    if(mode==0x66 && selected>=1 && selected<=14){
+        *level_index=selected;
+        *game_mode=4;
+        return 1;
+    }
+    /* Training. */
+    if(mode==0x0c && GameStruct.gameMode==2 && selected>=16 && selected<=22){
+        GameStruct.NumPlayers=1;
+        *level_index=selected;
+        *game_mode=2;
+        return 1;
+    }
+    /* Versus arena. */
+    if(mode==0x0d && selected==25 && GameStruct.NumPlayers==2 &&
+       GameStruct.gameMode==2 && GameStruct.versusModeFlag!=0){
+        *level_index=selected;
+        *game_mode=2;
+        return 1;
+    }
+    return 0;
+}
+
+static int gameplay_enters_score_mode(void)
+{
+    if(GameStruct.gameMode!=4 && GameStruct.gameMode!=5)return 0;
+    camera_SetCameras();
+    menu_enterScoreMode(3);
+    GameStruct.CurrentLevel=(uint8_t)LevelSelect;
+    return 1;
+}
+
+static int gameplay_requests_title(void)
+{
+    unsigned stack=menuVars.menuModeSP&7u;
+    return GameStruct.inMenuFlag!=0 && menuVars.menuMode[stack]==0 &&
+        (GameStruct.gameMode==0 || GameStruct.gameMode==9);
+}
+
+/* Run menu frames until the menu owner requests a level. */
+static void run_front_end(int *level_index, int *game_mode)
+{
+    JPBSoftwareFramebuffer frontend_fb=frontend_framebuffer();
+    unsigned frontend_frame=0;
+    unsigned smoke_mode=UINT_MAX;
+    unsigned smoke_mode_frames=0;
+    int result;
+
+    for(;;){
+        float axes[2]={0,0};
+        unsigned mode=menuVars.menuMode[menuVars.menuModeSP&7u];
+        DWORD frontend_started;
+        if(mode!=smoke_mode){
+            smoke_mode=mode;
+            smoke_mode_frames=0;
+            if(jpb_XboxUiModeHistoryCount<32)
+                jpb_XboxUiModeHistory[jpb_XboxUiModeHistoryCount++]=mode;
+        }else ++smoke_mode_frames;
+        jpb_XboxFrontendFrame=frontend_frame;
+        jpb_XboxSmokeFrame=frontend_frame;
+        jpb_XboxFrontendMode=mode;
+        jpb_XboxMenuDebug[0]=mode;
+        jpb_XboxMenuDebug[1]=menuVars.scoreMode;
+        jpb_XboxMenuDebug[2]=menuVars.mmvCount;
+        for(unsigned i=0;i<4;++i)jpb_XboxMenuDebug[3+i]=menuVars.mmv[i].state;
+        jpb_XboxMenuDebug[7]=(unsigned)(uint8_t)GameStruct.gameMode;
+        read_players(1,&axes[0],&axes[1]);
+        /* Process-local UI smoke: open the main menu from the title prompt
+           and confirm through to the first level. */
+        if(frontend_smoke){
+            static const unsigned steps[][2]={{1,30},{0,30},{0x90,30},
+                {3,30},{0x37,30},{0x0e,60},{0x1a,60}};
+            controller_bits=0;
+            for(unsigned i=0;i<sizeof(steps)/sizeof(steps[0]);++i)
+                if(mode==steps[i][0] && smoke_mode_frames==steps[i][1]){
+                    controller_bits=JPB_PAD_COMBO_SOUTH;
+                    jpb_XboxUiSmokeStep=i+1;
                 }
-                gpu_initialized=1;
-            }
         }
-        if(!jpb_XboxControllerInit()){
-            debugPrint("Xbox controller initialization failed\n");
-            for(;;)Sleep(1000);
-        }
-        jpb_InputSetProvider(read_controller,NULL);
-        player1InputType=1;
-        if(!jpb_XboxAudioInit()){
-            debugPrint("Xbox audio initialization failed\n");
-            for(;;)Sleep(1000);
-        }
-        game_setDefaultOptions();
-        generateAllText(OptionStruct.Language);
-        result=jpb_GameRuntimeInitFrontend(&runtime);
-        if(result!=JPB_GAME_RUNTIME_OK || !jpb_XboxUiInit()){
-            debugPrint("Front-end initialization failed %d: %s %s\n",result,
-                jpb_GameRuntimeLastFailureStage(),
-                jpb_GameRuntimeLastFailureDetail());
-            for(;;)Sleep(1000);
-        }
-        if(movie_smoke||title_smoke)OptionStruct.EULAaccepted=1;
-        menuTexLoaded=0;
-        menu_mainInitMenu(0);
-        if(title_smoke){introPlayed=1;menuVars.titleArt=1;}
-        if(!menuTexLoaded || !menuTextures[4] || !menuTextures[242]){
-            debugPrint("Front-end texture publication failed\n");
-            for(;;)Sleep(1000);
-        }
-        for(;;){
-            JPBControllerState controller_state;
-            float axes[2]={0,0};
-            unsigned x,y;
-            uint32_t *screen=(uint32_t *)XVideoGetFB();
-            unsigned mode=menuVars.menuMode[menuVars.menuModeSP&7u];
-            if(mode!=smoke_mode){
-                smoke_mode=mode;
-                smoke_mode_frames=0;
-                if(jpb_XboxUiModeHistoryCount<32)
-                    jpb_XboxUiModeHistory[jpb_XboxUiModeHistoryCount++]=mode;
-            }else ++smoke_mode_frames;
-            jpb_XboxFrontendFrame=frontend_frame;
-            jpb_XboxSmokeFrame=frontend_frame;
-            jpb_XboxFrontendMode=mode;
-            jpb_XboxControllerPoll(&controller_state);
-            controller_bits=jpb_InputMapControllerState(&controller_state,
-                OptionStruct.WalkLimit[0],OptionStruct.RunLimit[0],
-                OptionStruct.ControllerConfig[0],1,&axes[0],&axes[1]);
-            /* Process-local UI smoke: scroll the legal text, accept it, then
-               open the main menu from the title prompt. */
-            if(frontend_smoke){
-                controller_bits=0;
-                if(mode==0x9f && frontend_frame>=30){
-                    controller_bits=(frontend_frame>=300 &&
-                        (frontend_frame%60)==0)
-                        ? JPB_PAD_COMBO_SOUTH : JPB_PAD_DOWN;
-                }
-                if(mode==1 && smoke_mode_frames==30){
-                    controller_bits=JPB_PAD_COMBO_SOUTH;
-                    jpb_XboxUiSmokeStep=1;
-                }else if(mode==0 && smoke_mode_frames==30){
-                    controller_bits=JPB_PAD_COMBO_SOUTH;
-                    jpb_XboxUiSmokeStep=2;
-                }else if(mode==0x90 && smoke_mode_frames==30){
-                    controller_bits=JPB_PAD_COMBO_SOUTH;
-                    jpb_XboxUiSmokeStep=3;
-                }else if(mode==3 && smoke_mode_frames==30){
-                    controller_bits=JPB_PAD_COMBO_SOUTH;
-                    jpb_XboxUiSmokeStep=4;
-                }else if(mode==0x37 && smoke_mode_frames==30){
-                    controller_bits=JPB_PAD_COMBO_SOUTH;
-                    jpb_XboxUiSmokeStep=5;
-                }else if(mode==0x0e && smoke_mode_frames==60){
-                    controller_bits=JPB_PAD_COMBO_SOUTH;
-                    jpb_XboxUiSmokeStep=6;
-                }else if(mode==0x1a && smoke_mode_frames==60){
-                    controller_bits=JPB_PAD_COMBO_SOUTH;
-                    jpb_XboxUiSmokeStep=7;
-                }
-            }
-            deltaTime=1.0f/60.0f;
+        deltaTime=1.0f/60.0f;
+        if(gpu_initialized){
+            jpb_XboxGpuBegin();
+            jpb_XboxGpuSetCanvas(JPB_XBOX_FRONTEND_WIDTH,
+                JPB_XBOX_FRONTEND_HEIGHT);
+        }else{
             memset(frontend_pixels,0,
                 (size_t)JPB_XBOX_FRONTEND_WIDTH*
                 JPB_XBOX_FRONTEND_HEIGHT*sizeof(*frontend_pixels));
-            if(gpu_initialized)jpb_XboxGpuBegin();
-            jpb_XboxFrontendPhase=1;
-            result=jpb_GameRuntimeTitleFrame(&runtime,&frontend_fb);
-            jpb_XboxFrontendPhase=2;
-            if(result!=JPB_GAME_RUNTIME_OK&&!jpb_XboxUiMoviesPending()){
-                if(gpu_initialized)pb_show_debug_screen();
-                debugPrint("Front-end frame failed %d mode %u\n",result,mode);
-                for(;;)Sleep(1000);
-            }
-            {
-                unsigned movie;
-                int flags;
-                int played_movie=0;
-                while(jpb_XboxUiTakeMovie(&movie,&flags)){
-                    jpb_XboxFrontendPhase=3;
-                    (void)flags;
-                    played_movie=1;
-                    if(!jpb_XboxMoviePlay(movie,&frontend_fb,
-                            gpu_initialized,frontend_smoke))
-                        debugPrint("Movie %u failed; continuing menu flow\n",movie);
-                }
-                /* The retail callback is blocking. Do not show the title
-                   frame that requested a boot movie before that movie. */
-                if(played_movie){++frontend_frame;continue;}
-            }
-            jpb_XboxFrontendPhase=4;
+        }
+        jpb_XboxFrontendPhase=1;
+        frontend_started=GetTickCount();
+        result=jpb_GameRuntimeTitleFrame(&runtime,&frontend_fb);
+        jpb_XboxFrontendMs[0]=GetTickCount()-frontend_started;
+        jpb_XboxFrontendPhase=2;
+        if(result!=JPB_GAME_RUNTIME_OK&&!jpb_XboxUiMoviesPending())
+            fatal("Front-end frame failed %d mode %u",result,mode);
+        if(jpb_XboxUiMoviesPending()){
+            /* The retail callback is blocking. Do not show the title frame
+               that requested a movie before that movie. */
+            jpb_XboxFrontendPhase=3;
+            play_queued_movies();
+            ++frontend_frame;
+            continue;
+        }
+        jpb_XboxFrontendPhase=4;
+        {
+            DWORD present_started=GetTickCount();
             if(gpu_initialized){
-                if(!jpb_XboxGpuPresentFrontend(&frontend_fb)){
-                    pb_show_debug_screen();
-                    debugPrint("Front-end presentation failed\n");
-                    for(;;)Sleep(1000);
-                }
                 jpb_XboxGpuPresent();
             }else{
                 jpb_XboxPresentSoftware(frontend_pixels,
                     JPB_XBOX_FRONTEND_WIDTH,JPB_XBOX_FRONTEND_HEIGHT,
                     JPB_XBOX_FRONTEND_WIDTH);
             }
-            jpb_XboxAudioPump();
-            if((frontend_frame&31u)==0){
-                MM_STATISTICS memory={0};
-                memory.Length=sizeof(memory);
-                MmQueryStatistics(&memory);
-                jpb_XboxFrontendFreePages=memory.AvailablePages;
-            }
-            ++frontend_frame;
-            if(GameStruct.inMenuFlag==0 ||
-               (mode==0x66 && GameStruct.gameMode==3))break;
-            Sleep(15);
+            jpb_XboxFrontendMs[1]=GetTickCount()-present_started;
         }
-        if((int)(int8_t)LevelSelect>0 &&
-           (int)(int8_t)LevelSelect<JPB_LEVEL_COUNT &&
-           GameStruct.ModelSelect[0]>=0 &&
-           GameStruct.ModelSelect[0]<JPB_MODEL_NAME_COUNT){
-            const char *level_name=sLevelNames[(int)(int8_t)LevelSelect];
-            const char *model_name=sModelNames[GameStruct.ModelSelect[0]];
-            selected_model=GameStruct.ModelSelect[0];
-            snprintf(level_path,sizeof(level_path),
-                "D:\\res\\level\\jpx\\%s\\%s.jpx",level_name,level_name);
-            snprintf(player_cad_path,sizeof(player_cad_path),
-                "D:\\res\\animation\\%s.cad",model_name);
-            snprintf(player_bmd_path,sizeof(player_bmd_path),
-                "D:\\res\\MODEL\\%s.bmd",model_name);
-            snprintf(player_combo_path,sizeof(player_combo_path),
-                "D:\\res\\combo\\%s.cmb",model_name);
-        }
-        jpb_GameRuntimeShutdown(&runtime);
-        menuTexLoaded=0;
-        memset(menuTextures,0,sizeof(menuTextures));
-        memset(controlTextures,0,sizeof(controlTextures));
-        if(gpu_initialized)jpb_XboxGpuGarbageCollect();
-    }else{
-        if(!jpb_XboxControllerInit()){
-            debugPrint("Xbox controller initialization failed\n");
-            for(;;)Sleep(1000);
-        }
-        jpb_InputSetProvider(read_controller,NULL);
-        player1InputType=1;
-        if(!jpb_XboxAudioInit()){
-            debugPrint("Xbox audio initialization failed\n");
-            for(;;)Sleep(1000);
+        jpb_XboxAudioPump();
+        jpb_XboxFrontendMs[2]=GetTickCount()-frontend_started;
+        if((frontend_frame&31u)==0)jpb_XboxFrontendFreePages=free_pages();
+        ++frontend_frame;
+        if(front_end_requests_gameplay(level_index,game_mode))return;
+        {
+            /* Hold the front end near its authored 60 Hz step. */
+            DWORD elapsed=GetTickCount()-frontend_started;
+            if(elapsed<16)Sleep(16-elapsed);
         }
     }
-    result = jpb_GameRuntimeInitWithPlayerAssets(&runtime,
-        level_path,
-        player_cad_path,
-        player_bmd_path, selected_model);
-    jpb_XboxLastLoadResult=result;
+}
+
+/* Load the selected level, following the PC host hand-off
+   (pc_start_selected_gameplay): runtime construction restores defaults, so
+   the menu's options, players and difficulty are published again around the
+   canonical constructor. */
+static void start_gameplay(int level, int game_mode)
+{
+    optionstruct selected_options=OptionStruct;
+    int selected_model=GameStruct.ModelSelect[0];
+    int selected_players=GameStruct.NumPlayers==2?2:1;
+    int selected_player_two=GameStruct.ModelSelect[1];
+    int selected_difficulty=GameStruct.difficulty;
+    int selected_versus=GameStruct.versusModeFlag;
+    uint8_t selected_player_index[2]={menuVars.pplayers[0],menuVars.pplayers[1]};
+    char level_path[160],cad[128],bmd[128],cmb[128];
+    char cad2[128],bmd2[128],cmb2[128];
+    const char *model_name,*level_name;
+    int result;
+
+    if(selected_model<0 || selected_model>=JPB_MODEL_NAME_COUNT)selected_model=0;
+    if(selected_player_two<0 || selected_player_two>=JPB_MODEL_NAME_COUNT)
+        selected_player_two=0;
+    if(level<1 || level>=JPB_LEVEL_COUNT)fatal("Invalid level request %d",level);
+    model_name=sModelNames[selected_model];
+    level_name=sLevelNames[level];
+    snprintf(level_path,sizeof(level_path),
+        "D:\\res\\level\\jpx\\%s\\%s.jpx",level_name,level_name);
+    snprintf(cad,sizeof(cad),"D:\\res\\animation\\%s.cad",model_name);
+    snprintf(bmd,sizeof(bmd),"D:\\res\\MODEL\\%s.bmd",model_name);
+    snprintf(cmb,sizeof(cmb),"D:\\res\\combo\\%s.cmb",model_name);
+    snprintf(cad2,sizeof(cad2),"D:\\res\\animation\\%s.cad",
+        sModelNames[selected_player_two]);
+    snprintf(bmd2,sizeof(bmd2),"D:\\res\\MODEL\\%s.bmd",
+        sModelNames[selected_player_two]);
+    snprintf(cmb2,sizeof(cmb2),"D:\\res\\combo\\%s.cmb",
+        sModelNames[selected_player_two]);
+    ++jpb_XboxSessionStats[0];
+    jpb_XboxSessionStats[2]=(unsigned)level;
+    jpb_XboxSessionStats[3]=(unsigned)game_mode;
+
+    jpb_XboxSessionPages[0]=free_pages();
+    LevelSelect=(char)level;
+    menu_levelSelect();
+    jpb_GameRuntimeShutdown(&runtime);
+    menuTexLoaded=0;
+    memset(menuTextures,0,sizeof(menuTextures));
+    memset(controlTextures,0,sizeof(controlTextures));
+    free(frontend_pixels);
+    frontend_pixels=NULL;
+    if(gpu_initialized)jpb_XboxGpuGarbageCollect();
+    jpb_XboxSessionPages[1]=free_pages();
+
     jpb_XboxStartupPhase=5;
-    if (result != 0) {
-        debugPrint("Load failed %d: %s %s\n", result,
-            jpb_GameRuntimeLastFailureStage(), jpb_GameRuntimeLastFailureDetail());
-        for (;;) Sleep(1000);
-    }
-    result = jpb_GameRuntimeAddPlayerComboData(&runtime, player_combo_path);
+    result=jpb_GameRuntimeInitWithPlayerAssets(&runtime,level_path,cad,bmd,
+        selected_model);
     jpb_XboxLastLoadResult=result;
-    if (result != 0) {
-        debugPrint("Combo load failed %d\n", result);
-        for (;;) Sleep(1000);
+    if(result!=0)fatal("Load failed %d: %s %s",result,
+        jpb_GameRuntimeLastFailureStage(),jpb_GameRuntimeLastFailureDetail());
+    jpb_XboxSessionPages[2]=free_pages();
+    OptionStruct=selected_options;
+    generateAllText(OptionStruct.Language);
+    menuVars.pplayers[0]=selected_player_index[0];
+    menuVars.pplayers[1]=selected_player_index[1];
+    menu_setNumPlayers((unsigned)selected_players);
+    menu_setPlayer(0,(unsigned)selected_model);
+    if(selected_players==2)menu_setPlayer(1,(unsigned)selected_player_two);
+    GameStruct.versusModeFlag=(int16_t)selected_versus;
+    GameStruct.difficulty=(char)(selected_difficulty==0?0:1);
+    GameStruct.CurrentLevel=(char)level;
+    result=jpb_GameRuntimeAddPlayerComboData(&runtime,cmb);
+    jpb_XboxLastLoadResult=result;
+    if(result!=0)fatal("Combo load failed %d",result);
+    if(selected_players==2){
+        result=jpb_GameRuntimeActivateSecondPlayer(&runtime,cad2,bmd2,
+            selected_player_two);
+        if(result==0)result=jpb_GameRuntimeAddSecondPlayerComboData(&runtime,cmb2);
+        if(result!=0)fatal("Player two load failed %d",result);
+    }else if(level==12){
+        /* The solo Kadu level carries a second rider (PC
+           pc_activate_solo_kadu_rider). */
+        menu_setPlayer(1,(unsigned)selected_model);
+        result=jpb_GameRuntimeActivateSecondPlayer(&runtime,cad,bmd,
+            selected_model);
+        if(result==0)result=jpb_GameRuntimeAddSecondPlayerComboData(&runtime,cmb);
+        menu_setNumPlayers(1);
+        if(result!=0)fatal("Kadu rider load failed %d",result);
     }
-    debugPrint("Loading canonical enemy assets\n");
     jpb_GameRuntimeUseUiTextureCache(&runtime);
-    if(!jpb_XboxUiInit()) {
-        debugPrint("Xbox UI platform initialization failed\n");
-        for(;;)Sleep(1000);
+    if(!jpb_XboxUiInit())fatal("Xbox UI platform initialization failed");
+    if(!jpb_XboxUiLoadGameplay())fatal("Xbox gameplay UI load failed");
+    if(game_mode!=2){
+        result=jpb_GameRuntimeAddEnemyAssets(&runtime,
+            "D:\\res\\animation\\battle_d.cad","D:\\res\\MODEL\\battle_d.bmd");
+        jpb_XboxLastLoadResult=result;
+        if(result!=0)fatal("Enemy load failed %d: %s %s",result,
+            jpb_GameRuntimeLastFailureStage(),
+            jpb_GameRuntimeLastFailureDetail());
     }
-    if(!jpb_XboxUiLoadGameplay()) {
-        debugPrint("Xbox gameplay UI load failed\n");
-        for(;;)Sleep(1000);
-    }
-    result=jpb_GameRuntimeAddEnemyAssets(&runtime,
-        "D:\\res\\animation\\battle_d.cad", "D:\\res\\MODEL\\battle_d.bmd");
-    jpb_XboxLastLoadResult=result;
-    if(result!=0) {
-        debugPrint("Enemy load failed %d: %s %s\n",result,
-            jpb_GameRuntimeLastFailureStage(),jpb_GameRuntimeLastFailureDetail());
-        for(;;)Sleep(1000);
-    }
-    debugPrint("Running canonical level constructor\n");
-    {
-        MM_STATISTICS memory={0};
-        memory.Length=sizeof(memory);
-        MmQueryStatistics(&memory);
-        jpb_XboxFreePagesBeforeConstructor=memory.AvailablePages;
-    }
+    jpb_XboxFreePagesBeforeConstructor=free_pages();
     jpb_LoaderSetVisualLevelProvider(load_visual_level,&runtime);
     result=jpb_GameRuntimeRunCanonicalConstructor(&runtime);
     jpb_XboxLastLoadResult=result;
@@ -458,92 +522,94 @@ int main(void)
         else if (strstr(stage,"load-screen-present"))jpb_XboxLastLoadFailureCode=3;
         else if (strstr(stage,"invalid-runtime"))jpb_XboxLastLoadFailureCode=4;
     }
-    {
-        MM_STATISTICS memory={0};
-        memory.Length=sizeof(memory);
-        MmQueryStatistics(&memory);
-        jpb_XboxFreePagesAfterConstructor=memory.AvailablePages;
-    }
+    jpb_XboxFreePagesAfterConstructor=jpb_XboxSessionPages[3]=free_pages();
     jpb_XboxStartupPhase=6;
-    if(result!=0) {
-        debugPrint("Constructor failed %d: %s %s\n",result,
-            jpb_GameRuntimeLastFailureStage(),jpb_GameRuntimeLastFailureDetail());
-        for(;;)Sleep(1000);
-    }
-    {
-        if(!frontend_pixels){
-            frontend_pixels=(uint32_t *)calloc(
-                (size_t)JPB_XBOX_FRONTEND_WIDTH*JPB_XBOX_FRONTEND_HEIGHT,
-                sizeof(*frontend_pixels));
-            if(!frontend_pixels){
-                debugPrint("Movie framebuffer allocation failed\n");
-                for(;;)Sleep(1000);
-            }
-        }
-        JPBSoftwareFramebuffer movie_fb={frontend_pixels,
-            JPB_XBOX_FRONTEND_WIDTH,JPB_XBOX_FRONTEND_HEIGHT,
-            JPB_XBOX_FRONTEND_WIDTH};
-        unsigned movie;
-        int flags;
-        while(jpb_XboxUiTakeMovie(&movie,&flags)){
-            (void)flags;
-            if(!jpb_XboxMoviePlay(movie,&movie_fb,gpu_initialized,
-                    frontend_smoke))
-                debugPrint("Movie %u failed before gameplay; continuing\n",movie);
-        }
-    }
+    if(result!=0)fatal("Constructor failed %d: %s %s",result,
+        jpb_GameRuntimeLastFailureStage(),jpb_GameRuntimeLastFailureDetail());
+    OptionStruct=selected_options;
+    generateAllText(OptionStruct.Language);
+    menuVars.pplayers[0]=selected_player_index[0];
+    menuVars.pplayers[1]=selected_player_index[1];
+    menu_setNumPlayers((unsigned)selected_players);
+    menu_setPlayer(0,(unsigned)selected_model);
+    if(selected_players==2)menu_setPlayer(1,(unsigned)selected_player_two);
+    GameStruct.versusModeFlag=(int16_t)selected_versus;
+    GameStruct.difficulty=(char)(selected_difficulty==0?0:1);
+    jpb_game_ApplyLevelDifficulty((unsigned)level);
+    GameStruct.CurrentLevel=(char)level;
+    /* game_gPlayTheGame changes load modes to active mode 6; keeping a
+       request mode would enter the score screen on the first frame. */
+    GameStruct.gameMode=6;
+
+    play_queued_movies();
     free(frontend_pixels);
     frontend_pixels=NULL;
     if(gpu_initialized)jpb_XboxGpuGarbageCollect();
-    jpb_XboxControllerInit();
-    jpb_InputSetProvider(read_controller, NULL);
-    player1InputType = 1;
-    {
-        FILE *flag = fopen("D:\\xbox-smoke.txt", "rb");
-        if (flag) { smoke = 1; fclose(flag); }
-        flag = fopen("D:\\xbox-tick-smoke.txt", "rb");
-        if (flag) { tick_smoke = smoke = 1; fclose(flag); }
-        /* Test-only deterministic simulation for frame-aligned perf A/B.
-           The staged game keeps the wall-time clock unless this marker is
-           explicitly present in the isolated test disc. */
-        flag = fopen("D:\\xbox-fixed-step-benchmark.txt", "rb");
-        if (flag) { fixed_step_benchmark = tick_smoke = smoke = 1; fclose(flag); }
-        flag = fopen("D:\\xbox-analog-smoke.txt", "rb");
-        if (flag) { analog_smoke=1; fclose(flag); }
-    }
-    started = GetTickCount();
-    {
-        FILE *flag=fopen("D:\\xbox-transparency-probe.txt","rb");
-        if(flag) {transparency_probe=1;fclose(flag);}
-    }
-    {
-        if (gpu_requested) {
-            result = gpu_initialized ? 0 : jpb_XboxGpuInit();
-            jpb_XboxGpuInitResult=result;
-            jpb_XboxStartupPhase=7;
-            if (result != 0) {
-                debugPrint("GPU init failed %d\n", result);
-                for (;;) Sleep(1000);
-            }
-            gpu = 1;
-            const JPBSoftwareLevelMesh *level = runtime.levelRenderMesh;
-            if (!level) {
-                pb_show_debug_screen();
-                debugPrint("Packed level load failed\n");
-                for (;;) Sleep(1000);
-            }
-            jpb_GameRuntimeSetLevelRenderMesh(&runtime, level);
-            jpb_GameRuntimeSetLevelRenderHook(&runtime, jpb_XboxGpuLevel, NULL);
-            jpb_GameRuntimeSetModelRenderHooks(&runtime, jpb_XboxGpuModelBegin, jpb_XboxGpuTriangle, NULL, NULL);
-            jpb_GameRuntimeSetScreenPolyRenderHooks(&runtime, jpb_XboxGpuEffectsBegin, jpb_XboxGpuTriangle, NULL, NULL);
-            jpb_GameRuntimeSetGameplayCompositeHook(&runtime, jpb_XboxGpuComposite, NULL);
-            jpb_GameRuntimeSetGameplayHudScreenDrawHook(&runtime,
-                jpb_XboxGpuHudScreenDraws, NULL);
-            jpb_GameRuntimeSetGameplayHudTextDrawHook(&runtime,
-                jpb_XboxGpuHudTextDraws, NULL);
-        }
+    jpb_XboxSessionPages[4]=free_pages();
+    jpb_InputSetProvider(read_controller,NULL);
+    player1InputType=1;
+    if(gpu_initialized){
+        const JPBSoftwareLevelMesh *mesh=runtime.levelRenderMesh;
+        if(!mesh)fatal("Packed level load failed");
+        jpb_GameRuntimeSetLevelRenderMesh(&runtime,mesh);
+        jpb_GameRuntimeSetLevelRenderHook(&runtime,jpb_XboxGpuLevel,NULL);
+        jpb_GameRuntimeSetModelRenderHooks(&runtime,jpb_XboxGpuModelBegin,
+            jpb_XboxGpuTriangle,NULL,NULL);
+        jpb_GameRuntimeSetScreenPolyRenderHooks(&runtime,
+            jpb_XboxGpuEffectsBegin,jpb_XboxGpuTriangle,NULL,NULL);
+        jpb_GameRuntimeSetGameplayCompositeHook(&runtime,
+            jpb_XboxGpuComposite,NULL);
+        jpb_GameRuntimeSetGameplayHudScreenDrawHook(&runtime,
+            jpb_XboxGpuHudScreenDraws,NULL);
+        jpb_GameRuntimeSetGameplayHudTextDrawHook(&runtime,
+            jpb_XboxGpuHudTextDraws,NULL);
     }
     jpb_XboxStartupPhase=8;
+}
+
+/* The PC host keeps the level resident under the results and title menus.
+   64 MB cannot hold both, so release the level once the menu owner has taken
+   over (score mode is already entered) and rebuild the front-end runtime;
+   menu state lives in the shared globals and is untouched. */
+static void return_to_front_end(void)
+{
+    int result;
+    ++jpb_XboxSessionStats[1];
+    jpb_GameRuntimeShutdown(&runtime);
+    jpb_XboxUnloadLevel();
+    menuTexLoaded=0;
+    memset(menuTextures,0,sizeof(menuTextures));
+    memset(controlTextures,0,sizeof(controlTextures));
+    if(gpu_initialized)jpb_XboxGpuGarbageCollect();
+    jpb_XboxSessionPages[5]=free_pages();
+    result=jpb_GameRuntimeInitFrontend(&runtime);
+    if(result!=JPB_GAME_RUNTIME_OK)
+        fatal("Front-end initialization failed %d: %s %s",result,
+            jpb_GameRuntimeLastFailureStage(),
+            jpb_GameRuntimeLastFailureDetail());
+    _ClearTextureCache();
+    menu_winLoadTextures();
+    if(!menuTexLoaded)fatal("Front-end texture restore failed");
+    if(!jpb_XboxUiInit())fatal("Xbox UI platform initialization failed");
+    set_title_render_hooks();
+    controller_bits=0;
+    jpb_XboxSessionPages[6]=free_pages();
+}
+
+/* Run gameplay frames until the game hands ownership back to the menus. */
+static void run_gameplay(int marsh_smoke)
+{
+    JPBSoftwareFramebuffer fb={pixels,JPB_XBOX_CANVAS_WIDTH,
+        JPB_XBOX_CANVAS_HEIGHT,JPB_XBOX_CANVAS_WIDTH};
+    JPBSoftwareRenderStats stats;
+    unsigned frame=0;
+    unsigned previous_frame_started=0;
+    unsigned smoke_start_tick=0;
+    unsigned smoke_previous_phase=30;
+    DWORD started=GetTickCount();
+    int gpu=gpu_initialized;
+    int result;
+
     for (;;) {
         unsigned frame_started=GetTickCount();
         /* Gameplay advances at the authored 60 Hz step on PC.  On Xbox a
@@ -556,23 +622,38 @@ int main(void)
         previous_frame_started = frame_started;
         jpb_XboxSmokeFrame=frame;
         jpb_XboxFramePhase=1;
-        if(smoke && frame%30==0) {
-            MM_STATISTICS memory={0};
-            memory.Length=sizeof(memory);
-            MmQueryStatistics(&memory);
-            jpb_XboxFreePages=memory.AvailablePages;
+        if(frame%30==0) {
+            jpb_XboxFreePages=free_pages();
+            sample_heap();
+            {
+                JPBGameRuntimeTextureCache *caches[5]={runtime.worldTextureCache,
+                    runtime.textureCache,runtime.enemyTextureCache,
+                    runtime.uiTextureCache,runtime.defaultTextureCache};
+                for(unsigned i=0;i<5;++i)jpb_XboxTextureCacheKiB[i]=
+                    (unsigned)(jpb_GameRuntimeTextureCacheBytes(caches[i])>>10);
+                if(jpb_XboxCacheDumpRequest){
+                    size_t used=0;
+                    for(unsigned i=0;i<5;++i){
+                        size_t w,h;
+                        const char *name;
+                        for(size_t e=0;(name=jpb_GameRuntimeTextureCacheEntry(
+                                caches[i],e,&w,&h))!=NULL;++e){
+                            int n=snprintf(jpb_XboxCacheDump+used,
+                                sizeof(jpb_XboxCacheDump)-used,"%u %ux%u %s\n",
+                                i,(unsigned)w,(unsigned)h,name);
+                            if(n<0||(size_t)n>=sizeof(jpb_XboxCacheDump)-used)break;
+                            used+=(size_t)n;
+                        }
+                    }
+                    jpb_XboxCacheDumpRequest=0;
+                }
+            }
             jpb_XboxEnemyClasses=(unsigned)runtime.enemyLoadedClassCount;
         }
         jpb_XboxAudioPump();
         jpb_XboxFramePhase=2;
-        unsigned x, y;
-        JPBControllerState controller_state;
         float axes[2];
-        jpb_XboxControllerPoll(&controller_state);
-        controller_bits=jpb_InputMapControllerState(&controller_state,
-            OptionStruct.WalkLimit[0],OptionStruct.RunLimit[0],
-            OptionStruct.ControllerConfig[0],GameStruct.inMenuFlag!=0,
-            &axes[0],&axes[1]);
+        read_players(GameStruct.inMenuFlag!=0,&axes[0],&axes[1]);
         /* Opt-in process-local test input. It only reaches this game's pad
            provider and never generates operating-system or window input. */
         if (smoke) {
@@ -631,7 +712,6 @@ int main(void)
            while the pad bits report thresholded directions and actions. */
         g_p1X=axes[0];
         g_p1Y=axes[1];
-        uint32_t *screen = (uint32_t *)XVideoGetFB();
         if (gpu) {
             memset(pixels, 0, sizeof(pixels));
             jpb_XboxGpuBegin();
@@ -659,15 +739,8 @@ int main(void)
             jpb_XboxPlayerTelemetry[4] = (int32_t)controller_bits;
             jpb_XboxPlayerTelemetry[5] = (int32_t)runtime.enemyDamageProcessedCount;
         }
-        if (result != 0) {
-            if (gpu) pb_show_debug_screen();
-            debugPrint("Frame failed %d\n", result);
-            MM_STATISTICS memory = {0};
-            memory.Length = sizeof(memory);
-            MmQueryStatistics(&memory);
-            debugPrint("RAM free pages %lu total pages %lu\n", memory.AvailablePages, memory.TotalPhysicalPages);
-            for (;;) Sleep(1000);
-        }
+        if (result != 0)
+            fatal("Frame failed %d; RAM free pages %u", result, free_pages());
         if (gpu) {
             unsigned present_started=GetTickCount();
             jpb_XboxFramePhase=4;
@@ -682,6 +755,13 @@ int main(void)
         else {
         jpb_XboxPresentSoftware(pixels,JPB_XBOX_CANVAS_WIDTH,
             JPB_XBOX_CANVAS_HEIGHT,JPB_XBOX_CANVAS_WIDTH);
+        }
+        /* In-game requests (level intro cards, cutscenes) queue movies. */
+        if(jpb_XboxUiMoviesPending()){
+            play_queued_movies();
+            free(frontend_pixels);
+            frontend_pixels=NULL;
+            previous_frame_started=0;
         }
         if(gpu){
             unsigned elapsed=GetTickCount()-frame_started;
@@ -740,5 +820,105 @@ int main(void)
                 (unsigned long)(GetTickCount() - started),
                 (unsigned long)controller_bits, runtime.player->currentMotion);
         }
+        if(gameplay_enters_score_mode() || gameplay_requests_title())return;
+    }
+}
+
+int main(void)
+{
+    int result;
+    int video_width=720,video_height=480;
+    int skip_frontend;
+    int title_smoke;
+    int level=1, game_mode=4;
+    jpb_XboxStartupPhase=1;
+    if(marker_present("D:\\xbox-720p.txt")){video_width=1280;video_height=720;}
+    skip_frontend=marker_present("D:\\xbox-skip-frontend.txt");
+    frontend_smoke=marker_present("D:\\xbox-ui-smoke.txt");
+    title_smoke=marker_present("D:\\xbox-title-smoke.txt");
+    smoke=marker_present("D:\\xbox-smoke.txt");
+    if(marker_present("D:\\xbox-tick-smoke.txt"))tick_smoke=smoke=1;
+    /* Test-only deterministic simulation for frame-aligned perf A/B. The
+       staged game keeps the wall-time clock unless this marker is present. */
+    if(marker_present("D:\\xbox-fixed-step-benchmark.txt"))
+        fixed_step_benchmark=tick_smoke=smoke=1;
+    analog_smoke=marker_present("D:\\xbox-analog-smoke.txt");
+    transparency_probe=marker_present("D:\\xbox-transparency-probe.txt");
+    jpb_XboxStartupPhase=2;
+    if (!XVideoSetMode(video_width, video_height, 32, REFRESH_DEFAULT)) {
+        jpb_XboxVideoModeResult=0;
+        debugPrint("Xbox video mode unavailable: %dx%d; using 480p\n",
+            video_width,video_height);
+        video_width=720;
+        video_height=480;
+        if (!XVideoSetMode(video_width, video_height, 32, REFRESH_DEFAULT))
+            fatal("Xbox 480p video mode unavailable");
+    } else {
+        jpb_XboxVideoModeResult=1;
+    }
+    jpb_XboxStartupPhase=3;
+    if (!jpb_XboxMemorySelfTest())fatal("Xbox memory boundary self-test FAILED");
+    jpb_XboxStartupPhase=4;
+    /* An isolated disc marker selects the level for the direct-gameplay
+       smoke (xbox-skip-frontend.txt). */
+    {
+        FILE *selection=fopen("D:\\xbox-start-level.txt","rb");
+        if(selection){
+            char name[32]={0};
+            if(fgets(name,sizeof(name),selection)){
+                name[strcspn(name,"\r\n")]=0;
+                for(int i=1;i<JPB_LEVEL_COUNT;++i)
+                    if(sLevelNames[i] && strcmp(name,sLevelNames[i])==0)level=i;
+            }
+            fclose(selection);
+        }
+    }
+    jpb_ResourceSetBasePath("D:\\");
+    jpb_GameRuntimeSetImageHooks(jpb_XboxInspectImage, jpb_XboxLoadImage);
+    jpb_GameRuntimeSetAuthoredImageSizeHook(jpb_XboxAuthoredImageSize);
+    /* The GPU renderer is the shipping path; the software renderer is only
+       an explicit diagnostic. */
+    if(!marker_present("D:\\xbox-software-renderer.txt")){
+        result=jpb_XboxGpuInit();
+        jpb_XboxGpuInitResult=result;
+        if(result!=0)fatal("GPU init failed %d",result);
+        gpu_initialized=1;
+    }
+    if(!jpb_XboxControllerInit())fatal("Xbox controller initialization failed");
+    jpb_InputSetProvider(read_controller,NULL);
+    player1InputType=1;
+    if(!jpb_XboxAudioInit())fatal("Xbox audio initialization failed");
+    game_setDefaultOptions();
+    generateAllText(OptionStruct.Language);
+    /* Options load before the front end publishes text or music, as on PC;
+       campaign state loads after menu_mainInitMenu resets it. */
+    if(jpb_XboxSaveInit())jpb_XboxSaveLoadOptions();
+    /* The Xbox build is a port of an owned PC copy whose license was
+       accepted there; it never shows the license screen. */
+    OptionStruct.EULAaccepted=1;
+    /* The shared menu owner lays out a 16:9 canvas; presentation maps it to
+       either a widescreen output or letterboxed standard television. */
+    result=jpb_GameRuntimeInitFrontend(&runtime);
+    if(result!=JPB_GAME_RUNTIME_OK || !jpb_XboxUiInit())
+        fatal("Front-end initialization failed %d: %s %s",result,
+            jpb_GameRuntimeLastFailureStage(),
+            jpb_GameRuntimeLastFailureDetail());
+    menuTexLoaded=0;
+    menu_mainInitMenu(0);
+    jpb_XboxSaveLoadGame();
+    if(title_smoke){introPlayed=1;menuVars.titleArt=1;}
+    set_title_render_hooks();
+    if(!menuTexLoaded || !menuTextures[4] || !menuTextures[242])
+        fatal("Front-end texture publication failed");
+    if(skip_frontend){
+        GameStruct.NumPlayers=1;
+        GameStruct.ModelSelect[0]=0;
+    }
+    for(;;){
+        if(!skip_frontend)run_front_end(&level,&game_mode);
+        skip_frontend=0;
+        start_gameplay(level,game_mode);
+        run_gameplay(strcmp(sLevelNames[level],"marsh")==0);
+        return_to_front_end();
     }
 }
