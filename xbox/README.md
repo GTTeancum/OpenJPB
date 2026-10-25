@@ -13,6 +13,28 @@ are historical; the later sections record current evidence. Physical-pad feel,
 later-level progression, final visual fidelity, remaining effects and steady
 30 fps in heavy combat are still unverified or unfinished.
 
+## Versus check (2026-10-24)
+
+VS. Mode: both character carousels, the Training Arena, both players
+fighting and scoring, a knocked-out player returning while lives remain,
+and the match end. The end did not work on either host: `game_gPlayTheGame`
+enters score mode 9 when `gameMode` reaches 9 (game over, versus match end),
+and neither host loop handled it, so a finished match restarted the arena.
+Both now enter score mode 9 and return to the menus. Versus with two mod
+characters (Shaak Ti, Temple Guard) runs at 36 ms per frame, 26 MB free
+(stock pair: 16 ms).
+
+**Display flicker.** pbkit's `pb_finished()` only refuses a swap when the
+next ready slot is taken; two frames finished within one refresh let the
+next frame draw into the buffer on screen, so the arena showed cleared or
+half-drawn frames at 16 ms. Swaps are now queued only after the previous
+one has had its VBlank (no partial frames in 120 rapid captures).
+
+**Council chamber.** The shipped game has no visible model for level 0;
+only collision, cameras, starts and four textures. A stand-in built from the
+collision polygons was tried in place of the arena (2,000 units across,
+about 60% of the arena floor); judged too small for versus and removed.
+
 ## Two-player co-op check (2026-10-24)
 
 Through both remote pads in XEMU: 2 Player > Jedi Mode, separate character
