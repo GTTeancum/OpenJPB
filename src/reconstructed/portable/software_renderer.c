@@ -3299,6 +3299,52 @@ static int software_draw_model_node(
         texture.stridePixels >= texture.width) {
         resolved_texture = &texture;
     }
+#if defined(JPB_XBOX)
+    if (state->camera_transformed != NULL && !state->wrapLevelWorld &&
+        state->draw.view != NULL) {
+        /* Same world and camera transforms as below, with the node and view
+         * matrices combined once per node: the per-vertex call pair and
+         * wrap test dominated model time for high-poly mod characters. */
+        const MATRIX *r = &current.rotation;
+        const MATRIX *v = state->draw.view;
+        float c[3][3], ct[3];
+        size_t row, col;
+        size_t base = geometry.shared_vertex_count;
+        for (row = 0; row < 3; ++row) {
+            for (col = 0; col < 3; ++col) {
+                c[row][col] = v->m[row][0] * r->m[0][col] +
+                    v->m[row][1] * r->m[1][col] +
+                    v->m[row][2] * r->m[2][col];
+            }
+            ct[row] = v->m[row][0] * current.translation.vx +
+                v->m[row][1] * current.translation.vy +
+                v->m[row][2] * current.translation.vz +
+                (float)v->t[row];
+        }
+        if (state->screen_valid != NULL) {
+            memset(state->screen_valid + base, 0,
+                geometry.local_vertex_count);
+        }
+        for (vertex = 0; vertex < geometry.local_vertex_count; ++vertex) {
+            uint32_t packed = geometry.packed_vertices[vertex];
+            float x = (float)((int32_t)(packed << 22) >> 22);
+            float y = (float)((int32_t)(packed << 12) >> 22);
+            float z = (float)((int32_t)(packed << 2) >> 22);
+            FVECTOR *world = &state->transformed[base + vertex];
+            FVECTOR *camera = &state->camera_transformed[base + vertex];
+            world->vx = r->m[0][0] * x + r->m[0][1] * y + r->m[0][2] * z +
+                current.translation.vx;
+            world->vy = r->m[1][0] * x + r->m[1][1] * y + r->m[1][2] * z +
+                current.translation.vy;
+            world->vz = r->m[2][0] * x + r->m[2][1] * y + r->m[2][2] * z +
+                current.translation.vz;
+            camera->vx = c[0][0] * x + c[0][1] * y + c[0][2] * z + ct[0];
+            camera->vy = c[1][0] * x + c[1][1] * y + c[1][2] * z + ct[1];
+            camera->vz = c[2][0] * x + c[2][1] * y + c[2][2] * z + ct[2];
+            state->camera_inverse_depth[base + vertex] = 1.0f / camera->vz;
+        }
+    } else
+#endif
     for (vertex = 0;
          vertex < geometry.local_vertex_count;
          ++vertex) {

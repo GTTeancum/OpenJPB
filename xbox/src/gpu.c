@@ -125,8 +125,18 @@ extern void jpb_XboxAudioStats(void);
    preserves the GPU's render state. Leave room for pbkit's internal commands. */
 static uint32_t *command_base;
 static unsigned command_resets;
+static void bounded_end(uint32_t *end);
 static uint32_t *bounded_begin(void)
 {
+    /* Immediate triangles keep their command block open across calls
+       (model_command_end) so pbkit's per-block cache flush and DMA kick are
+       not paid per triangle. Any other new block closes that one first. */
+    if(model_command_end){
+        uint32_t *open=model_command_end;
+        model_command_end=NULL;
+        model_command_batches=0;
+        bounded_end(open);
+    }
     uint32_t *p=pb_begin();
     if(!command_base || p<command_base)command_base=p;
     return p;
@@ -800,7 +810,8 @@ int jpb_XboxGpuTriangle(void *unused, const JPBSoftwareMaterialVertex *a,
         sampler!=triangle_state_sampler ||
         transparency!=triangle_state_transparency ||
         model_pass!=triangle_state_model_pass;
-    uint32_t *p = pb_begin();
+    uint32_t *p = model_command_end ? model_command_end : pb_begin();
+    model_command_end = NULL;
     if(state_changed){
     ++jpb_XboxGpuStateChanges;
     triangle_state_texture=entry;
@@ -856,7 +867,13 @@ int jpb_XboxGpuTriangle(void *unused, const JPBSoftwareMaterialVertex *a,
             z*16777215, 1);
     }
     p = pb_push1(p, NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_END);
-    pb_end(p);
+    /* Keep the block open for the next immediate triangle (about 50 DWORDs
+       each); close it every 64 triangles or near the end of the buffer. */
+    model_command_end = p;
+    if (++model_command_batches >= 64 ||
+        (unsigned)(p - command_base) * sizeof(uint32_t) >=
+            JPB_XBOX_PUSHBUFFER_SIZE - 40000)
+        commit_model_commands();
     JPB_TRIANGLE_END();
     return 1;
 #undef JPB_TRIANGLE_END
@@ -1078,12 +1095,46 @@ int jpb_XboxGpuLevel(void *user, const JPBSoftwareLevelMesh *mesh, JPBLevelFbxMe
                     continue;
                 }
                 const uint16_t *indices=jpb_XboxLevelIndices(i);
+                const uint16_t *draw_indices=indices;
+                unsigned draw_first=first,draw_count=count;
+                uint16_t kept[252];
                 if(jpb_XboxLevelChunkNeedsDepthClip(i,first)) {
-                    draw_clipped_level(batch,indices,first,count,view);
-                    first+=count;
-                    continue;
+                    if(!indices) {
+                        draw_clipped_level(batch,indices,first,count,view);
+                        first+=count;
+                        continue;
+                    }
+                    /* The chunk's bounds cross the near or far plane, but
+                       most of its triangles usually do not. Clip only the
+                       crossing ones on the CPU, drop those wholly outside,
+                       and draw the rest through the vertex arrays (Palace
+                       sent ~10k triangles a frame through the CPU path). */
+                    unsigned kept_count=0;
+                    for(unsigned t=0;t<count;t+=3) {
+                        int inside=0,before=0,beyond=0;
+                        for(unsigned k=0;k<3;++k) {
+                            JPBSoftwareLevelVertex vertex;
+                            jpb_XboxLevelDecodeVertex(batch,indices[first+t+k],&vertex);
+                            float d=level_depth(&vertex,view);
+                            if(d<1.0f)++before;
+                            else if(d>10000.0f)++beyond;
+                            else ++inside;
+                        }
+                        if(inside==3) {
+                            kept[kept_count++]=indices[first+t];
+                            kept[kept_count++]=indices[first+t+1];
+                            kept[kept_count++]=indices[first+t+2];
+                        } else if(before!=3 && beyond!=3) {
+                            draw_clipped_level(batch,indices,first+t,3,view);
+                        }
+                    }
+                    if(!kept_count) {
+                        first+=count;
+                        continue;
+                    }
+                    draw_indices=kept;draw_first=0;draw_count=kept_count;
                 }
-                submitted_vertices+=count;
+                submitted_vertices+=draw_count;
                 unsigned stride=packed?32:44;
                 uintptr_t base=(uintptr_t)batch->vertices+(indices?0:first)*stride;
                 static const unsigned attributes[4]={0,3,9,10};
@@ -1104,17 +1155,18 @@ int jpb_XboxGpuLevel(void *user, const JPBSoftwareLevelMesh *mesh, JPBLevelFbxMe
                    vertex bindings separate and index draws at <=240 indices
                    (125 DWORDs including primitive begin/end). */
                 if(indices) {
-                    for(unsigned start=0;start<count;) {
-                        unsigned n=count-start; if(n>240)n=240;
+                    for(unsigned start=0;start<draw_count;) {
+                        unsigned n=draw_count-start; if(n>240)n=240;
                         unsigned j=0;
                         p=pb_begin();
                         p=pb_push1(p,NV097_SET_BEGIN_END,NV097_SET_BEGIN_END_OP_TRIANGLES);
                         if(n>=2) {
                             pb_push(p++,0x40000000|NV097_ARRAY_ELEMENT16,n/2);
                             for(;j+1<n;j+=2)
-                                *p++=indices[first+start+j]|((uint32_t)indices[first+start+j+1]<<16);
+                                *p++=draw_indices[draw_first+start+j]|
+                                    ((uint32_t)draw_indices[draw_first+start+j+1]<<16);
                         }
-                        if(j<n)p=pb_push1(p,NV097_ARRAY_ELEMENT32,indices[first+start+j]);
+                        if(j<n)p=pb_push1(p,NV097_ARRAY_ELEMENT32,draw_indices[draw_first+start+j]);
                         p=pb_push1(p,NV097_SET_BEGIN_END,NV097_SET_BEGIN_END_OP_END);
                         pb_end(p);
                         start+=n;

@@ -13,6 +13,24 @@ are historical; the later sections record current evidence. Physical-pad feel,
 later-level progression, final visual fidelity, remaining effects and steady
 30 fps in heavy combat are still unverified or unfinished.
 
+## Frame rate (2026-10-25)
+
+- **Level near/far clipping.** A level chunk whose bounds crossed the near or
+  far plane sent every triangle through the CPU clipper and inline vertex
+  pushes; Palace pushed about 10,000 triangles a frame that way (28 ms). Only
+  triangles that actually cross a plane are now clipped on the CPU; the rest
+  of the chunk is drawn from the vertex arrays and wholly outside ones are
+  dropped. Palace world time fell from 32 to 7 ms.
+- **Model vertices.** The shared model transform (Xbox build) combines the
+  node and view matrices once per node instead of two matrix calls and a
+  wrap test per vertex (not on Corus1, which needs the wrap).
+- **Immediate triangles.** Effect and HUD triangles keep their command
+  block open across calls (pbkit flushes the CPU cache and kicks DMA at
+  every block end); any other new block closes it first.
+
+XEMU frame times at each level start: Palace 66-86 to 41 ms; FED, Streets,
+Hangar, Core, Marsh and Coruscant 24-40 to 16-25 ms; the rest about 16-21 ms.
+
 ## Versus check (2026-10-24)
 
 VS. Mode: both character carousels, the Training Arena, both players

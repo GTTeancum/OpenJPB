@@ -28,7 +28,8 @@ Maintain both PC and Xbox builds with shared gameplay and Xbox-only code under `
 - [ ] Xbox bosses: all eight spawn, render and fight (`boss_smoke.py`). With energy forced to zero, six fall (Tatooine and Core Maul award their points); the Theed tank ignores the write and the Coruscant thug stops at 10. Whether each defeat then ends the level as in retail needs a real playthrough of those fights.
 - [ ] Xbox two mod characters together: 23 ms per frame in versus against 16 ms stock (perf ring average over 300 frames). The difference is model drawing, 14.5 ms against 3.9 ms; mod BMDs are 2-3x the size of stock ones (Shaak Ti 139 KB, Temple Guard 111 KB, Obi-Wan 48 KB). Needs faster model submission (the vertex-array path, `xbox-model-vertex-array.txt`, previously dropped polygons).
 - [ ] Xbox memory: about 60 KB of free memory is lost per level-to-menu round trip.
-- [ ] Xbox Palace performance: 54 ms per frame at the start (other levels 16–33 ms).
+- [ ] Xbox Palace performance: 41 ms per frame (~24 fps), from 66-86 ms. Remaining cost is effects (~13 ms: per-triangle texture/state switching and the shared screen-poly code) and models (~10 ms). Other levels now run at 16-21 ms (~50-60 fps) in XEMU.
+- [ ] Xbox Kaadu race (Mini2) looks very dark; compare with PC (same before and after the speed work).
 - [x] Training levels: enemies do not work. Both hosts skipped loading enemy classes for training starts (game mode 2); training levels 3-7 place droids, Gonks and droid fighters. Fixed on PC and Xbox; Training Six on Xbox shows 20 enemies and a droid fighter attacking.
 - [ ] Xbox level play-throughs: all 15 levels load and play, but each has only been spot-checked, not played start to finish.
 - [x] Xbox Corus2 grey surface: matches PC from the same start view after the texture border-source fix (the grey floor beside the pool is plain on PC too).
