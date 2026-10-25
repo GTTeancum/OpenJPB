@@ -144,6 +144,10 @@ volatile int jpb_XboxBossSetEnergy=-1;
 static int boss_test_pending;
 static FVECTOR boss_test_spawn;
 static int boss_test_placement=-1;
+/* Optional second line of xbox-start-level.txt: one or two characters for
+   the direct start, each a stock model number or a mod package id. Two
+   names start two players. */
+static char start_characters[2][96];
 
 /* Test markers read once at startup. */
 static int gpu_initialized;
@@ -1032,6 +1036,9 @@ int main(void)
                 name[strcspn(name,"\r\n")]=0;
                 for(int i=1;i<JPB_LEVEL_COUNT;++i)
                     if(sLevelNames[i] && strcmp(name,sLevelNames[i])==0)level=i;
+                char line[200]={0};
+                if(fgets(line,sizeof(line),selection))
+                    sscanf(line,"%95s %95s",start_characters[0],start_characters[1]);
             }
             fclose(selection);
         }
@@ -1085,8 +1092,21 @@ int main(void)
     if(!menuTexLoaded || !menuTextures[4] || !menuTextures[242])
         fatal("Front-end texture publication failed");
     if(skip_frontend){
-        GameStruct.NumPlayers=1;
+        GameStruct.NumPlayers=start_characters[1][0]?2:1;
         GameStruct.ModelSelect[0]=0;
+        for(int player=0;player<2;++player){
+            const char *wanted=start_characters[player];
+            if(!wanted[0])continue;
+            int model=atoi(wanted);
+            for(size_t i=0;i<jpb_ModsCount();++i){
+                const JPBModCharacter *mod=jpb_ModCharacterAt(i);
+                if(mod && strcmp(mod->id,wanted)==0){
+                    model=mod->modelId;
+                    jpb_ModSetPlayer(player,model);
+                }
+            }
+            GameStruct.ModelSelect[player]=(int16_t)model;
+        }
     }
     for(;;){
         if(!skip_frontend)run_front_end(&level,&game_mode);

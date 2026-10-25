@@ -39,6 +39,22 @@ later-level progression, final visual fidelity, remaining effects and steady
 XEMU frame times at each level start: Palace 66-86 to 41 ms; FED, Streets,
 Hangar, Core, Marsh and Coruscant 24-40 to 16-25 ms; the rest about 16-21 ms.
 
+## Palace two-player stress (2026-10-25)
+
+`xbox-start-level.txt` takes an optional second line naming one or two
+characters for the direct start (stock model number or mod package id; two
+names start two players). Palace, both players walking and attacking for
+about 300 frames in XEMU:
+
+| Players | Average | Worst | Characters | Free memory |
+| --- | --- | --- | --- | --- |
+| One stock (earlier) | 36 ms (28 fps) | 45 ms | 14 ms | not measured |
+| Two stock | 43 ms (23 fps) | 92 ms | 17 ms | 2.9 MB |
+| Jango Fett + Ro-Ron | 57 ms (17.5 fps) | 93 ms | 31 ms | 3.4 MB |
+
+Jango Fett and Ro-Ron have the two largest mod models. Scenery (10 ms) and
+effects (6.5 ms) are unchanged; the extra time is character drawing.
+
 ## Versus check (2026-10-24)
 
 VS. Mode: both character carousels, the Training Arena, both players
