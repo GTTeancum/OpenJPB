@@ -583,7 +583,9 @@ static void start_gameplay(int level, int game_mode)
     jpb_GameRuntimeUseUiTextureCache(&runtime);
     if(!jpb_XboxUiInit())fatal("Xbox UI platform initialization failed");
     if(!jpb_XboxUiLoadGameplay())fatal("Xbox gameplay UI load failed");
-    if(game_mode!=2){
+    /* Every mode loads the enemy classes: training levels 3-7 place enemies
+       too (game_mode 2 is training, not "no enemies"). */
+    {
         result=jpb_GameRuntimeAddEnemyAssets(&runtime,
             "D:\\res\\animation\\battle_d.cad","D:\\res\\MODEL\\battle_d.bmd");
         jpb_XboxLastLoadResult=result;
