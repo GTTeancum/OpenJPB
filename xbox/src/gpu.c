@@ -508,7 +508,21 @@ void jpb_XboxGpuPresent(void)
         jpb_XboxModelBatchUs=(unsigned)(model_batch_ticks*1000000u/frequency);
     }
     while (pb_busy()) {}
-    while (pb_finished()) {}
+    /* pbkit's pb_finished() only refuses when the next ready slot is taken.
+       Two frames finished within one refresh both wait for VBlank, and the
+       third back buffer is then the one on screen: the next frame drew into
+       the displayed buffer, so the screen briefly showed it cleared or half
+       drawn (arena background flicker at 16 ms frames). Queue a swap only
+       after the previous one has had its VBlank. */
+    {
+        static DWORD last_swap_vbl;
+        static int swapped;
+        if (swapped)
+            while (pb_get_vbl_counter() == last_swap_vbl) pb_wait_for_vbl();
+        while (pb_finished()) {}
+        last_swap_vbl = pb_get_vbl_counter();
+        swapped = 1;
+    }
 }
 
 void jpb_XboxGpuStats(unsigned frame, unsigned elapsed, unsigned pad, int motion)
