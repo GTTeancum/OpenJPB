@@ -2,6 +2,9 @@
    This backend is under construction; material pass parity and HUD composition
    must be verified before it replaces the software diagnostic renderer. */
 #include "gpu.h"
+#include "mods_xbox.h"
+#include <stdio.h>
+extern FILE *jpb_XboxFopen(const char *path,const char *mode);
 #include "presentation.h"
 #include "jpb/level_world.h"
 #include "jpb/level.h"
@@ -58,6 +61,9 @@ volatile unsigned jpb_XboxBc1Loads;
 volatile unsigned jpb_XboxBc1ModelLoads,jpb_XboxBc1ModelOpenFailures;
 volatile unsigned jpb_XboxBc1LastMaterialType;
 volatile unsigned jpb_XboxGpuStage;
+/* Last texture upload refusal: reason (1 shape, 2 table full, 3 out of
+   contiguous memory), width, height, material type. */
+volatile unsigned jpb_XboxTextureFailure[4];
 volatile unsigned jpb_XboxGpuLastPass;
 static uint32_t white = 0xffffffff;
 static unsigned submitted_batches, submitted_vertices;
@@ -172,7 +178,7 @@ static int load_bc1_texture(XboxTexture *entry, const char *name, int model)
     if(model)snprintf(path,sizeof(path),"D:\\res\\MODEL\\tga\\%.*s.xbt",(int)stem,base);
     else snprintf(path,sizeof(path),"D:\\res\\level\\jpx\\%s\\%.*s.xbt",
         bc1_level_name,(int)stem,base);
-    FILE *file=fopen(path,"rb");
+    FILE *file=jpb_XboxFopen(path,"rb");
     if(!file){
         if(model)++jpb_XboxBc1ModelOpenFailures;
         else ++jpb_XboxBc1OpenFailures;
@@ -261,8 +267,12 @@ static XboxTexture *resolve(const JPBSoftwareTexture *texture,const char *world_
     }
     if (!source || !width || !height || width>2048 || height>2048 ||
         (!linear && ((width & (width-1)) || (height & (height-1)))) ||
-        texture_count == 512)
+        texture_count == 512){
+        jpb_XboxTextureFailure[0]=texture_count==512?2:1;
+        jpb_XboxTextureFailure[1]=width;jpb_XboxTextureFailure[2]=height;
+        jpb_XboxTextureFailure[3]=texture?texture->materialType:~0u;
         return NULL;
+    }
     XboxTexture *entry = &textures[texture_count];
     const char *bc1_name=NULL;
     int bc1_model=0;
@@ -289,7 +299,12 @@ static XboxTexture *resolve(const JPBSoftwareTexture *texture,const char *world_
     entry->pitch=entry->linear?((width*4+63)&~63u):width*4;
     entry->pixels = MmAllocateContiguousMemoryEx(entry->pitch * height, 0, 0x03ffafff, 0,
         PAGE_READWRITE | PAGE_WRITECOMBINE);
-    if (!entry->pixels) return NULL;
+    if (!entry->pixels){
+        jpb_XboxTextureFailure[0]=3;
+        jpb_XboxTextureFailure[1]=width;jpb_XboxTextureFailure[2]=height;
+        jpb_XboxTextureFailure[3]=texture?texture->materialType:~0u;
+        return NULL;
+    }
     jpb_XboxRawTextureBytes+=entry->pitch*height;
     entry->zero_rgb=1;
     for (unsigned y = 0; y < height; ++y)
@@ -656,7 +671,16 @@ void jpb_XboxGpuGarbageCollect(void)
     last_texture=NULL;
     triangle_state_texture=NULL;
     model_batch_texture=NULL;
+    jpb_XboxGpuReleaseFrontendTexture();
+}
+
+/* The movie/software-frame upload texture is only needed while a movie
+   plays; at 512x288 it is as large as the biggest menu image, so keeping it
+   resident after the boot movies starved later menu uploads. */
+void jpb_XboxGpuReleaseFrontendTexture(void)
+{
     if(frontend_texture){
+        while(pb_busy()){}
         MmFreeContiguousMemory(frontend_texture);
         frontend_texture=NULL;
     }
@@ -1231,13 +1255,14 @@ static XboxImageSize *image_sizes;
 static unsigned image_size_count;
 static int image_sizes_loaded;
 
-static void load_image_sizes(void)
+static unsigned image_size_capacity;
+
+static void read_image_sizes(const char *path)
 {
     FILE *file;
     char line[128];
-    unsigned capacity=0;
-    image_sizes_loaded=1;
-    file=fopen("D:\\res\\xbox-image-sizes.txt","rb");
+    unsigned capacity=image_size_capacity;
+    file=fopen(path,"rb");
     if(!file)return;
     while(fgets(line,sizeof(line),file)){
         XboxImageSize entry;
@@ -1254,7 +1279,26 @@ static void load_image_sizes(void)
         }
         image_sizes[image_size_count++]=entry;
     }
+    image_size_capacity=capacity;
     fclose(file);
+}
+
+/* Converted mod packages carry the authored sizes of the screen images that
+   conversion reduced, keyed by the same res-relative paths. They are read
+   first: the first exact match wins and a package overlays the stock image. */
+static void read_package_image_sizes(const char *directory,void *user)
+{
+    char path[260];
+    (void)user;
+    snprintf(path,sizeof(path),"%s\\xbox-image-sizes.txt",directory);
+    read_image_sizes(path);
+}
+
+static void load_image_sizes(void)
+{
+    image_sizes_loaded=1;
+    jpb_XboxModsForEachPackage(read_package_image_sizes,NULL);
+    read_image_sizes("D:\\res\\xbox-image-sizes.txt");
 }
 
 /* Authored size for a material path such as D:\res\front\x.png, or for a

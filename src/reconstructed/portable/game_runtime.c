@@ -8284,7 +8284,14 @@ int jpb_GameRuntimeTitleFrame(
     jpb_XboxTitleFramePhase = 2;
 #endif
 
-    if (runtime->clearWindowRequested) {
+    if (runtime->clearWindowRequested
+#if defined(JPB_XBOX)
+        /* The Xbox GPU title hooks draw every panel and label and clear on
+         * the GPU; the host's menu canvas is then not CPU memory. */
+        && (runtime->titleScreenDrawRenderHook == NULL ||
+            runtime->titleTextDrawRenderHook == NULL)
+#endif
+        ) {
         game_runtime_clear_framebuffer(
             framebuffer, UINT32_C(0xff000000));
     }

@@ -13,6 +13,63 @@ are historical; the later sections record current evidence. Physical-pad feel,
 later-level progression, final visual fidelity, remaining effects and steady
 30 fps in heavy combat are still unverified or unfinished.
 
+## Mod characters (2026-10-24)
+
+PC mod packages (`docs/MODS.md`, version 1) run on the Xbox: the 14 installed
+characters appear in the character carousel with their names and portraits,
+play through levels and carry on to the next level. Shaak Ti and Sora Bulq
+were checked in gameplay (about 8 MB free, 33–36 ms per frame).
+
+- **One loader.** The shared `mods.cpp` now reaches files through
+  `src/reconstructed/portable/mod_files.h`: `mod_files_std.cpp` on PC
+  (std::filesystem, unchanged behavior) and `src/mod_files.cpp` here, since
+  nxdk has no std::filesystem. nxdk also builds without C++ exceptions, so a
+  failure returns to the API entry point through `setjmp`/`longjmp`; PC keeps
+  its exceptions. Manifest rules, resource overlays, character data and the
+  `.mods.json` save sidecar are the same code on both.
+- **Overlays.** `jpb_XboxFopen` (every shared file read, images and the BC1
+  `.xbt` lookups) asks the mod resolver first, as the PC file layer does.
+- **Converted packages.** Packages are converted on the PC by
+  `tools/stage_mods.py` (default: the installed game's `mods` folder into
+  `build/staged-disc/mods`). Resources go through `tools/xbox_formats.py`, the
+  same functions that now stage the stock game, so stock and mod files cannot
+  drift apart. Files a package repeats unchanged from the game are left out;
+  the 14 packages shrink from 37 MB to 5.3 MB.
+- **Character atlases.** Some mod characters map the whole body onto one
+  large texture where stock characters use several; at the stock 256 px BC1
+  cap Sora Bulq's 2048 px atlas lost most of its detail. Conversion keeps
+  model textures above 512 px at half their source size (2048 → 1024,
+  1024 → 512); smaller ones follow the stock rule. Such atlases are always
+  written into the package even when the installed game holds an identical
+  copy (an old installer had placed Sora Bulq's there).
+- **Format changes.** Each converted package carries `xbox-package.json` with
+  `xboxFormat`. The game reads format `JPB_XBOX_MOD_FORMAT` (`src/mods_xbox.h`)
+  and rejects any other with a message naming the package and asking for it
+  to be converted again. When the Xbox form of a resource changes, raise that
+  number and `XBOX_FORMAT` in `xbox_formats.py` together and re-run the tool.
+  An unconverted PC package is rejected the same way.
+- **Screen art sizes.** A converted package's `xbox-image-sizes.txt` lists
+  the authored sizes of the portraits and icons conversion reduced; the GPU
+  reads them ahead of the stock table.
+- **Front-end memory.** With mods installed, confirming a mod character
+  failed to upload the 512×288 loading image (no contiguous block). The movie
+  upload texture of the same size stayed resident after the boot movies, and
+  the 960×540 menu canvas (2 MB) was allocated although GPU menus never draw
+  into it. Both now exist only while a movie plays; GPU menus use reserved,
+  uncommitted address space and the runtime skips its CPU clear when the GPU
+  title hooks are installed. Main-menu free memory rose from 5.4 to 8 MB.
+- **Saves** go through the shared sidecar: temporary file, then rename, with
+  the volume flushed after the rename. A save with a mod character writes and
+  reads back. Persistence across a console reset could not be shown in XEMU:
+  the test emulator runs with `-snapshot`, and the previous build loses its
+  save across `reset_xemu.py` in the same way. Check on hardware.
+
+To add a character: put its PC package in a mods folder, run
+`python xbox/tools/stage_mods.py --mods <folder>`, and copy the output folder
+into the Xbox game's `mods\` directory (for XEMU, `build/staged-disc/mods`).
+`jpb_XboxSaveRequest` (test only, written through the debugger) saves the
+campaign at the next gameplay frame.
+
 ## XEMU playtest pass (2026-10-24, XEMU 0.8.139)
 
 The build now plays as a complete game loop rather than a single level:

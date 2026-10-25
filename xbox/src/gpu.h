@@ -36,6 +36,7 @@ int jpb_XboxGpuComposite(void *, enum JPBGameRuntimeGameplayCompositeStage,
 /* Upload a complete software frame and draw it as a centered 4:3 image.
  * The output backbuffer remains black outside that image. */
 int jpb_XboxGpuPresentFrontend(const JPBSoftwareFramebuffer *);
+void jpb_XboxGpuReleaseFrontendTexture(void);
 int jpb_XboxGpuHudScreenDraws(void *, const JPBGameRuntimeScreenDraw *,
     size_t, JPBSoftwareFramebuffer *);
 int jpb_XboxGpuHudTextDraws(void *, const JPBGameRuntimeTextDraw *,

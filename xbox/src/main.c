@@ -11,6 +11,7 @@
 #include "jpb/texture.h"
 #include "jpb/camera.h"
 #include "jpb/physics.h"
+#include "jpb/mods.h"
 #include <hal/video.h>
 #include <hal/debug.h>
 #include <windows.h>
@@ -26,6 +27,7 @@
 #include "movie.h"
 #include "ui.h"
 #include "save.h"
+#include "mods_xbox.h"
 #include <pbkit/pbkit.h>
 
 static JPBGameRuntime runtime;
@@ -77,6 +79,10 @@ volatile unsigned jpb_XboxSessionStats[4];
    [3] constructor done, [4] movies done, [5] gameplay released,
    [6] front end rebuilt. */
 volatile unsigned jpb_XboxSessionPages[8];
+volatile unsigned jpb_XboxModCount;
+/* Test only: a debugger writes 1 to save the campaign at the next gameplay
+   frame, as choosing a results-screen upgrade does. */
+volatile unsigned jpb_XboxSaveRequest;
 /* Menu owner state for emulator-monitor diagnosis: menu mode, score mode,
    mover count, mover states 0-3, game mode. */
 volatile unsigned jpb_XboxMenuDebug[8];
@@ -219,6 +225,25 @@ static JPBSoftwareFramebuffer frontend_framebuffer(void)
     return fb;
 }
 
+/* With the GPU title hooks installed the menus draw straight to the GPU
+   and the runtime skips its CPU clear, so nothing writes the menu canvas:
+   it is described by reserved, uncommitted address space (a stray write
+   faults instead of corrupting memory) and costs no memory. */
+static JPBSoftwareFramebuffer gpu_frontend_framebuffer(void)
+{
+    static uint32_t *reserved;
+    JPBSoftwareFramebuffer fb={0};
+    if(!reserved){
+        reserved=VirtualAlloc(NULL,(size_t)JPB_XBOX_FRONTEND_WIDTH*
+            JPB_XBOX_FRONTEND_HEIGHT*sizeof(uint32_t),MEM_RESERVE,PAGE_NOACCESS);
+        if(!reserved)fatal("Front-end canvas reservation failed");
+    }
+    fb.pixels=reserved;
+    fb.width=fb.stridePixels=JPB_XBOX_FRONTEND_WIDTH;
+    fb.height=JPB_XBOX_FRONTEND_HEIGHT;
+    return fb;
+}
+
 static void play_queued_movies(void)
 {
     unsigned movie;
@@ -228,6 +253,12 @@ static void play_queued_movies(void)
         (void)flags;
         if(!jpb_XboxMoviePlay(movie,&fb,gpu_initialized,frontend_smoke))
             debugPrint("Movie %u failed; continuing\n",movie);
+        if(gpu_initialized){
+            /* Movies are the only GPU-mode user of these buffers. */
+            free(frontend_pixels);
+            frontend_pixels=NULL;
+            jpb_XboxGpuReleaseFrontendTexture();
+        }
     }
 }
 
@@ -334,7 +365,8 @@ static int gameplay_requests_title(void)
 /* Run menu frames until the menu owner requests a level. */
 static void run_front_end(int *level_index, int *game_mode)
 {
-    JPBSoftwareFramebuffer frontend_fb=frontend_framebuffer();
+    JPBSoftwareFramebuffer frontend_fb=gpu_initialized?
+        gpu_frontend_framebuffer():frontend_framebuffer();
     unsigned frontend_frame=0;
     unsigned smoke_mode=UINT_MAX;
     unsigned smoke_mode_frames=0;
@@ -425,37 +457,49 @@ static void run_front_end(int *level_index, int *game_mode)
    (pc_start_selected_gameplay): runtime construction restores defaults, so
    the menu's options, players and difficulty are published again around the
    canonical constructor. */
+/* Stock characters load from res\; a mod package names its own files
+   (PC pc_configure_player_assets). */
+static void player_asset_paths(int model,char *cad,char *bmd,char *cmb,
+    size_t capacity)
+{
+    const JPBModCharacter *mod=jpb_ModCharacterById(model);
+    if(mod){
+        snprintf(cad,capacity,"%s",mod->cad);
+        snprintf(bmd,capacity,"%s",mod->bmd);
+        snprintf(cmb,capacity,"%s",mod->cmb);
+        return;
+    }
+    snprintf(cad,capacity,"D:\\res\\animation\\%s.cad",sModelNames[model]);
+    snprintf(bmd,capacity,"D:\\res\\MODEL\\%s.bmd",sModelNames[model]);
+    snprintf(cmb,capacity,"D:\\res\\combo\\%s.cmb",sModelNames[model]);
+}
+
 static void start_gameplay(int level, int game_mode)
 {
     optionstruct selected_options=OptionStruct;
-    int selected_model=GameStruct.ModelSelect[0];
+    int selected_model=jpb_ModPlayerModel(0,GameStruct.ModelSelect[0]);
     int selected_players=GameStruct.NumPlayers==2?2:1;
-    int selected_player_two=GameStruct.ModelSelect[1];
+    int selected_player_two=jpb_ModPlayerModel(1,GameStruct.ModelSelect[1]);
     int selected_difficulty=GameStruct.difficulty;
     int selected_versus=GameStruct.versusModeFlag;
     uint8_t selected_player_index[2]={menuVars.pplayers[0],menuVars.pplayers[1]};
-    char level_path[160],cad[128],bmd[128],cmb[128];
-    char cad2[128],bmd2[128],cmb2[128];
-    const char *model_name,*level_name;
+    char level_path[160],cad[JPB_MOD_PATH],bmd[JPB_MOD_PATH],cmb[JPB_MOD_PATH];
+    char cad2[JPB_MOD_PATH],bmd2[JPB_MOD_PATH],cmb2[JPB_MOD_PATH];
+    const char *level_name;
     int result;
 
-    if(selected_model<0 || selected_model>=JPB_MODEL_NAME_COUNT)selected_model=0;
-    if(selected_player_two<0 || selected_player_two>=JPB_MODEL_NAME_COUNT)
+    if(!jpb_ModCharacterById(selected_model) &&
+       (selected_model<0 || selected_model>=JPB_MODEL_NAME_COUNT))
+        selected_model=0;
+    if(!jpb_ModCharacterById(selected_player_two) &&
+       (selected_player_two<0 || selected_player_two>=JPB_MODEL_NAME_COUNT))
         selected_player_two=0;
     if(level<1 || level>=JPB_LEVEL_COUNT)fatal("Invalid level request %d",level);
-    model_name=sModelNames[selected_model];
     level_name=sLevelNames[level];
     snprintf(level_path,sizeof(level_path),
         "D:\\res\\level\\jpx\\%s\\%s.jpx",level_name,level_name);
-    snprintf(cad,sizeof(cad),"D:\\res\\animation\\%s.cad",model_name);
-    snprintf(bmd,sizeof(bmd),"D:\\res\\MODEL\\%s.bmd",model_name);
-    snprintf(cmb,sizeof(cmb),"D:\\res\\combo\\%s.cmb",model_name);
-    snprintf(cad2,sizeof(cad2),"D:\\res\\animation\\%s.cad",
-        sModelNames[selected_player_two]);
-    snprintf(bmd2,sizeof(bmd2),"D:\\res\\MODEL\\%s.bmd",
-        sModelNames[selected_player_two]);
-    snprintf(cmb2,sizeof(cmb2),"D:\\res\\combo\\%s.cmb",
-        sModelNames[selected_player_two]);
+    player_asset_paths(selected_model,cad,bmd,cmb,sizeof(cad));
+    player_asset_paths(selected_player_two,cad2,bmd2,cmb2,sizeof(cad2));
     ++jpb_XboxSessionStats[0];
     jpb_XboxSessionStats[2]=(unsigned)level;
     jpb_XboxSessionStats[3]=(unsigned)game_mode;
@@ -646,6 +690,10 @@ static void run_gameplay(int marsh_smoke)
         previous_frame_started = frame_started;
         jpb_XboxSmokeFrame=frame;
         jpb_XboxFramePhase=1;
+        if(jpb_XboxSaveRequest){
+            jpb_XboxSaveRequest=0;
+            jpb_XboxSaveWriteGame();
+        }
         if(frame%30==0) {
             jpb_XboxFreePages=free_pages();
             sample_heap();
@@ -911,6 +959,17 @@ int main(void)
             }
             fclose(selection);
         }
+    }
+    /* Mod packages (D:\mods\<id>, converted by tools/stage_mods.py) load as
+       on PC: an invalid enabled package rejects the set with its reason. */
+    {
+        char mod_error[256];
+        if(!jpb_ModsLoad("D:",mod_error,sizeof(mod_error)))
+            fatal("Mod packages rejected: %s",mod_error);
+        if(!jpb_XboxModsCheckFormat(mod_error,sizeof(mod_error)))
+            fatal("Mod packages rejected: %s",mod_error);
+        if(!jpb_ModsSetAssetRoot("D:"))fatal("Mod asset root failed");
+        jpb_XboxModCount=(unsigned)jpb_ModsCount();
     }
     jpb_ResourceSetBasePath("D:\\");
     jpb_GameRuntimeSetImageHooks(jpb_XboxInspectImage, jpb_XboxLoadImage);

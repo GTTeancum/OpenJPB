@@ -24,7 +24,7 @@ for source in sorted((root / 'src/reconstructed').rglob('*')):
     if source.suffix not in ('.c', '.cpp'):
         continue
     relative = source.relative_to(root / 'src/reconstructed')
-    if relative.as_posix().startswith(('original/d3d/', 'original/rendering/font/', 'original/platform/steam/')) or relative.as_posix() in ('original/wHook.cpp', 'original/rendering/Texture2D.cpp', 'portable/mods.cpp'):
+    if relative.as_posix().startswith(('original/d3d/', 'original/rendering/font/', 'original/platform/steam/')) or relative.as_posix() in ('original/wHook.cpp', 'original/rendering/Texture2D.cpp', 'portable/mod_files_std.cpp'):
         continue
     wrapper = generated / relative
     wrapper.parent.mkdir(parents=True, exist_ok=True)

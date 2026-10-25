@@ -9,21 +9,14 @@ import argparse
 import json
 from pathlib import Path
 
+from xbox_formats import screen_size_line
+
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--manifest', type=Path, default=Path('xbox/build/asset-manifest.json'))
 p.add_argument('--staged', type=Path, default=Path('xbox/build/staged-disc'))
 a = p.parse_args()
-# World and model textures use normalized UVs; only 2D screen art matters.
-SCREEN_ROOTS = ('front/', 'platform/', 'effects/', 'default/')
-lines = []
-for record in json.loads(a.manifest.read_text()):
-    path = record['path'].replace('\\', '/')
-    original, staged = record.get('originalSize'), record.get('stagedSize')
-    if not original or not staged or original == staged:
-        continue
-    if not path.lower().startswith(SCREEN_ROOTS):
-        continue
-    lines.append(f'{path.lower()} {original[0]} {original[1]}')
+lines = [line for line in map(screen_size_line, json.loads(a.manifest.read_text()))
+         if line]
 lines.sort()
 out = a.staged / 'res' / 'xbox-image-sizes.txt'
 out.write_text('\n'.join(lines) + '\n', newline='\n')

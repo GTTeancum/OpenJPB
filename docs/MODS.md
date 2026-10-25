@@ -95,6 +95,16 @@ The default destination is the game's `mods` directory; `--destination` can sele
 
 The installed configuration contains 14 additional characters. Their staged conversion includes BMD/CAD/CMB, portraits, referenced textures and shared animation Huffman tables. The deployed executable discovers these packages automatically. Blender authoring and additional-level registration remain separate work; this release supports existing-format character/animation resources and level-resource overlays.
 
+## Original Xbox build
+
+The Xbox build loads the same version-1 packages from `D:\mods\<package-id>`
+with the same loader, rules and save sidecar. Packages must first be
+converted on a PC with `xbox/tools/stage_mods.py`, which writes the Xbox form
+of each resource (compressed character textures, reduced screen art) and
+stamps the package with its Xbox format. A package converted for another
+format, or not converted at all, is rejected at startup with a message that
+names it. See [Xbox port](../xbox/README.md#mod-characters-2026-10-24).
+
 ## Shared package design (next version)
 
 The [version-2 design](DLC_PACKAGE_DESIGN.md) covers shared animation libraries, characters and registered levels, stable export IDs, dependencies, compatibility and Blender publishing. It is a completed design, not a supported runtime format yet. Continue using version 1 for installed packages.
