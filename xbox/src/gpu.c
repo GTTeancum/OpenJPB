@@ -94,6 +94,8 @@ static JPBSoftwareMaterialVertex model_batch_vertices[JPB_XBOX_MODEL_BATCH_VERTI
 static unsigned model_batch_count;
 static XboxTexture *model_batch_texture;
 static int model_batch_sampler,model_batch_transparency;
+/* 1: model pass (VSModel encoding), 0: effects (VSImmediate encoding). */
+static int model_batch_pass;
 volatile unsigned jpb_XboxModelBatchFlushes;
 static void flush_model_batch(void);
 static uint32_t *model_command_end;
@@ -588,17 +590,18 @@ static void flush_model_batch(void)
     XboxTexture *entry=model_batch_texture;
     int sampler=model_batch_sampler;
     int transparency=model_batch_transparency;
+    const int pass=model_batch_pass;
     int state_changed=entry!=triangle_state_texture ||
         sampler!=triangle_state_sampler ||
         transparency!=triangle_state_transparency ||
-        triangle_state_model_pass!=1;
+        triangle_state_model_pass!=pass;
     uint32_t *p=model_command_end?model_command_end:pb_begin();
     if(state_changed){
         ++jpb_XboxGpuStateChanges;
         triangle_state_texture=entry;
         triangle_state_sampler=sampler;
         triangle_state_transparency=transparency;
-        triangle_state_model_pass=1;
+        triangle_state_model_pass=pass;
         p=pb_push1(p,NV097_SET_TRANSFORM_PROGRAM_START,0);
         p=pb_push2(p,NV097_SET_TEXTURE_OFFSET,
             (uint32_t)entry->pixels&0x03ffffff,entry->format);
@@ -616,13 +619,18 @@ static void flush_model_batch(void)
            class 2 SrcAlpha/InvSrcAlpha. Writing depth from translucent model
            texels hid whatever was drawn behind them afterwards. */
         p=pb_push1(p,NV097_SET_DEPTH_MASK,transparency==0);
+        if(!pass){
+            p=pb_push1(p,NV097_SET_BLEND_ENABLE,transparency!=0);
+            p=pb_push1(p,NV097_SET_BLEND_FUNC_SFACTOR,
+                NV097_SET_BLEND_FUNC_SFACTOR_V_SRC_ALPHA);
+        }
         p=pb_push1(p,NV097_SET_BLEND_FUNC_DFACTOR,transparency==1?
             NV097_SET_BLEND_FUNC_DFACTOR_V_ONE:
             NV097_SET_BLEND_FUNC_DFACTOR_V_ONE_MINUS_SRC_ALPHA);
     }
     const float u_scale=entry->linear?(float)entry->width:1.0f;
     const float v_scale=texture_v_scale(entry);
-    if(model_array_enabled){
+    if(model_array_enabled && pass){
         XboxModelArrayVertex *base=model_array_vertices+model_array_count;
         for(unsigned i=0;i<model_batch_count;++i){
             const JPBSoftwareMaterialVertex *v=&model_batch_vertices[i];
@@ -662,14 +670,31 @@ static void flush_model_batch(void)
         p=pb_push1(p,NV097_SET_BEGIN_END,NV097_SET_BEGIN_END_OP_TRIANGLES);
         for(unsigned i=0;i<model_batch_count;++i){
             const JPBSoftwareMaterialVertex *v=&model_batch_vertices[i];
-            float inverse=v->inverseDepth>0?v->inverseDepth:1;
-            float z=1.00010001f-
-                1.00010001f*(inverse/10240.0f);
-            int tint=v->red>0 && v->green>0 && v->blue>0 && v->alpha>0;
-            float r=tint?v->red/255.0f:1;
-            float g=tint?v->green/255.0f:1;
-            float blue=tint?v->blue/255.0f:1;
-            p=pb_push4f(p,NV097_SET_VERTEX_DATA4F_M+3*16,r,g,blue,1);
+            float inverse,z,r,g,blue,alpha;
+            if(pass){
+                inverse=v->inverseDepth>0?v->inverseDepth:1;
+                z=1.00010001f-1.00010001f*(inverse/10240.0f);
+                int tint=v->red>0 && v->green>0 && v->blue>0 && v->alpha>0;
+                r=tint?v->red*(1.0f/255.0f):1;
+                g=tint?v->green*(1.0f/255.0f):1;
+                blue=tint?v->blue*(1.0f/255.0f):1;
+                alpha=1;
+            }else{
+                /* PC VSImmediate emits W=1, so screen-space effects
+                   interpolate UVs affinely, and already supplies clip depth;
+                   re-projecting it would misplace effects against actors and
+                   the world. Opaque effects keep a 0.1 colour floor. */
+                inverse=1;
+                z=v->clipDepth;
+                r=v->red*(1.0f/255.0f);
+                g=v->green*(1.0f/255.0f);
+                blue=v->blue*(1.0f/255.0f);
+                alpha=v->alpha*(1.0f/255.0f);
+                if(transparency==0){
+                    r=fmaxf(r,0.1f); g=fmaxf(g,0.1f); blue=fmaxf(blue,0.1f);
+                }
+            }
+            p=pb_push4f(p,NV097_SET_VERTEX_DATA4F_M+3*16,r,g,blue,alpha);
             p=pb_push4f(p,NV097_SET_VERTEX_DATA4F_M+9*16,
                 v->u*inverse*u_scale,
                 v->v*inverse*v_scale,0,inverse);
@@ -790,90 +815,22 @@ int jpb_XboxGpuTriangle(void *unused, const JPBSoftwareMaterialVertex *a,
     }
     int transparency=texture?texture->materialType:0;
     int sampler=texture?texture->samplerType:0;
-    if(model_pass){
-        if(model_batch_count &&
-           (entry!=model_batch_texture || sampler!=model_batch_sampler ||
-            transparency!=model_batch_transparency))flush_model_batch();
-        if(!model_batch_count){
-            model_batch_texture=entry;
-            model_batch_sampler=sampler;
-            model_batch_transparency=transparency;
-        }
-        model_batch_vertices[model_batch_count++]=*a;
-        model_batch_vertices[model_batch_count++]=*b;
-        model_batch_vertices[model_batch_count++]=*c;
-        if(model_batch_count==JPB_XBOX_MODEL_BATCH_VERTICES)flush_model_batch();
-        JPB_TRIANGLE_END();
-        return 1;
+    /* Models and effects batch consecutive same-state triangles into one
+       begin/end block, in submission order. */
+    if(model_batch_count &&
+       (entry!=model_batch_texture || sampler!=model_batch_sampler ||
+        transparency!=model_batch_transparency || model_batch_pass!=model_pass))
+        flush_model_batch();
+    if(!model_batch_count){
+        model_batch_texture=entry;
+        model_batch_sampler=sampler;
+        model_batch_transparency=transparency;
+        model_batch_pass=model_pass;
     }
-    int state_changed=entry!=triangle_state_texture ||
-        sampler!=triangle_state_sampler ||
-        transparency!=triangle_state_transparency ||
-        model_pass!=triangle_state_model_pass;
-    uint32_t *p = model_command_end ? model_command_end : pb_begin();
-    model_command_end = NULL;
-    if(state_changed){
-    ++jpb_XboxGpuStateChanges;
-    triangle_state_texture=entry;
-    triangle_state_sampler=sampler;
-    triangle_state_transparency=transparency;
-    triangle_state_model_pass=model_pass;
-    p = pb_push1(p, NV097_SET_TRANSFORM_PROGRAM_START, 0);
-    p = pb_push2(p, NV097_SET_TEXTURE_OFFSET, (uint32_t)entry->pixels & 0x03ffffff, entry->format);
-    p = pb_push1(p,NV097_SET_TEXTURE_CONTROL1,entry->pitch<<16);
-    p = pb_push1(p,NV097_SET_TEXTURE_IMAGE_RECT,(entry->width<<16)|entry->height);
-    if(!model_pass) {
-        p=pb_push1(p,NV097_SET_DEPTH_MASK,transparency==0);
-        p=pb_push1(p,NV097_SET_BLEND_ENABLE,transparency!=0);
-        p=pb_push1(p,NV097_SET_BLEND_FUNC_SFACTOR,NV097_SET_BLEND_FUNC_SFACTOR_V_SRC_ALPHA);
-        p=pb_push1(p,NV097_SET_BLEND_FUNC_DFACTOR,transparency==1?
-            NV097_SET_BLEND_FUNC_DFACTOR_V_ONE:NV097_SET_BLEND_FUNC_DFACTOR_V_ONE_MINUS_SRC_ALPHA);
-    }
-    /* nxdk's NV2A sample identifies mode 5 as clamp-to-edge. Mode 3 is
-       GL-style clamp, which reads border color near u/v = 1; D3D clamp
-       samplers in the PC renderer use the edge texel instead. */
-    p = pb_push1(p, NV097_SET_TEXTURE_ADDRESS, texture &&
-        (texture->samplerType==TEXTURESAMPLER_LINEARCLAMP || texture->samplerType==TEXTURSAMPLER_POINTCLAMP)?0x00050505:0x00010101);
-    p = pb_push1(p, NV097_SET_TEXTURE_CONTROL0, 0x4003ffc0);
-    p = pb_push1(p, NV097_SET_TEXTURE_FILTER, texture && texture->samplerType==TEXTURSAMPLER_POINTCLAMP?0x01012000:0x02022000);
-    }
-    p = pb_push1(p, NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_TRIANGLES);
-    const JPBSoftwareMaterialVertex *vertices[] = {a,b,c};
-    for (unsigned i = 0; i < 3; ++i) {
-        const JPBSoftwareMaterialVertex *v = vertices[i];
-        /* PC VSImmediate emits W=1: its screen-space effects interpolate UVs
-           affinely. Only VSModel carries camera W for perspective correction. */
-        float inverse = model_pass && v->inverseDepth > 0 ? v->inverseDepth : 1;
-        /* VSImmediate already supplies clip depth; only VSModel reconstructs
-           it from camera depth. Re-projecting immediate effects moves them
-           to the wrong depth relative to actors and the world. */
-        float z = model_pass
-            ? 1.00010001f - 1.00010001f / fmaxf(v->depth * 10240.0f, 1.0f)
-            : v->clipDepth;
-        int tint = !model_pass || (v->red>0 && v->green>0 && v->blue>0 && v->alpha>0);
-        float r=tint?v->red/255.0f:1;
-        float g=tint?v->green/255.0f:1;
-        float blue=tint?v->blue/255.0f:1;
-        if(!model_pass && transparency==0) {
-            r=fmaxf(r,0.1f); g=fmaxf(g,0.1f); blue=fmaxf(blue,0.1f);
-        }
-        p = pb_push4f(p, NV097_SET_VERTEX_DATA4F_M + 3*16,
-            r,g,blue,model_pass?1:v->alpha/255.0f);
-        p = pb_push4f(p, NV097_SET_VERTEX_DATA4F_M + 9*16,
-            v->u*inverse*(entry->linear?entry->width:1),
-            v->v*inverse*texture_v_scale(entry), 0, inverse);
-        p = pb_push4f(p, NV097_SET_VERTEX_DATA4F_M,
-            v->x*output_x_per_canvas,output_top+v->y*output_y_per_canvas,
-            z*16777215, 1);
-    }
-    p = pb_push1(p, NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_END);
-    /* Keep the block open for the next immediate triangle (about 50 DWORDs
-       each); close it every 64 triangles or near the end of the buffer. */
-    model_command_end = p;
-    if (++model_command_batches >= 64 ||
-        (unsigned)(p - command_base) * sizeof(uint32_t) >=
-            JPB_XBOX_PUSHBUFFER_SIZE - 40000)
-        commit_model_commands();
+    model_batch_vertices[model_batch_count++]=*a;
+    model_batch_vertices[model_batch_count++]=*b;
+    model_batch_vertices[model_batch_count++]=*c;
+    if(model_batch_count==JPB_XBOX_MODEL_BATCH_VERTICES)flush_model_batch();
     JPB_TRIANGLE_END();
     return 1;
 #undef JPB_TRIANGLE_END

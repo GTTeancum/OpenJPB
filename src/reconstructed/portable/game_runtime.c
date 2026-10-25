@@ -6898,6 +6898,11 @@ static void game_runtime_flush_deferred_screen_polys(
 {
     JPBGameRuntime *runtime;
     size_t draw_index;
+    /* Consecutive draws usually share a material; snapshot it once. */
+    _Material material_snapshot;
+    const _Material *snapshot_source = NULL;
+    uint32_t snapshot_flags = 0;
+    int snapshot_is_water = 0;
 
     if (context == NULL || context->runtime == NULL ||
         context->framebuffer == NULL ||
@@ -6921,9 +6926,8 @@ static void game_runtime_flush_deferred_screen_polys(
             &runtime->screenPolyDraws[draw_index];
         size_t pixels_before;
         size_t pixels_added;
-        int is_water;
+        int is_water = 0;
         int result;
-        _Material material_snapshot;
         const _Material *render_material = draw->texture;
 
         if (!draw->deferred) {
@@ -6932,12 +6936,19 @@ static void game_runtime_flush_deferred_screen_polys(
         pixels_before = context->stats != NULL
             ? context->stats->pixels
             : 0;
-        is_water = draw->texture != NULL &&
-            game_runtime_path_stem_equals(
-                draw->texture->filename, "a_water");
         if (draw->texture != NULL) {
-            material_snapshot = *draw->texture;
-            material_snapshot.flags = draw->materialFlags;
+            if (draw->texture != snapshot_source ||
+                draw->materialFlags != snapshot_flags) {
+                if (draw->texture != snapshot_source) {
+                    snapshot_is_water = game_runtime_path_stem_equals(
+                        draw->texture->filename, "a_water");
+                }
+                material_snapshot = *draw->texture;
+                material_snapshot.flags = draw->materialFlags;
+                snapshot_source = draw->texture;
+                snapshot_flags = draw->materialFlags;
+            }
+            is_water = snapshot_is_water;
             render_material = &material_snapshot;
         }
         result = runtime->screenPolyTriangleSink != NULL
