@@ -2234,8 +2234,11 @@ static int game_runtime_load_collision(
         return 0;
     }
 
+    /* Retail loads this archive into a larger memory pool. initUVs reads a
+     * fixed 1024 UV sets (24 KiB) from the texture table near its end, so
+     * keep that read inside zeroed storage. */
     runtime->collisionStorage =
-        (uint8_t *)malloc((size_t)file_size);
+        (uint8_t *)calloc(1, (size_t)file_size + 1024U * 6U * 4U);
     runtime->world =
         (WorldData *)calloc(1, sizeof(*runtime->world));
     if (runtime->collisionStorage == NULL ||
@@ -3023,6 +3026,60 @@ static void game_runtime_free_powerup_models(
     memset(powerUpData, 0, sizeof(powerUpData));
     free(state);
     runtime->powerupModelState = NULL;
+}
+
+/*
+ * Retail file_LoadChunks2Pool (RVA 0x98AA0) finishes a level's jonny chunk
+ * load with clear_eventlist, initUVs and pwrup_LoadPoop, then
+ * leveltexture[i] = _LoadTexture(resource_getPathWithExtension(
+ * sprintf("%s%d", level, i), LEVEL_3DS, "tga"), TT_LEVEL, 0) for i 0..3.
+ * The runtime relocates the chunks itself; only plotsomecubes (Mini2,
+ * level 12, which ships no FBX) reads the cube UVs and textures.
+ */
+static int game_runtime_load_cube_world(
+    JPBGameRuntime *runtime, int level_index)
+{
+    char name[64];
+    const char *path;
+    int index;
+
+    memset(leveltexture, 0, sizeof(leveltexture));
+    game_runtime_free_texture_cache(runtime->levelTextureCache);
+    runtime->levelTextureCache = NULL;
+    if (level_index != 12) {
+        return 1;
+    }
+    (void)initUVs();
+    snprintf(name, sizeof(name), "%s0", sLevelNames[level_index]);
+    path = resource_getPathWithExtension(
+        name, JPB_RESOURCE_LEVEL_3DS, "tga");
+    runtime->levelTextureCache =
+        game_runtime_create_texture_cache(4, level_index);
+    if (path == NULL || runtime->levelTextureCache == NULL ||
+        !game_runtime_file_directory(
+            path,
+            runtime->levelTextureCache->directory,
+            sizeof(runtime->levelTextureCache->directory))) {
+        return 0;
+    }
+    jpb_TextureSetPlatformHooks(
+        game_runtime_load_material_texture,
+        NULL,
+        runtime->levelTextureCache);
+    for (index = 0; index < 4; ++index) {
+        snprintf(name, sizeof(name), "%s%d",
+                 sLevelNames[level_index], index);
+        path = resource_getPathWithExtension(
+            name, JPB_RESOURCE_LEVEL_3DS, "tga");
+        leveltexture[index] = path != NULL
+            ? _LoadTexture((char *)path, TT_LEVEL, 0)
+            : NULL;
+    }
+    jpb_TextureSetPlatformHooks(
+        game_runtime_load_material_texture,
+        NULL,
+        runtime->uiTextureCache);
+    return 1;
 }
 
 static int game_runtime_load_powerup_models(
@@ -4258,6 +4315,10 @@ int jpb_GameRuntimeInitWithPlayerAssets(
     runtime->player->target = runtime->inactivePlayer;
     runtime->inactivePlayer->target = runtime->player;
     memset(&GameStruct, 0, sizeof(GameStruct));
+    /* game_gPlayTheGame (retail startup) sets maxdraw to 0x20 before the
+     * game loop; the hosts do not run it. cube_NewWorldRender clamps the
+     * plotted cell range to maxdraw. */
+    GameStruct.maxdraw = 0x20;
     game_setDefaultOptions();
     generateAllText(OptionStruct.Language);
     newGameGameInit();
@@ -4428,6 +4489,14 @@ int jpb_GameRuntimeInitWithPlayerAssets(
         jpb_SceneSetMiddleRenderHooks(&hooks, runtime);
         runtime->sceneMiddleRenderHooksReady = 1;
     }
+    /* Retail loads these last, after the player, powerup and enemy
+     * models (loader_LevelLoad's j3d chunk load). */
+    if (level_index != JPB_LEVEL_INDEX_NONE &&
+        !game_runtime_load_cube_world(runtime, level_index)) {
+        return game_runtime_fail(
+            runtime, "init:cube-world",
+            JPB_GAME_RUNTIME_LOAD_FAILED);
+    }
     game_runtime_set_failure_stage("none");
     return JPB_GAME_RUNTIME_OK;
 }
@@ -4552,6 +4621,13 @@ int jpb_GameRuntimeRunCanonicalConstructor(JPBGameRuntime *runtime)
     runtime->authoredCameraDolly = runtime->world->currentDolly;
     runtime->initialAuthoredCameraDolly = runtime->world->currentDolly;
     runtime->authoredCameraDollyObserved = 0;
+    /* loader_LoadJedi flushed level textures and loader_LevelLoad reloaded
+     * the jonny archive; finish its chunk load as retail does. */
+    if (!game_runtime_load_cube_world(
+            runtime, (int)(int8_t)LevelSelect)) {
+        game_runtime_set_failure_stage("canonical-constructor:cube-world");
+        return JPB_GAME_RUNTIME_LOAD_FAILED;
+    }
     game_runtime_set_failure_stage("none");
     return JPB_GAME_RUNTIME_OK;
 }
@@ -7651,6 +7727,9 @@ void jpb_GameRuntimeShutdown(JPBGameRuntime *runtime)
         runtime->uiTextureCache);
     game_runtime_free_texture_cache(
         runtime->defaultTextureCache);
+    game_runtime_free_texture_cache(
+        runtime->levelTextureCache);
+    memset(leveltexture, 0, sizeof(leveltexture));
     free(runtime->renderDepthBuffer);
     free(runtime->screenPolyDraws);
     free(runtime->world);

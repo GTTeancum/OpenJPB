@@ -5318,6 +5318,15 @@ static int pc_set_hardware_render_hooks(
     }
     jpb_GameRuntimeSetTitleScreenDrawRenderHook(
         runtime, pc_render_title_screen_draws_d3d11, presenter);
+    /* Mini2 (level 12) has no FBX: retail cube_NewWorldRender draws its
+     * world through plotsomecubes screen polygons. Attach an empty level
+     * mesh so the level pass still clears colour and depth. */
+    if (runtime->levelRenderMesh == NULL && LevelSelect == 12) {
+        memset(jpx_hardware_level, 0, sizeof(*jpx_hardware_level));
+        jpx_hardware_level->mesh.levelIndex = 12;
+        jpb_GameRuntimeSetLevelRenderMesh(
+            runtime, &jpx_hardware_level->mesh);
+    }
     if (runtime->levelRenderMesh == NULL &&
         jpb_SoftwareBuildJpxLevelMesh(
             &runtime->scene, jpx_hardware_level) ==

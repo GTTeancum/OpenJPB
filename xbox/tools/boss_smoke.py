@@ -128,10 +128,13 @@ for name, level, spawn, placement in chosen:
             pad(out, 'poke jpb_XboxBossSetEnergy 0', 'wait 2')
             state = words(out, 'jpb_XboxBossTest', 8, signed=True)
             record['defeated'] = state[2] <= 0
-            for index in range(6):
+            for index in range(12):
                 pad(out, 'wait 100', f'shot defeat{index}')
             record['sessionAfterDefeat'] = words(out, 'jpb_XboxSessionStats', 4)
             record['gameAfterDefeat'] = words(out, 'jpb_XboxGameDebug', 8, signed=True)
+            # Level scripts end a story level by setting global flag 1
+            # (abGlobalBits[0] bit 1, "flags set 1"); game_checkNextLevel then advances.
+            record['globalBitsAfterDefeat'] = [f'{v:08x}' for v in words(out, 'abGlobalBits', 4)]
         pad(out, 'wait 60', 'shot end')
         record['bossEnergyEnd'] = state[2]
         record['bossEnergyMin'] = min(e for e in energies if e >= 0) if any(e >= 0 for e in energies) else None

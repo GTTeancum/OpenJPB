@@ -284,6 +284,8 @@ typedef struct JPBGameRuntime {
     JPBGameRuntimeTextureCache *enemyTextureCache;
     JPBGameRuntimeTextureCache *uiTextureCache;
     JPBGameRuntimeTextureCache *defaultTextureCache;
+    /* leveltexture[0..3], the Mini2 cube-world textures. */
+    JPBGameRuntimeTextureCache *levelTextureCache;
     JPBGameRuntimeEnemyState *enemyState;
     size_t enemyActorCount;
     size_t enemyActorPeakCount;

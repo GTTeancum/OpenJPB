@@ -1125,6 +1125,13 @@ static HRESULT pc_present_create_world_mesh(
         return S_OK;
     }
     pc_present_release_world_mesh(presenter);
+    if (mesh != NULL && mesh->batchCount == 0 && mesh->vertices == 0) {
+        /* Mini2's cube world is all screen polygons: no level vertices. */
+        presenter->worldMesh = mesh;
+        presenter->worldMeshBatches = mesh->batches;
+        presenter->worldVertexCount = 0;
+        return S_OK;
+    }
     if (mesh == NULL || mesh->batches == NULL || mesh->vertices == 0 ||
         mesh->vertices > UINT_MAX / sizeof(*vertices)) {
         return E_INVALIDARG;
@@ -1347,7 +1354,8 @@ int jpb_PCD3D11PresenterPrewarmLevel(
 {
     size_t batch_index;
 
-    if (presenter == NULL || mesh == NULL || mesh->batches == NULL ||
+    if (presenter == NULL || mesh == NULL ||
+        (mesh->batches == NULL && mesh->batchCount != 0) ||
         resolve_texture == NULL) {
         return 0;
     }

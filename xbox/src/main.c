@@ -650,15 +650,14 @@ static void start_gameplay(int level, int game_mode)
     if(gpu_initialized){
         const JPBSoftwareLevelMesh *mesh=runtime.levelRenderMesh;
         if(!mesh){
-            /* No FBX for this level (mini2): build its mesh from the JPX
-               scene, as the PC hardware path does. */
-            JPBSoftwareOwnedLevelMesh owned={0};
-            if(jpb_SoftwareBuildJpxLevelMesh(&runtime.scene,&owned)==
-               JPB_SOFTWARE_RENDER_OK){
-                owned.mesh.levelIndex=level;
-                mesh=jpb_XboxLoadLevelFromMesh(&owned.mesh);
-            }
-            jpb_SoftwareFreeOwnedLevelMesh(&owned);
+            /* No FBX for this level (mini2): retail cube_NewWorldRender
+               draws its world through plotsomecubes screen polygons. An
+               empty mesh keeps the level pass clearing colour and depth. */
+            static JPBSoftwareLevelMesh cube_world;
+            jpb_XboxUnloadLevel();
+            memset(&cube_world,0,sizeof(cube_world));
+            cube_world.levelIndex=level;
+            mesh=&cube_world;
         }
         if(!mesh)fatal("Level %d geometry load failed",level);
         jpb_GameRuntimeSetLevelRenderMesh(&runtime,mesh);

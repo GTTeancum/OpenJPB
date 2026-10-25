@@ -820,6 +820,13 @@ static void flush_model_batch(void)
                 blue=v->blue*(1.0f/255.0f);
                 alpha=v->alpha*(1.0f/255.0f);
                 if(transparency==0){
+                    /* PC PSImmediateOpaque draws with blending off, so
+                       vertex alpha never removes texels; only all-zero
+                       samples discard. Here the alpha test (texel alpha
+                       x vertex alpha > 0) carries that colour key, so a
+                       zero vertex alpha (Mini2's cube world) must not
+                       reach it. */
+                    alpha=1;
                     r=fmaxf(r,0.1f); g=fmaxf(g,0.1f); blue=fmaxf(blue,0.1f);
                 }
             }
