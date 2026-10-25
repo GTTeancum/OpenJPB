@@ -24,12 +24,11 @@ Maintain both PC and Xbox builds with shared gameplay and Xbox-only code under `
 - [x] PC mod characters on Xbox (2026-10-24): shared loader through a per-platform file layer, `stage_mods.py` conversion with a format stamp, 14 packages selectable and playable in XEMU.
 - [ ] Xbox saves across a console reset: XEMU's `-snapshot` test setup loses them with old and new builds alike; verify on hardware.
 - [x] Xbox texture garbage bands/lines (FED floor, Core floor, Gungan arena): texture format border source; also black colour key on models/effects (power-up glows). See [Xbox port](../xbox/README.md).
-- [ ] Xbox 2P: character select overlaps player 2's "Lightsaber Color" prompt with "Select"; compare with retail before moving it. Versus checked (match end fixed on PC and Xbox); two-mod-character versus is 36 ms per frame vs 16 ms stock.
+- [x] Xbox 2P character select: player 2's "Lightsaber Color" prompt sits beside "Select" because retail places it there (480,100, bottom-right anchor, `newMenu_DrawP2CharacterSelect`); faithful, no change.
 - [ ] Xbox bosses: all eight spawn, render and fight (`boss_smoke.py`). With energy forced to zero, six fall (Tatooine and Core Maul award their points); the Theed tank ignores the write and the Coruscant thug stops at 10. Whether each defeat then ends the level as in retail needs a real playthrough of those fights.
-- [ ] Xbox two mod characters together: 23 ms per frame in versus against 16 ms stock (perf ring average over 300 frames). The difference is model drawing, 14.5 ms against 3.9 ms; mod BMDs are 2-3x the size of stock ones (Shaak Ti 139 KB, Temple Guard 111 KB, Obi-Wan 48 KB). Needs faster model submission (the vertex-array path, `xbox-model-vertex-array.txt`, previously dropped polygons).
-- [ ] Xbox memory: about 60 KB of free memory is lost per level-to-menu round trip.
+- [x] Xbox memory lost per level round trip: nxdk's pdclib `fclose` never released each stream's kernel mutex (about 70 bytes of kernel pool per file, 100 KB per trip). `xbox/src/pdclib_fclose.c` replaces it; kernel pool now stays flat across trips.
 - [x] Xbox frame rate accepted as sufficient (2026-10-25): Palace 36 ms (~28 fps), from 66-86 ms; FED 20-25 ms, Mini2 21 ms, Mini3 18 ms; other levels 16-17 ms in XEMU. Game speed is scaled by frame time, so slower levels play at the right speed. If more is wanted later: Palace characters ~14 ms (about 4,000 faces a frame, many off screen; an early off-screen face test is the next step), world ~9 ms, effects ~6 ms (pickup meshes hidden behind scenery).
-- [ ] Xbox Kaadu race (Mini2) looks very dark; compare with PC (same before and after the speed work).
+- [ ] Kaadu race (Mini2) looks dark on PC and Xbox: no FBX ships for it, and the port substitutes a mesh built from the JPX strips whose vertex colours are a flat placeholder (85/255). Retail draws Mini2 through `plotsomecubes`, which the port never feeds: `GameStruct.maxdraw` stays 0 (retail `game_gPlayTheGame` sets 0x20), `leveltexture[0..3]` are never loaded (retail `file_LoadChunks2Pool` loads `<level>0..3.tga`), and the cube polygons still need `initUVs` and a working transform.
 - [x] Training levels: enemies do not work. Both hosts skipped loading enemy classes for training starts (game mode 2); training levels 3-7 place droids, Gonks and droid fighters. Fixed on PC and Xbox; Training Six on Xbox shows 20 enemies and a droid fighter attacking.
 - [ ] Xbox level play-throughs: all 15 levels load and play, but each has only been spot-checked, not played start to finish.
 - [x] Xbox Corus2 grey surface: matches PC from the same start view after the texture border-source fix (the grey floor beside the pool is plain on PC too).
@@ -44,6 +43,6 @@ Current boot, diagnostics, and unresolved visual evidence: [Xbox port](../xbox/R
 
 ## 3. LIVE: Level 2 Pause-Menu Rendering
 
-- [ ] Level 2 pause menu appeared white during a process-local harness run. Recheck in normal interactive play to determine whether this is a game rendering issue or specific to harness-driven capture.
+- [x] Level 2 pause menu: draws correctly on Xbox (panel, text and highlight over the paused game).
 
 Completed-work evidence: [native mod support](NATIVE_MOD_SUPPORT.md), [roster verification](MOD_ROSTER_REVIEW_20260913.md), and [live review](LIVE_REVIEW_20260913.md).
