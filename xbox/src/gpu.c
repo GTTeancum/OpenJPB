@@ -12,6 +12,7 @@ extern FILE *jpb_XboxFopen(const char *path,const char *mode);
 #include "jpb/texture.h"
 #include "jpb/portable_text.h"
 #include <pbkit/pbkit.h>
+#include <pbkit/outer.h>
 #include <hal/video.h>
 #include <xboxkrnl/xboxkrnl.h>
 #include <string.h>
@@ -239,6 +240,7 @@ static int load_bc1_texture(XboxTexture *entry, const char *name, int model)
    linear textures cannot wrap, so a power-of-two translucent texture is then
    uploaded swizzled; the linear layout stays for effects, where it fixed the
    translucent card artifacts. */
+volatile unsigned jpb_XboxResolveFailures;
 static XboxTexture *resolve(const JPBSoftwareTexture *texture,const char *world_name,
     int tile)
 {
@@ -281,6 +283,7 @@ static XboxTexture *resolve(const JPBSoftwareTexture *texture,const char *world_
         jpb_XboxTextureFailure[0]=texture_count==512?2:1;
         jpb_XboxTextureFailure[1]=width;jpb_XboxTextureFailure[2]=height;
         jpb_XboxTextureFailure[3]=texture?texture->materialType:~0u;
+        ++jpb_XboxResolveFailures;
         return NULL;
     }
     XboxTexture *entry = &textures[texture_count];
@@ -313,6 +316,7 @@ static XboxTexture *resolve(const JPBSoftwareTexture *texture,const char *world_
         jpb_XboxTextureFailure[0]=3;
         jpb_XboxTextureFailure[1]=width;jpb_XboxTextureFailure[2]=height;
         jpb_XboxTextureFailure[3]=texture?texture->materialType:~0u;
+        ++jpb_XboxResolveFailures;
         return NULL;
     }
     jpb_XboxRawTextureBytes+=entry->pitch*height;
@@ -502,6 +506,136 @@ int jpb_XboxGpuEffectsBegin(void *user, JPBSoftwareFramebuffer *fb, JPBSoftwareD
     return 1;
 }
 
+/* Flash probe: after the GPU finishes a frame, sample a 16x12 grid of the
+   finished back buffer (4 pixels per cell) and compare with the previous two
+   frames. A cell that jumps for exactly one frame and returns (A-B-A) is a
+   flash; camera motion changes cells progressively and does not match.
+   jpb_XboxFlashLog rows: frame, blipped cells, first blipped cell,
+   texture-resolve failures that frame. */
+#define FLASH_CELLS_X 16
+#define FLASH_CELLS_Y 12
+volatile unsigned jpb_XboxFlashProbe=1;
+volatile unsigned jpb_XboxFlashFrames,jpb_XboxFlashEvents,jpb_XboxFlashCellsTotal;
+volatile unsigned jpb_XboxFlashLog[64][4];
+static uint8_t flash_signature[3][FLASH_CELLS_X*FLASH_CELLS_Y];
+static unsigned flash_history,flash_last_failures;
+static void probe_flash(void)
+{
+    if(!jpb_XboxFlashProbe)return;
+    const volatile uint32_t *buffer=(const volatile uint32_t *)pb_back_buffer();
+    unsigned pitch=pb_back_buffer_pitch()/4;
+    unsigned width=pb_back_buffer_width(),height=pb_back_buffer_height();
+    if(!buffer || !pitch || width<FLASH_CELLS_X*2 || height<FLASH_CELLS_Y*2)return;
+    uint8_t *now=flash_signature[jpb_XboxFlashFrames%3];
+    for(unsigned cy=0;cy<FLASH_CELLS_Y;++cy)
+        for(unsigned cx=0;cx<FLASH_CELLS_X;++cx){
+            unsigned sum=0;
+            for(unsigned k=0;k<4;++k){
+                unsigned x=(cx*4+(k&1)*2+1)*width/(FLASH_CELLS_X*4);
+                unsigned y=(cy*4+(k>>1)*2+1)*height/(FLASH_CELLS_Y*4);
+                uint32_t c=buffer[y*pitch+x];
+                sum+=((c>>16)&255)*77+((c>>8)&255)*150+(c&255)*29;
+            }
+            now[cy*FLASH_CELLS_X+cx]=(uint8_t)(sum>>10);
+        }
+    unsigned failures=jpb_XboxResolveFailures-flash_last_failures;
+    flash_last_failures=jpb_XboxResolveFailures;
+    if(++flash_history>=3){
+        const uint8_t *middle=flash_signature[(jpb_XboxFlashFrames+2)%3];
+        const uint8_t *before=flash_signature[(jpb_XboxFlashFrames+1)%3];
+        unsigned blips=0,first=~0u;
+        for(unsigned i=0;i<FLASH_CELLS_X*FLASH_CELLS_Y;++i){
+            int jump=(int)middle[i]-(int)before[i];
+            int back=(int)now[i]-(int)before[i];
+            if((jump>40 || jump<-40) && back<=12 && back>=-12){
+                if(first==~0u)first=i;
+                ++blips;
+            }
+        }
+        if(blips>=2 || failures){
+            unsigned n=jpb_XboxFlashEvents++;
+            jpb_XboxFlashLog[n&63][0]=jpb_XboxSmokeFrame-1;
+            jpb_XboxFlashLog[n&63][1]=blips;
+            jpb_XboxFlashLog[n&63][2]=first;
+            jpb_XboxFlashLog[n&63][3]=failures;
+            jpb_XboxFlashCellsTotal+=blips;
+        }
+    }
+    ++jpb_XboxFlashFrames;
+}
+
+/* Flicker log. The display shows the buffer at PCRTC_START. A frame drawn
+   into that buffer shows half-drawn: whatever is drawn last (HUD, blended
+   plants) missing, or the whole screen just after its clear. pbkit's ISR
+   writes PCRTC_START only if the next slot is ready when VBlank fires, but
+   its DPC consumes a slot that PB_FINISHED marked ready in between: that
+   frame is never shown and the display stays on an older buffer, which
+   pbkit later hands back as the draw target. Count every time the next
+   target is the shown buffer; with the guard on, wait a few VBlanks for a
+   pending swap, then show the last finished frame directly. */
+volatile unsigned jpb_XboxShownBufferGuard=1;
+volatile unsigned jpb_XboxShownBufferHazards,jpb_XboxShownBufferForced;
+volatile unsigned jpb_XboxShownBufferWaitVbls;
+volatile unsigned jpb_XboxShownBufferLog[16][2];
+static uint32_t last_finished_buffer;
+static void guard_shown_buffer(void)
+{
+    uint32_t target=(uint32_t)(uintptr_t)pb_back_buffer()&0x03ffffff;
+    if((VIDEOREG(PCRTC_START)&0x03ffffff)!=target)return;
+    unsigned n=jpb_XboxShownBufferHazards++;
+    jpb_XboxShownBufferLog[n&15][0]=jpb_XboxSmokeFrame;
+    jpb_XboxShownBufferLog[n&15][1]=pb_get_vbl_counter();
+    if(!jpb_XboxShownBufferGuard)return;
+    for(unsigned i=0;i<3 && (VIDEOREG(PCRTC_START)&0x03ffffff)==target;++i){
+        pb_wait_for_vbl();
+        ++jpb_XboxShownBufferWaitVbls;
+    }
+    if((VIDEOREG(PCRTC_START)&0x03ffffff)==target && last_finished_buffer &&
+       last_finished_buffer!=target){
+        VIDEOREG(PCRTC_START)=last_finished_buffer;
+        ++jpb_XboxShownBufferForced;
+        pb_wait_for_vbl();
+        ++jpb_XboxShownBufferWaitVbls;
+    }
+}
+
+/* Hardware copy of the flicker logs: rewrite E:/OpenJPB-flicker.txt when
+   new events arrived, at most every 300 presented frames. */
+static void write_flicker_log(void)
+{
+    static unsigned written_events=~0u,written_hazards=~0u,presents,last_write;
+    ++presents;
+    if((jpb_XboxFlashEvents==written_events &&
+        jpb_XboxShownBufferHazards==written_hazards) ||
+       presents-last_write<300)return;
+    FILE *log=fopen("E:\\OpenJPB-flicker.txt","wb");
+    if(!log)return;
+    last_write=presents;
+    written_events=jpb_XboxFlashEvents;
+    written_hazards=jpb_XboxShownBufferHazards;
+    fprintf(log,"presents %u probed %u\r\n",presents,jpb_XboxFlashFrames);
+    fprintf(log,"shown-buffer hazards %u waited-vbls %u forced %u guard %u\r\n",
+        jpb_XboxShownBufferHazards,jpb_XboxShownBufferWaitVbls,
+        jpb_XboxShownBufferForced,jpb_XboxShownBufferGuard);
+    fprintf(log,"flash events %u cells %u resolve-failures %u\r\n",
+        jpb_XboxFlashEvents,jpb_XboxFlashCellsTotal,jpb_XboxResolveFailures);
+    unsigned rows=jpb_XboxFlashEvents<64?jpb_XboxFlashEvents:64;
+    for(unsigned i=0;i<rows;++i){
+        unsigned n=(jpb_XboxFlashEvents-rows+i)&63;
+        fprintf(log,"flash frame %u cells %u first-cell %u,%u texfail %u\r\n",
+            jpb_XboxFlashLog[n][0],jpb_XboxFlashLog[n][1],
+            jpb_XboxFlashLog[n][2]%FLASH_CELLS_X,jpb_XboxFlashLog[n][2]/FLASH_CELLS_X,
+            jpb_XboxFlashLog[n][3]);
+    }
+    rows=jpb_XboxShownBufferHazards<16?jpb_XboxShownBufferHazards:16;
+    for(unsigned i=0;i<rows;++i){
+        unsigned n=(jpb_XboxShownBufferHazards-rows+i)&15;
+        fprintf(log,"shown-buffer frame %u vbl %u\r\n",
+            jpb_XboxShownBufferLog[n][0],jpb_XboxShownBufferLog[n][1]);
+    }
+    fclose(log);
+}
+
 void jpb_XboxGpuPresent(void)
 {
     flush_model_batch();
@@ -520,21 +654,16 @@ void jpb_XboxGpuPresent(void)
         jpb_XboxModelBatchUs=(unsigned)(model_batch_ticks*1000000u/frequency);
     }
     while (pb_busy()) {}
-    /* pbkit's pb_finished() only refuses when the next ready slot is taken.
-       Two frames finished within one refresh both wait for VBlank, and the
-       third back buffer is then the one on screen: the next frame drew into
-       the displayed buffer, so the screen briefly showed it cleared or half
-       drawn (arena background flicker at 16 ms frames). Queue a swap only
-       after the previous one has had its VBlank. */
-    {
-        static DWORD last_swap_vbl;
-        static int swapped;
-        if (swapped)
-            while (pb_get_vbl_counter() == last_swap_vbl) pb_wait_for_vbl();
-        while (pb_finished()) {}
-        last_swap_vbl = pb_get_vbl_counter();
-        swapped = 1;
-    }
+    /* pb_finished() queues the swap; the frame is only marked ready when
+       the GPU's PB_FINISHED interrupt reaches the DPC, which can land after
+       the next VBlank. Counting VBlanks therefore cannot tell whether the
+       previous swap happened, and with two frames pending pbkit's next back
+       buffer is the one on screen. Check the scan-out address instead. */
+    probe_flash();
+    last_finished_buffer=(uint32_t)(uintptr_t)pb_back_buffer()&0x03ffffff;
+    while (pb_finished()) {}
+    guard_shown_buffer();
+    write_flicker_log();
 }
 
 void jpb_XboxGpuStats(unsigned frame, unsigned elapsed, unsigned pad, int motion)

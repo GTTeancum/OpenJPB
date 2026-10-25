@@ -55,6 +55,34 @@ next ready slot is taken; two frames finished within one refresh let the
 next frame draw into the buffer on screen, so the arena showed cleared or
 half-drawn frames at 16 ms. Swaps are now queued only after the previous
 one has had its VBlank (no partial frames in 120 rapid captures).
+This was superseded on 2026-10-25 (see below).
+
+**Display flicker, second pass (2026-10-25).** Items that flashed in every
+level, such as the HUD and Palace's plants, and an occasional flash of the
+whole screen, all came from the same cause: the next frame being drawn into
+the buffer that is on screen. Anything drawn late in the frame (HUD,
+blended plants) was missing for one refresh, and the whole screen flashed
+when the refresh caught the buffer just after its clear. The VBlank-count
+gate above cannot rule this out, because pbkit marks a frame ready only when
+the GPU's PB_FINISHED interrupt reaches its DPC, which can land after the
+next VBlank. Present now compares pbkit's next draw target with the scan-out
+address (`PCRTC_START`) and logs every match (`jpb_XboxShownBufferHazards`,
+with frame and VBlank numbers in `jpb_XboxShownBufferLog`). With the guard
+on it waits up to three VBlanks for the display to move off that buffer. If
+the display doesn't move, it shows the last finished frame directly
+(`jpb_XboxShownBufferForced`), because pbkit can consume a ready slot
+without writing the scan-out address. With the guard off
+(`jpb_XboxShownBufferGuard` = 0), Palace drew into the shown buffer 12-29
+times per 1,100 frames and Tatooine 13 times. With it on, each case is held
+off, at a cost of one refresh.
+
+A flash probe also samples a 16x12 grid of every finished frame and logs
+cells that change for exactly one frame and return (`jpb_XboxFlashLog`:
+frame, cells, first cell, texture-resolve failures). Palace standing idle
+for 1,174 frames logged no flashes; in play it logs 2-3 cells at a time
+from saber and spark effects. On hardware both logs are written to
+`E:\OpenJPB-flicker.txt`, rewritten at most every 300 frames when new
+events arrive.
 
 **Council chamber.** The shipped game has no visible model for level 0;
 only collision, cameras, starts and four textures. A stand-in built from the
