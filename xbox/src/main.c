@@ -11,6 +11,7 @@
 #include "jpb/texture.h"
 #include "jpb/camera.h"
 #include "jpb/physics.h"
+#include "jpb/sound.h"
 #include "jpb/mods.h"
 #include "jpb/game_test_fixtures.h"
 #include <hal/video.h>
@@ -134,6 +135,9 @@ volatile float jpb_XboxWorldDebug[15];
    jpb_XboxBossKeepAlive=1 keeps player one's energy topped up. */
 volatile int jpb_XboxBossTest[8]={0,-1,-1,-1,-1};
 volatile unsigned jpb_XboxBossKeepAlive;
+/* Test only: [0] gameMode [1] inMenuFlag [2] menu mode on top [3] GameState
+   [4] ContinuesUsed [5] mNumContinues [6] LevelExit [7] StageExit. */
+volatile int jpb_XboxGameDebug[8];
 /* Test only: a debugger writing a value >= 0 sets the boss's energy once
    (to reach its defeat sequence without a long fight). */
 volatile int jpb_XboxBossSetEnergy=-1;
@@ -362,6 +366,13 @@ static int front_end_requests_gameplay(int *level_index, int *game_mode)
 
 static int gameplay_enters_score_mode(void)
 {
+    /* Mode 9 (game over, versus match end): game_gPlayTheGame stops looped
+       sounds and enters score mode 9 (PC pc_gameplay_enters_score_mode). */
+    if(GameStruct.gameMode==9 && GameStruct.inMenuFlag==0){
+        stop_all_looped_sounds();
+        menu_enterScoreMode(9);
+        return 1;
+    }
     if(GameStruct.gameMode!=4 && GameStruct.gameMode!=5)return 0;
     camera_SetCameras();
     menu_enterScoreMode(3);
@@ -845,6 +856,14 @@ static void run_gameplay(int marsh_smoke)
             jpb_XboxWorldDebug[i*3+1]=maPhysicsData[i].pos.vy;
             jpb_XboxWorldDebug[i*3+2]=maPhysicsData[i].pos.vz;
         }
+        jpb_XboxGameDebug[0]=(uint8_t)GameStruct.gameMode;
+        jpb_XboxGameDebug[1]=GameStruct.inMenuFlag;
+        jpb_XboxGameDebug[2]=menuVars.menuMode[menuVars.menuModeSP&7u];
+        jpb_XboxGameDebug[3]=(int)GameStruct.GameState;
+        jpb_XboxGameDebug[4]=GameStruct.ContinuesUsed;
+        jpb_XboxGameDebug[5]=GameStruct.mNumContinues;
+        jpb_XboxGameDebug[6]=GameStruct.LevelExit;
+        jpb_XboxGameDebug[7]=GameStruct.StageExit;
         if(jpb_XboxBossTest[0]==1){
             jpb_XboxBossTest[2]=game_gGetEnergy(jpb_XboxBossTest[4]);
             jpb_XboxBossTest[3]=game_gGetEnergy(0);

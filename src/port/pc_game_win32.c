@@ -1983,6 +1983,14 @@ static void pc_review_score_trace(int frame)
 
 static int pc_gameplay_enters_score_mode(void)
 {
+    /* game_gPlayTheGame mode 9 (game over, versus match end): the retail
+     * loop stops looped sounds and enters score mode 9. Without it a
+     * finished versus match restarted the arena. */
+    if (GameStruct.gameMode == 9 && GameStruct.inMenuFlag == 0) {
+        stop_all_looped_sounds();
+        menu_enterScoreMode(9);
+        return 1;
+    }
     if (GameStruct.gameMode != 4 && GameStruct.gameMode != 5) {
         return 0;
     }
