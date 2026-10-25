@@ -23,8 +23,8 @@ Maintain both PC and Xbox builds with shared gameplay and Xbox-only code under `
 - [x] Every story level loads and plays on Xbox (2026-10-24): XLV geometry for all FBX levels, Mini2 from its JPX scene, Kaadu mount visible (shared fix), Corus1 → Corus2 hand-off (shared fix), Palace plant alpha edges fixed, Hangar font thrash fixed, free memory no longer stranded after several levels.
 - [x] PC mod characters on Xbox (2026-10-24): shared loader through a per-platform file layer, `stage_mods.py` conversion with a format stamp, 14 packages selectable and playable in XEMU.
 - [ ] Xbox saves across a console reset: XEMU's `-snapshot` test setup loses them with old and new builds alike; verify on hardware.
-- [ ] Xbox FED floor noise band: a strip of coloured noise along the trench edge right of the start. It is FED batch 19 (transparent pass, `t_o_floor1.tga`), where the texture's light-bar rows are sampled. Ruled out: texture data (GPU memory dump matches), UVs (0..1, no scroll), vertex colours, swizzled vs linear upload, CPU near-plane clipping, filtering mode, LOD clamp, emulator texture-cache staleness, sharing with BC1 cache entries. A white texture removes it. Next: compare against PC at the same spot and inspect the fragment combiner state for that batch.
-- [ ] Xbox opaque BC1 world triangles whose rebased V exceeds 2 (o_coil, kegfloor1, evtr_wall3 in FED; also Palace, Ruins, Marsh) read past the doubled payload in theory; no visible artefact confirmed yet.
+- [x] Xbox texture garbage bands/lines (FED floor, Core floor, Gungan arena): texture format border source; also black colour key on models/effects (power-up glows). See [Xbox port](../xbox/README.md).
+- [ ] Xbox boss smoke: drive each boss to defeat (approach steering for vehicles, Maul energy), and confirm each defeat sequence and level end.
 - [ ] Xbox Palace performance: 54 ms per frame at the start (other levels 16–33 ms).
 - [ ] Xbox Corus2: a flat grey surface is visible; compare with PC.
 - [ ] Live review on hardware or XEMU with a physical pad: menu flow, two-player co-op, saves after power-off, movie audio.

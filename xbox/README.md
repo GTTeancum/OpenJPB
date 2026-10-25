@@ -13,6 +13,43 @@ are historical; the later sections record current evidence. Physical-pad feel,
 later-level progression, final visual fidelity, remaining effects and steady
 30 fps in heavy combat are still unverified or unfinished.
 
+## Texture addressing, colour key and bosses (2026-10-24)
+
+- **Texture border source.** Every texture format word left
+  `BORDER_SOURCE` at its default (texture), so the NV2A addressed each
+  texture as if a 4-texel border were stored around the image. Sampling
+  shifted and read past the upload near the edges and at grazing angles:
+  FED's coloured floor band, Core's black floor lines, the Gungan arena's
+  white/cyan dashes. All formats now use `JPB_TEXTURE_FORMAT_BASE`
+  (border from colour). The earlier "DXT1 samples two payload lengths over
+  V" reading was this effect: world BC1 uploads no longer carry a second
+  copy and sample V at full rate (about 1.2 MB more free in FED).
+- **Black colour key.** PC `PixelShader.hlsl` discards black RGB on
+  models and effects; the Xbox only skipped wholly black textures, so
+  power-up glows and other sprites showed black. Opaque model/effect
+  uploads now carry black as alpha 0, model BC1 encodes black texels with
+  BC1's transparent index (`bc1.encode(..., transparent=mask)`, mask taken
+  from the full-size source), and the model/effect passes alpha-test.
+  This changes converted mod textures, so the mod package format is 2.
+- **Cut-out edges.** Reduced textures with alpha are resampled with colour
+  taken only from solid texels (alpha >= 250) and extended under the soft
+  edge (`xbox_formats.shrink`); source art often carries a dark matte along
+  its cut-out edge, which at 1/16 scale became a dark outline. The level
+  transparent pass draws solid texels (alpha >= 0.5) with depth writes and
+  the soft remainder without, so a wide soft edge no longer hides the
+  translucent surfaces drawn after it (Gungan arena railings). Model
+  batches with transparent materials no longer write depth and use additive
+  blending for class 1, as the PC transparency pass does.
+- **Clipped level triangles** pushed 0..255 vertex colours to a shader
+  that expects 0..1 for packed vertices; they now match the vertex-array
+  path (FED's near floor was lighter than on PC).
+- **Bosses.** `tools/boss_smoke.py` (below) runs the PC boss smoke matrix.
+  All eight bosses spawn, render and fight. The FED droid fighter was
+  beaten in an ordinary fight; the Tatooine and Core Mauls take no damage
+  from the scripted attacks (the PC behaves the same in the same setup) and
+  ignore a forced energy write; the other five accept it but the driver
+  does not yet land the final hit.
+
 ## Mod characters (2026-10-24)
 
 PC mod packages (`docs/MODS.md`, version 1) run on the Xbox: the 14 installed
@@ -142,6 +179,14 @@ Staging order after `stage_assets.py` and the texture upgrades:
 `write_image_sizes.py`, then `shrink_cpu_textures.py`.
 
 ### Driving XEMU (test only)
+
+`tools/boss_smoke.py` runs the PC boss smoke matrix (`tools/smoke_bosses.ps1`)
+in XEMU: it boots straight into each boss level with `xbox-boss.txt`
+(`x y z placement`, the PC `--spawn-position`/`--force-enemy-placement`
+pair, now shared as `game_test_fixtures.c`), keeps player one alive, walks
+to the boss and attacks with Y/B (X uses an item), and logs the boss's
+energy and screenshots. `--finish` sets the boss to 1 energy afterwards and
+records its defeat sequence. `jpb_XboxBossTest` holds the live state.
 
 `boot_xemu.ps1 -GdbPort 9248` opens XEMU's GDB stub. `tools/xemu_pad.py`
 writes a remote pad record in the guest (two ports), reads guest counters

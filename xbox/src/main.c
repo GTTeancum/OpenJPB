@@ -12,6 +12,7 @@
 #include "jpb/camera.h"
 #include "jpb/physics.h"
 #include "jpb/mods.h"
+#include "jpb/game_test_fixtures.h"
 #include <hal/video.h>
 #include <hal/debug.h>
 #include <windows.h>
@@ -126,6 +127,19 @@ extern volatile int jpb_XboxSlowSpriteNum;
 /* Emulator-monitor evidence for the process-local controller smoke. */
 volatile int32_t jpb_XboxPlayerTelemetry[6];
 volatile float jpb_XboxWorldDebug[15];
+/* Test only (boss smoke, xbox-boss.txt "x y z placement"): [0] 1 applied,
+   -1 placement failed, -2 player move failed; [1] placement; [2] boss
+   energy; [3] player energy; [4] boss player slot; [5..7] boss position
+   (physics slot [4]). A debugger writing
+   jpb_XboxBossKeepAlive=1 keeps player one's energy topped up. */
+volatile int jpb_XboxBossTest[8]={0,-1,-1,-1,-1};
+volatile unsigned jpb_XboxBossKeepAlive;
+/* Test only: a debugger writing a value >= 0 sets the boss's energy once
+   (to reach its defeat sequence without a long fight). */
+volatile int jpb_XboxBossSetEnergy=-1;
+static int boss_test_pending;
+static FVECTOR boss_test_spawn;
+static int boss_test_placement=-1;
 
 /* Test markers read once at startup. */
 static int gpu_initialized;
@@ -631,6 +645,19 @@ static void start_gameplay(int level, int game_mode)
         jpb_GameRuntimeSetGameplayHudTextDrawHook(&runtime,
             jpb_XboxGpuHudTextDraws,NULL);
     }
+    if(boss_test_pending){
+        /* Same fixture as the PC boss smoke (--spawn-position and
+           --force-enemy-placement), applied once to the first level. */
+        boss_test_pending=0;
+        jpb_XboxBossTest[1]=boss_test_placement;
+        if(!jpb_TestPlacePlayer(&runtime,&boss_test_spawn,1))jpb_XboxBossTest[0]=-2;
+        else if(!jpb_TestForceEnemyPlacement(&runtime,boss_test_placement))
+            jpb_XboxBossTest[0]=-1;
+        else{
+            jpb_XboxBossTest[0]=1;
+            jpb_XboxBossTest[4]=runtime.enemy->pPlayer->playernum;
+        }
+    }
     jpb_XboxStartupPhase=8;
 }
 
@@ -818,6 +845,24 @@ static void run_gameplay(int marsh_smoke)
             jpb_XboxWorldDebug[i*3+1]=maPhysicsData[i].pos.vy;
             jpb_XboxWorldDebug[i*3+2]=maPhysicsData[i].pos.vz;
         }
+        if(jpb_XboxBossTest[0]==1){
+            jpb_XboxBossTest[2]=game_gGetEnergy(jpb_XboxBossTest[4]);
+            jpb_XboxBossTest[3]=game_gGetEnergy(0);
+            {
+                int slot=jpb_XboxBossTest[4];
+                if(slot>=0 && slot<(int)(sizeof(maPhysicsData)/sizeof(maPhysicsData[0]))){
+                    jpb_XboxBossTest[5]=(int)maPhysicsData[slot].pos.vx;
+                    jpb_XboxBossTest[6]=(int)maPhysicsData[slot].pos.vy;
+                    jpb_XboxBossTest[7]=(int)maPhysicsData[slot].pos.vz;
+                }
+            }
+            if(jpb_XboxBossSetEnergy>=0){
+                (void)game_gSetEnergy(jpb_XboxBossTest[4],jpb_XboxBossSetEnergy);
+                jpb_XboxBossSetEnergy=-1;
+            }
+            if(jpb_XboxBossKeepAlive && jpb_XboxBossTest[3]<60)
+                (void)game_gSetEnergy(0,100);
+        }
         jpb_XboxWorldDebug[12]=(float)gCamera.campos.vx;
         jpb_XboxWorldDebug[13]=(float)gCamera.campos.vy;
         jpb_XboxWorldDebug[14]=(float)gCamera.campos.vz;
@@ -949,6 +994,16 @@ int main(void)
     /* An isolated disc marker selects the level for the direct-gameplay
        smoke (xbox-skip-frontend.txt). */
     {
+        FILE *boss=fopen("D:\\xbox-boss.txt","rb");
+        if(boss){
+            int x,y,z,placement;
+            if(fscanf(boss,"%d %d %d %d",&x,&y,&z,&placement)==4){
+                boss_test_spawn.vx=(float)x;boss_test_spawn.vy=(float)y;
+                boss_test_spawn.vz=(float)z;
+                boss_test_placement=placement;boss_test_pending=1;
+            }
+            fclose(boss);
+        }
         FILE *selection=fopen("D:\\xbox-start-level.txt","rb");
         if(selection){
             char name[32]={0};

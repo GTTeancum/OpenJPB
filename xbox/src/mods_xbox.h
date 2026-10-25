@@ -7,7 +7,7 @@
    the format it wrote. Raise this, and the tool's XBOX_FORMAT, whenever the
    Xbox representation of package files changes; older conversions are then
    rejected with a request to reconvert rather than misread. */
-#define JPB_XBOX_MOD_FORMAT 1
+#define JPB_XBOX_MOD_FORMAT 2
 
 /* Every D:\mods\<id> with a mod.json must carry a matching conversion stamp.
    Returns 0 with a reason otherwise. */

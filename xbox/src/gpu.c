@@ -44,14 +44,17 @@ volatile unsigned jpb_XboxRawTextureBytes;
 static uint16_t texture_hash[1024];
 static XboxTexture *last_texture;
 static const char *bc1_level_name="fed";
+/* Context DMA, 2D, and border texels from the border colour. The default
+   border source (texture) makes the NV2A address every texture as if a
+   4-texel border were stored around the image data: sampling shifts and
+   reads past the upload near the edges. That showed as garbage bands on FED
+   and Core floors, and was earlier mistaken for DXT1 sampling two payload
+   lengths over V. */
+#define JPB_TEXTURE_FORMAT_BASE (1|(2<<4)|NV097_SET_TEXTURE_FORMAT_BORDER_SOURCE)
+
 static float texture_v_scale(const XboxTexture *entry)
 {
-    if(entry->linear)return (float)entry->height;
-    /* Native XEMU captures show that DXT1 V spans two payload lengths over
-       normalized 0..1. World uploads include a second copy; half-range V
-       selects the expected tile after per-triangle UV rebasing. */
-    return ((entry->format>>8)&0xff)==NV097_SET_TEXTURE_FORMAT_COLOR_L_DXT1_A1R5G5B5
-        ?0.5f:1.0f;
+    return entry->linear?(float)entry->height:1.0f;
 }
 volatile unsigned jpb_XboxBc1WorldCalls;
 volatile unsigned jpb_XboxBc1CacheHits;
@@ -193,18 +196,13 @@ static int load_bc1_texture(XboxTexture *entry, const char *name, int model)
         !(header.height&(header.height-1)) &&
         header.bytes==header.width*header.height/2;
     if(!valid){fclose(file);return 0;}
-    uint32_t allocation_bytes=model?header.bytes:header.bytes*2;
-    uint32_t *pixels=MmAllocateContiguousMemoryEx(allocation_bytes,0,0x03ffafff,0,
+    uint32_t *pixels=MmAllocateContiguousMemoryEx(header.bytes,0,0x03ffafff,0,
         PAGE_READWRITE|PAGE_WRITECOMBINE);
     if(!pixels){fclose(file);return 0;}
     if(fread(pixels,1,header.bytes,file)!=header.bytes){
         fclose(file);MmFreeContiguousMemory(pixels);return 0;
     }
     fclose(file);
-    /* XEMU's DXT1 sampling traverses two payload lengths over normalized
-       V=0..1. Keep a second copy adjacent so half-range V retains native
-       repeat addressing for authored world UVs outside 0..1. */
-    if(!model)memcpy((uint8_t *)pixels+header.bytes,pixels,header.bytes);
     /* The allocation is write-combined. Model textures can be submitted in
        the same frame as the file read, so drain CPU writes before NV2A sees
        the texture address in the push buffer. */
@@ -215,7 +213,7 @@ static int load_bc1_texture(XboxTexture *entry, const char *name, int model)
     entry->pixels=pixels;
     entry->width=header.width;
     entry->height=header.height;
-    entry->format=1|(2<<4)|(NV097_SET_TEXTURE_FORMAT_COLOR_L_DXT1_A1R5G5B5<<8)|
+    entry->format=JPB_TEXTURE_FORMAT_BASE|(NV097_SET_TEXTURE_FORMAT_COLOR_L_DXT1_A1R5G5B5<<8)|
         (1<<16)|(logw<<20)|(logh<<24);
     entry->pitch=0;
     entry->linear=0;
@@ -307,16 +305,23 @@ static XboxTexture *resolve(const JPBSoftwareTexture *texture,const char *world_
     }
     jpb_XboxRawTextureBytes+=entry->pitch*height;
     entry->zero_rgb=1;
+    /* Opaque model and effect textures: the PC PixelShader.hlsl ignores
+       texture alpha and discards black RGB. Carry that as alpha (black 0,
+       else opaque) for the model/effect alpha test. Level draws (tile) keep
+       their own rules. */
+    int color_key=!tile && texture && texture->materialType==0;
     for (unsigned y = 0; y < height; ++y)
         for (unsigned x = 0; x < width; ++x) {
-            entry->pixels[entry->linear?y*(entry->pitch/4)+x:swizzle_offset(x, y, width, height)] = source[y * stride + x];
-            if(source[y*stride+x]&0xffffff)entry->zero_rgb=0;
+            uint32_t texel=source[y * stride + x];
+            if(color_key)texel=(texel&0xffffff)?(texel|0xff000000u):0;
+            entry->pixels[entry->linear?y*(entry->pitch/4)+x:swizzle_offset(x, y, width, height)] = texel;
+            if(texel&0xffffff)entry->zero_rgb=0;
         }
     while ((1u << logw) < width) ++logw;
     while ((1u << logh) < height) ++logh;
-    entry->format = 1 | (2 << 4) | (NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8R8G8B8 << 8) |
+    entry->format = JPB_TEXTURE_FORMAT_BASE | (NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8R8G8B8 << 8) |
         (1 << 16) | (logw << 20) | (logh << 24);
-    if(entry->linear)entry->format=1|(2<<4)|(NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8R8G8B8<<8)|(1<<16);
+    if(entry->linear)entry->format=JPB_TEXTURE_FORMAT_BASE|(NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8R8G8B8<<8)|(1<<16);
     entry->source = source; entry->width = width; entry->height = height;
     entry->source_width=width;entry->source_height=height;
     texture_hash[bucket]=(uint16_t)(texture_count+1);
@@ -461,7 +466,12 @@ int jpb_XboxGpuModelBegin(void *user, JPBSoftwareFramebuffer *fb, JPBSoftwareDep
     uint32_t *p=pb_begin();
     p=pb_push1(p,NV097_SET_DEPTH_TEST_ENABLE,1);
     p=pb_push1(p,NV097_SET_DEPTH_MASK,1);
-    p=pb_push1(p,NV097_SET_ALPHA_TEST_ENABLE,0);
+    /* Discard color-keyed texels: black in opaque model/effect textures
+       (alpha 0 after upload, transparent in model BC1). Fully transparent
+       fragments of blended effects add nothing, so the test is safe there. */
+    p=pb_push1(p,NV097_SET_ALPHA_TEST_ENABLE,1);
+    p=pb_push1(p,NV097_SET_ALPHA_FUNC,NV097_SET_ALPHA_FUNC_V_GREATER);
+    p=pb_push1(p,NV097_SET_ALPHA_REF,0);
     p=pb_push1(p,NV097_SET_BLEND_ENABLE,1);
     p=pb_push1(p,NV097_SET_BLEND_FUNC_SFACTOR,NV097_SET_BLEND_FUNC_SFACTOR_V_SRC_ALPHA);
     p=pb_push1(p,NV097_SET_BLEND_FUNC_DFACTOR,NV097_SET_BLEND_FUNC_DFACTOR_V_ONE_MINUS_SRC_ALPHA);
@@ -577,6 +587,14 @@ static void flush_model_batch(void)
         p=pb_push1(p,NV097_SET_TEXTURE_CONTROL0,0x4003ffc0);
         p=pb_push1(p,NV097_SET_TEXTURE_FILTER,
             sampler==TEXTURSAMPLER_POINTCLAMP?0x01012000:0x02022000);
+        /* PC el_chavo::EndPoly routes material classes 1 and 2 through the
+           transparency pass: no depth write, class 1 additive (SrcAlpha/One),
+           class 2 SrcAlpha/InvSrcAlpha. Writing depth from translucent model
+           texels hid whatever was drawn behind them afterwards. */
+        p=pb_push1(p,NV097_SET_DEPTH_MASK,transparency==0);
+        p=pb_push1(p,NV097_SET_BLEND_FUNC_DFACTOR,transparency==1?
+            NV097_SET_BLEND_FUNC_DFACTOR_V_ONE:
+            NV097_SET_BLEND_FUNC_DFACTOR_V_ONE_MINUS_SRC_ALPHA);
     }
     const float u_scale=entry->linear?(float)entry->width:1.0f;
     const float v_scale=texture_v_scale(entry);
@@ -869,13 +887,20 @@ static void draw_clipped_level(const JPBSoftwareLevelBatch *batch,const uint16_t
                 indices?indices[first+i+j]:first+i+j,&source[j]);
         unsigned n=clip_level_plane(source,3,near_poly,view,1,0);
         n=clip_level_plane(near_poly,n,poly,view,10000,1);
+        /* Decoded colors are 0..255. The level shader scales vertex color
+           by c8.x, set for the vertex arrays: 1 for packed unsigned-byte
+           colors (already 0..1), 1/255 for float colors. Match the packed
+           arrays here; unscaled, clipped triangles drew at full brightness
+           (FED's near floor was lighter than on PC). */
+        const float color_scale=jpb_XboxLevelUsesPackedVertices()?1.0f/255.0f:1.0f;
         for(unsigned j=1;j+1<n;++j) {
             const JPBSoftwareLevelVertex *tri[3]={&poly[0],&poly[j],&poly[j+1]};
             uint32_t *p=pb_begin();
             p=pb_push1(p,NV097_SET_BEGIN_END,NV097_SET_BEGIN_END_OP_TRIANGLES);
             for(unsigned k=0;k<3;++k) {
                 const JPBSoftwareLevelVertex *v=tri[k];
-                p=pb_push4f(p,NV097_SET_VERTEX_DATA4F_M+3*16,v->red,v->green,v->blue,v->alpha);
+                p=pb_push4f(p,NV097_SET_VERTEX_DATA4F_M+3*16,v->red*color_scale,
+                    v->green*color_scale,v->blue*color_scale,v->alpha*color_scale);
                 p=pb_push4f(p,NV097_SET_VERTEX_DATA4F_M+9*16,v->u,v->v,0,1);
                 p=pb_push4f(p,NV097_SET_VERTEX_DATA4F_M+10*16,v->uvScrollU,v->uvScrollV,0,1);
                 p=pb_push4f(p,NV097_SET_VERTEX_DATA4F_M,v->position.vx,v->position.vy,v->position.vz,1);
@@ -977,6 +1002,22 @@ int jpb_XboxGpuLevel(void *user, const JPBSoftwareLevelMesh *mesh, JPBLevelFbxMe
         p=pb_push1(p,NV097_SET_BLEND_FUNC_SFACTOR,NV097_SET_BLEND_FUNC_SFACTOR_V_SRC_ALPHA);
         p=pb_push1(p,NV097_SET_BLEND_FUNC_DFACTOR,NV097_SET_BLEND_FUNC_DFACTOR_V_ONE_MINUS_SRC_ALPHA);
         pb_end(p);
+        /* The transparent pass writes depth, like PC PSWorld. With the
+           reduced Xbox textures a cut-out's soft alpha edge spans several
+           screen pixels instead of under one; written to depth, it hid the
+           translucent surfaces drawn after it and left dark outlines (Gungan
+           arena railings). Draw solid texels (alpha >= 0.5) with depth
+           writes, then the softer remainder blended without them. */
+        const unsigned splits=pass==JPB_LEVEL_FBX_PASS_TRANSPARENT?2:1;
+        for (unsigned split=0;split<splits;++split) {
+        if(splits==2){
+            p=pb_begin();
+            p=pb_push1(p,NV097_SET_DEPTH_MASK,split==0);
+            p=pb_push1(p,NV097_SET_ALPHA_FUNC,split==0?
+                NV097_SET_ALPHA_FUNC_V_GEQUAL:NV097_SET_ALPHA_FUNC_V_LESS);
+            p=pb_push1(p,NV097_SET_ALPHA_REF,128);
+            pb_end(p);
+        }
         for (unsigned i=0;i<mesh->batchCount;++i) {
             const JPBSoftwareLevelBatch *batch=&mesh->batches[i];
             if (batch->pass!=pass || !(jpb_XboxLevelPassMask&(1u<<pass))) continue;
@@ -1074,6 +1115,7 @@ int jpb_XboxGpuLevel(void *user, const JPBSoftwareLevelMesh *mesh, JPBLevelFbxMe
                 first+=count;
             }
         }
+        }
         jpb_XboxGpuStage=59;
         return JPB_SOFTWARE_RENDER_OK;
     }
@@ -1154,7 +1196,7 @@ int jpb_XboxGpuComposite(void *user, enum JPBGameRuntimeGameplayCompositeStage s
     for(unsigned pass=0;pass<2;++pass) {
         p=pb_begin();
         p=pb_push2(p,NV097_SET_TEXTURE_OFFSET,(uint32_t)(pass?black:gain)&0x03ffffff,
-            1|(2<<4)|(NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8R8G8B8<<8)|(1<<16));
+            JPB_TEXTURE_FORMAT_BASE|(NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8R8G8B8<<8)|(1<<16));
         p=pb_push1(p,NV097_SET_BLEND_FUNC_SFACTOR,pass?NV097_SET_BLEND_FUNC_SFACTOR_V_ONE:NV097_SET_BLEND_FUNC_SFACTOR_V_ZERO);
         p=pb_push1(p,NV097_SET_BLEND_FUNC_DFACTOR,pass?NV097_SET_BLEND_FUNC_DFACTOR_V_ONE:NV097_SET_BLEND_FUNC_DFACTOR_V_SRC_COLOR);
         p=pb_push1(p,NV097_SET_BEGIN_END,NV097_SET_BEGIN_END_OP_TRIANGLE_STRIP);
@@ -1224,7 +1266,7 @@ int jpb_XboxGpuPresentFrontend(const JPBSoftwareFramebuffer *fb)
         ((unsigned)fb->width << 16) | (unsigned)fb->height);
     p = pb_push2(p, NV097_SET_TEXTURE_OFFSET,
         (uint32_t)frontend_texture & 0x03ffffff,
-        1 | (2 << 4) |
+        JPB_TEXTURE_FORMAT_BASE |
             (NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8R8G8B8 << 8) |
             (1 << 16));
     p = pb_push1(p, NV097_SET_BEGIN_END,

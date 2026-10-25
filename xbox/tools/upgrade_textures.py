@@ -12,6 +12,7 @@ import struct
 from PIL import Image
 
 from bc1 import encode as encode_bc1
+from xbox_formats import model_bc1
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--game-root', type=Path, required=True)
@@ -47,10 +48,13 @@ for rel, limit in selection.items():
     if 'gpuTexture' not in record:
         raise RuntimeError(f'No existing BC1 texture to upgrade: {rel}')
     with Image.open(source) as image:
-        image = image.copy()
-        image.thumbnail((limit, limit), Image.Resampling.LANCZOS)
-        payload = encode_bc1(image)
-        width, height = image.size
+        if Path(record['path']).parts[0].lower() == 'model':
+            payload, (width, height) = model_bc1(image.copy(), limit)
+        else:
+            image = image.copy()
+            image.thumbnail((limit, limit), Image.Resampling.LANCZOS)
+            payload = encode_bc1(image)
+            width, height = image.size
     target = destination / 'res' / record['gpuTexture']
     if target != staged.with_suffix('.xbt'):
         raise RuntimeError(f'Unexpected staged BC1 location: {target}')

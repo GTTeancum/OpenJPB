@@ -18,11 +18,12 @@ import struct
 import numpy as np
 from PIL import Image
 import soundfile as sf
+from scipy.ndimage import distance_transform_edt
 from scipy.signal import resample_poly
 
 from bc1 import encode as encode_bc1
 
-XBOX_FORMAT = 1
+XBOX_FORMAT = 2  # 2: model BC1 marks black texels transparent; premultiplied alpha shrink
 IMAGE_SUFFIXES = ('.tga', '.png', '.bmp', '.jpg', '.jpeg')
 # World and model textures use normalized UVs; only 2D screen art is cut in
 # authored pixel coordinates and needs its authored size recorded.
@@ -55,6 +56,74 @@ def sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def has_alpha(image):
+    return 'A' in image.getbands() or (image.mode == 'P' and 'transparency' in image.info)
+
+
+def shrink(image, limit):
+    """Reduce image in place to fit limit x limit.
+
+    For images with alpha, colour and alpha are reduced separately: alpha
+    averages normally, colour comes only from the solid part of the image
+    (alpha >= 250) and is then extended outward under every softer texel.
+    Cut-out art often carries a dark matte along its soft edge; a few texels
+    at full size, it becomes a whole dark outline once reduced 8-16x."""
+    if not has_alpha(image):
+        image.thumbnail((limit, limit), Image.Resampling.LANCZOS)
+        return image
+    rgba = image.convert('RGBA')
+    if max(rgba.size) <= limit:
+        return bleed(rgba, 0)
+    size = rgba.copy()
+    size.thumbnail((limit, limit))
+    size = size.size
+    array = np.asarray(rgba).astype(np.float32)
+    solid = (array[:, :, 3] >= 250).astype(np.float32)
+    def reduce(channel):
+        return np.asarray(Image.fromarray(channel, 'F').resize(size, Image.Resampling.BOX))
+    weight = reduce(solid)
+    colour = np.stack([reduce(array[:, :, c] * solid) for c in range(3)], axis=2)
+    alpha = np.asarray(rgba.getchannel('A').resize(size, Image.Resampling.LANCZOS))
+    out = np.zeros((size[1], size[0], 4), np.uint8)
+    valid = weight > 1e-3
+    out[valid, :3] = np.clip(colour[valid] / weight[valid, None] + 0.5, 0, 255)
+    out[:, :, 3] = alpha
+    if not valid.any():
+        return image.convert('RGBA').resize(size, Image.Resampling.LANCZOS)
+    _, (rows, cols) = distance_transform_edt(~valid, return_indices=True)
+    out[~valid, :3] = out[rows[~valid], cols[~valid], :3]
+    return Image.fromarray(out, 'RGBA')
+
+
+def bleed(rgba, threshold=0):
+    """Give texels with alpha <= threshold their nearest other texel's colour,
+    so filtering at cut-out edges does not pull in hidden black."""
+    array = np.asarray(rgba).copy()
+    hidden = array[:, :, 3] <= threshold
+    if not hidden.any() or hidden.all():
+        return rgba
+    _, (rows, cols) = distance_transform_edt(hidden, return_indices=True)
+    array[hidden, :3] = array[rows[hidden], cols[hidden], :3]
+    return Image.fromarray(array, 'RGBA')
+
+
+def black_mask(image, size):
+    """Texels the PC model shader discards (black RGB), at the BC1 size.
+
+    Built from the full-size source so downscaling does not blur black
+    regions into near-black that would stay visible."""
+    rgb = np.asarray(image.convert('RGB'), dtype=np.uint8)
+    black = Image.fromarray(((rgb.max(axis=2) == 0) * 255).astype(np.uint8))
+    return np.asarray(black.resize(size, Image.Resampling.BOX)) >= 128
+
+
+def model_bc1(image, limit):
+    """BC1 payload for a model texture, black texels transparent."""
+    full = image.copy()
+    image = shrink(image.copy(), limit)
+    return encode_bc1(image, black_mask(full, image.size)), image.size
+
+
 def convert(source, target, rel, limits):
     """Write the Xbox form of one resource; rel is relative to res/.
 
@@ -74,7 +143,7 @@ def convert(source, target, rel, limits):
             default_limit = (limits.front_texture if parts[0] == 'front'
                              else limits.max_texture)
             limit = limits.ui_quality.get(rel.as_posix().lower(), default_limit)
-            im.thumbnail((limit, limit), Image.Resampling.LANCZOS)
+            im = shrink(im, limit)
             record['stagedSize'] = list(im.size)
             # Uncompressed TGA remains compatible with the native reader.
             if suffix == '.tga':
@@ -91,13 +160,17 @@ def convert(source, target, rel, limits):
             gpu_target = target.with_suffix('.xbt')
             if gpu_target.exists():
                 gpu_target.unlink()
-            gpu_image.thumbnail((gpu_limit, gpu_limit), Image.Resampling.LANCZOS)
             try:
-                compressed = encode_bc1(gpu_image)
+                if parts[0] == 'model':
+                    # PC PixelShader.hlsl discards black model texels.
+                    compressed, (width, height) = model_bc1(gpu_image, gpu_limit)
+                else:
+                    gpu_image = shrink(gpu_image, gpu_limit)
+                    compressed = encode_bc1(gpu_image)
+                    width, height = gpu_image.size
             except ValueError:
                 pass  # Alpha and irregular dimensions keep the existing RGBA path.
             else:
-                width, height = gpu_image.size
                 gpu_target.write_bytes(struct.pack('<4sIII', b'XBT1', width, height,
                                                    len(compressed)) + compressed)
                 record['gpuTexture'] = rel.with_suffix('.xbt').as_posix()
@@ -148,8 +221,7 @@ def shrink_cpu_copy(image_path, size):
             return None
         before = image_path.stat().st_size
         mode = 'RGBA' if 'A' in im.getbands() else 'RGB'
-        small = im.convert(mode)
-        small.thumbnail((size, size), Image.Resampling.LANCZOS)
+        small = shrink(im.convert(mode), size)
     if image_path.suffix.lower() == '.tga':
         small.save(image_path, compression=None)
     else:

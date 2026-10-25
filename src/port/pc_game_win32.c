@@ -26,6 +26,7 @@
 #include "jpb/fmath.h"
 #include "jpb/force.h"
 #include "jpb/game.h"
+#include "jpb/game_test_fixtures.h"
 #include "jpb/globalarrays.h"
 #include "jpb/input.h"
 #include "jpb/intersec.h"
@@ -11429,20 +11430,7 @@ static int pc_camera_index_at_world_position(
     int32_t y,
     int32_t z)
 {
-    VECTOR high_point;
-    _jheightstuff height_stuff;
-
-    high_point.vx = x;
-    high_point.vy = y + 0x100;
-    high_point.vz = z;
-    high_point.pad = 0;
-    memset(&height_stuff, 0, sizeof(height_stuff));
-    (void)intersec_FindWalkHeight(
-        &high_point,
-        NULL,
-        (objectRoot *)(void *)&height_stuff,
-        1);
-    return pc_camera_index_from_height_stuff(runtime, &height_stuff);
+    return jpb_TestCameraIndexAtWorldPosition(runtime, x, y, z);
 }
 
 static double pc_fed_navigation_distance_squared(
@@ -13265,44 +13253,9 @@ static int pc_force_enemy_placement(
     int placement_index)
 {
     wsl_BAP_PLACEMENT *placement;
-    wsl_ENEMY *enemy;
 
-    if (runtime == NULL ||
-        runtime->world == NULL ||
-        runtime->world->apEnemy == NULL ||
-        runtime->player == NULL ||
-        placement_index < 0 ||
-        placement_index >= runtime->world->nEnemy) {
-        return 0;
-    }
+    if (!jpb_TestForceEnemyPlacement(runtime, placement_index)) return 0;
     placement = runtime->world->apEnemy[placement_index];
-    if (placement == NULL ||
-        jpb_GameRuntimeEnemyClassModelId(
-            runtime, placement->actorNum) < 0) {
-        return 0;
-    }
-    if (placement->status == 0) {
-        if (_addEnemy(
-                placement,
-                placement_index,
-                -1,
-                1) == 0) {
-            return 0;
-        }
-        placement->status = 1;
-    }
-    if (placement->status != 1 ||
-        placement->pLastEnemy == UINT32_MAX) {
-        return 0;
-    }
-    enemy = (wsl_ENEMY *)getPtr(
-        (int)placement->pLastEnemy,
-        JPB_POINTER_ARRAY_ENEMY);
-    if (enemy == NULL || enemy->pPlayer == NULL) {
-        return 0;
-    }
-    runtime->player->target = enemy->pPlayer;
-    runtime->enemy = enemy;
     jpb_PCLog(
         "force-enemy-placement applied id=%d actor=%d ai=%d",
         placement_index,
@@ -15443,34 +15396,8 @@ int main(int argc, char **argv)
         pc_seed_hud_offscreen_validation(&runtime);
     }
     if (spawn_position_explicit) {
-        runtime.physics->pos = spawn_position;
-        runtime.physics->vpos.vx = (int32_t)spawn_position.vx;
-        runtime.physics->vpos.vy = (int32_t)spawn_position.vy;
-        runtime.physics->vpos.vz = (int32_t)spawn_position.vz;
-        runtime.physics->snapshotpos = runtime.physics->pos;
-        runtime.physics->lastpos = runtime.physics->pos;
-        runtime.physics->lastpolyhit = NULL;
-        runtime.world->location.vx = runtime.physics->vpos.vx;
-        runtime.world->location.vy = runtime.physics->vpos.vy;
-        runtime.world->location.vz = runtime.physics->vpos.vz;
-        runtime.targetX = runtime.physics->pos.vx;
-        runtime.targetY = runtime.physics->pos.vy;
-        runtime.targetZ = runtime.physics->pos.vz;
-        if (camera_dolly_override < 0) {
-            int camera_index = pc_camera_index_at_world_position(
-                &runtime,
-                runtime.physics->vpos.vx,
-                runtime.physics->vpos.vy,
-                runtime.physics->vpos.vz);
-
-            if (camera_index >= 0 && camera_index < 256) {
-                runtime.world->currentDolly = (int16_t)camera_index;
-                runtime.world->overRideDolly = 0;
-                newcameraflag = 1;
-            }
-        }
-        if (jpb_PhysicsUpdateSceneObject(runtime.physics) !=
-            JPB_PHYSICS_RESULT_OK) {
+        if (!jpb_TestPlacePlayer(
+                &runtime, &spawn_position, camera_dolly_override < 0)) {
             fprintf(
                 stderr,
                 "spawn-position could not update player scene object "
