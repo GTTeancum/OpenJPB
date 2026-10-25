@@ -26,7 +26,10 @@ Maintain both PC and Xbox builds with shared gameplay and Xbox-only code under `
 - [x] Xbox texture garbage bands/lines (FED floor, Core floor, Gungan arena): texture format border source; also black colour key on models/effects (power-up glows). See [Xbox port](../xbox/README.md).
 - [ ] Xbox 2P: character select overlaps player 2's "Lightsaber Color" prompt with "Select"; compare with retail before moving it. Versus checked (match end fixed on PC and Xbox); two-mod-character versus is 36 ms per frame vs 16 ms stock.
 - [ ] Xbox boss smoke: drive each boss to defeat (approach steering for vehicles, Maul energy), and confirm each defeat sequence and level end.
+- [ ] Xbox two mod characters together: 36 ms per frame in versus (Shaak Ti + Temple Guard) against 16 ms for a stock pair.
+- [ ] Xbox memory: about 60 KB of free memory is lost per level-to-menu round trip.
 - [ ] Xbox Palace performance: 54 ms per frame at the start (other levels 16–33 ms).
+- [ ] Xbox level play-throughs: all 15 levels load and play, but each has only been spot-checked, not played start to finish.
 - [ ] Xbox Corus2: a flat grey surface is visible; compare with PC.
 - [ ] Live review on hardware or XEMU with a physical pad: menu flow, two-player co-op, saves after power-off, movie audio.
 - [ ] Complete Xbox boot/menu/FMVs with the shared UI. Current display contract: all content fills 16:9 output; standard 4:3 480i displays the complete 16:9 composition with top/bottom bars, never cropping. `boot_xemu.ps1` must set both the isolated EEPROM and XEMU display aspect for each test. FED gameplay and the shared menus have been visually checked in both modes. Movie corruption is fixed by validated all-intra Theora staging; native audio buffering and the full menu-to-gameplay handoff are still under verification. Keep 720p separate from this 480-line work.
