@@ -27,6 +27,14 @@ later-level progression, final visual fidelity, remaining effects and steady
 - **Immediate triangles.** Effect and HUD triangles keep their command
   block open across calls (pbkit flushes the CPU cache and kicks DMA at
   every block end); any other new block closes it first.
+- **Effect batching.** Effect triangles now share the model batch:
+  consecutive same-state triangles go out in one begin/end block, in
+  submission order, and the shared screen-poly flush copies a material only
+  when it changes. Palace effects fell from 12.8 to 6.3 ms (frame 43 to 36
+  ms). Most of what remains there is pickup models (about 1,900 polygons a
+  frame, roughly 1,400 triangles drawn) hidden behind scenery: with the
+  depth test off they appear behind the pillars, so they are drawn correctly
+  and are simply dense meshes inside the original 0x1400 draw range.
 
 XEMU frame times at each level start: Palace 66-86 to 41 ms; FED, Streets,
 Hangar, Core, Marsh and Coruscant 24-40 to 16-25 ms; the rest about 16-21 ms.
