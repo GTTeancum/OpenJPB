@@ -81,6 +81,7 @@ volatile unsigned jpb_XboxSessionStats[4];
    [3] constructor done, [4] movies done, [5] gameplay released,
    [6] front end rebuilt. */
 volatile unsigned jpb_XboxSessionPages[8];
+volatile unsigned jpb_XboxSessionPool[8];
 volatile unsigned jpb_XboxModCount;
 /* Test only: a debugger writes 1 to save the campaign at the next gameplay
    frame, as choosing a results-screen upgrade does. */
@@ -201,11 +202,22 @@ static void sample_heap(void)
     jpb_XboxHeapKiB[3]=(unsigned)(info.hblkhd>>10);
 }
 
+/* Kernel memory breakdown at the last free_pages() call: available pages,
+   committed virtual KiB, reserved virtual KiB, cache, pool, stack and image
+   pages. */
+volatile unsigned jpb_XboxMmStats[7];
 static unsigned free_pages(void)
 {
     MM_STATISTICS memory={0};
     memory.Length=sizeof(memory);
     MmQueryStatistics(&memory);
+    jpb_XboxMmStats[0]=memory.AvailablePages;
+    jpb_XboxMmStats[1]=memory.VirtualMemoryBytesCommitted>>10;
+    jpb_XboxMmStats[2]=memory.VirtualMemoryBytesReserved>>10;
+    jpb_XboxMmStats[3]=memory.CachePagesCommitted;
+    jpb_XboxMmStats[4]=memory.PoolPagesCommitted;
+    jpb_XboxMmStats[5]=memory.StackPagesCommitted;
+    jpb_XboxMmStats[6]=memory.ImagePagesCommitted;
     return memory.AvailablePages;
 }
 
@@ -471,7 +483,7 @@ static void run_front_end(int *level_index, int *game_mode)
         }
         jpb_XboxAudioPump();
         jpb_XboxFrontendMs[2]=GetTickCount()-frontend_started;
-        if((frontend_frame&31u)==0)jpb_XboxFrontendFreePages=free_pages();
+        if((frontend_frame&31u)==0){jpb_XboxFrontendFreePages=free_pages();sample_heap();}
         ++frontend_frame;
         if(front_end_requests_gameplay(level_index,game_mode))return;
         {
@@ -533,7 +545,7 @@ static void start_gameplay(int level, int game_mode)
     jpb_XboxSessionStats[2]=(unsigned)level;
     jpb_XboxSessionStats[3]=(unsigned)game_mode;
 
-    jpb_XboxSessionPages[0]=free_pages();
+    jpb_XboxSessionPages[0]=free_pages();jpb_XboxSessionPool[0]=jpb_XboxMmStats[4];
     LevelSelect=(char)level;
     menu_levelSelect();
     jpb_GameRuntimeShutdown(&runtime);
@@ -547,7 +559,7 @@ static void start_gameplay(int level, int game_mode)
        otherwise stays reserved and starves the next level's contiguous GPU
        allocations. */
     dlmalloc_trim(0);
-    jpb_XboxSessionPages[1]=free_pages();
+    jpb_XboxSessionPages[1]=free_pages();jpb_XboxSessionPool[1]=jpb_XboxMmStats[4];
 
     jpb_XboxStartupPhase=5;
     result=jpb_GameRuntimeInitWithPlayerAssets(&runtime,level_path,cad,bmd,
@@ -555,7 +567,7 @@ static void start_gameplay(int level, int game_mode)
     jpb_XboxLastLoadResult=result;
     if(result!=0)fatal("Load failed %d: %s %s",result,
         jpb_GameRuntimeLastFailureStage(),jpb_GameRuntimeLastFailureDetail());
-    jpb_XboxSessionPages[2]=free_pages();
+    jpb_XboxSessionPages[2]=free_pages();jpb_XboxSessionPool[2]=jpb_XboxMmStats[4];
     OptionStruct=selected_options;
     generateAllText(OptionStruct.Language);
     menuVars.pplayers[0]=selected_player_index[0];
@@ -609,7 +621,7 @@ static void start_gameplay(int level, int game_mode)
         else if (strstr(stage,"load-screen-present"))jpb_XboxLastLoadFailureCode=3;
         else if (strstr(stage,"invalid-runtime"))jpb_XboxLastLoadFailureCode=4;
     }
-    jpb_XboxFreePagesAfterConstructor=jpb_XboxSessionPages[3]=free_pages();
+    jpb_XboxFreePagesAfterConstructor=jpb_XboxSessionPages[3]=free_pages();jpb_XboxSessionPool[3]=jpb_XboxMmStats[4];
     jpb_XboxStartupPhase=6;
     if(result!=0)fatal("Constructor failed %d: %s %s",result,
         jpb_GameRuntimeLastFailureStage(),jpb_GameRuntimeLastFailureDetail());
@@ -632,7 +644,7 @@ static void start_gameplay(int level, int game_mode)
     free(frontend_pixels);
     frontend_pixels=NULL;
     if(gpu_initialized)jpb_XboxGpuGarbageCollect();
-    jpb_XboxSessionPages[4]=free_pages();
+    jpb_XboxSessionPages[4]=free_pages();jpb_XboxSessionPool[4]=jpb_XboxMmStats[4];
     jpb_InputSetProvider(read_controller,NULL);
     player1InputType=1;
     if(gpu_initialized){
@@ -693,7 +705,7 @@ static void return_to_front_end(void)
     memset(controlTextures,0,sizeof(controlTextures));
     if(gpu_initialized)jpb_XboxGpuGarbageCollect();
     dlmalloc_trim(0);
-    jpb_XboxSessionPages[5]=free_pages();
+    jpb_XboxSessionPages[5]=free_pages();jpb_XboxSessionPool[5]=jpb_XboxMmStats[4];
     result=jpb_GameRuntimeInitFrontend(&runtime);
     if(result!=JPB_GAME_RUNTIME_OK)
         fatal("Front-end initialization failed %d: %s %s",result,
@@ -705,7 +717,7 @@ static void return_to_front_end(void)
     if(!jpb_XboxUiInit())fatal("Xbox UI platform initialization failed");
     set_title_render_hooks();
     controller_bits=0;
-    jpb_XboxSessionPages[6]=free_pages();
+    jpb_XboxSessionPages[6]=free_pages();jpb_XboxSessionPool[6]=jpb_XboxMmStats[4];
 }
 
 /* Run gameplay frames until the game hands ownership back to the menus. */
