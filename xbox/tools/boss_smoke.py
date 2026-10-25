@@ -123,25 +123,15 @@ for name, level, spawn, placement in chosen:
             pad(out, *steps)
         state = words(out, 'jpb_XboxBossTest', 8, signed=True)
         if a.finish and state[2] > 0:
-            # Defeat path: one hit from death, then keep attacking.
-            pad(out, 'poke jpb_XboxBossSetEnergy 1', 'wait 2')
-            for round_index in range(40):
-                state = words(out, 'jpb_XboxBossTest', 8, signed=True)
-                world = words(out, 'jpb_XboxWorldDebug', 15, as_float=True)
-                energies.append(state[2])
-                if state[2] <= 0:
-                    break
-                sx, sy, distance = stick_toward(world[0:3], state[5:8], world[12:15])
-                steps = [f'stick {sx:.2f} {sy:.2f} {20 if distance > 700 else 3}']
-                if distance <= 700:
-                    for button in attacks:
-                        steps += [f'press {button} 4', 'wait 6']
-                pad(out, *steps)
+            # Defeat path: set the boss's energy to zero (the scripted
+            # attacks seldom land the last hit) and record what follows.
+            pad(out, 'poke jpb_XboxBossSetEnergy 0', 'wait 2')
+            state = words(out, 'jpb_XboxBossTest', 8, signed=True)
             record['defeated'] = state[2] <= 0
-            if record['defeated']:
-                for index in range(6):
-                    pad(out, 'wait 100', f'shot defeat{index}')
-                record['sessionAfterDefeat'] = words(out, 'jpb_XboxSessionStats', 4)
+            for index in range(6):
+                pad(out, 'wait 100', f'shot defeat{index}')
+            record['sessionAfterDefeat'] = words(out, 'jpb_XboxSessionStats', 4)
+            record['gameAfterDefeat'] = words(out, 'jpb_XboxGameDebug', 8, signed=True)
         pad(out, 'wait 60', 'shot end')
         record['bossEnergyEnd'] = state[2]
         record['bossEnergyMin'] = min(e for e in energies if e >= 0) if any(e >= 0 for e in energies) else None

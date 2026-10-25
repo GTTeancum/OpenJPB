@@ -25,7 +25,7 @@ Maintain both PC and Xbox builds with shared gameplay and Xbox-only code under `
 - [ ] Xbox saves across a console reset: XEMU's `-snapshot` test setup loses them with old and new builds alike; verify on hardware.
 - [x] Xbox texture garbage bands/lines (FED floor, Core floor, Gungan arena): texture format border source; also black colour key on models/effects (power-up glows). See [Xbox port](../xbox/README.md).
 - [ ] Xbox 2P: character select overlaps player 2's "Lightsaber Color" prompt with "Select"; compare with retail before moving it. Versus checked (match end fixed on PC and Xbox); two-mod-character versus is 36 ms per frame vs 16 ms stock.
-- [ ] Xbox boss smoke: drive each boss to defeat (approach steering for vehicles, Maul energy), and confirm each defeat sequence and level end.
+- [ ] Xbox bosses: all eight spawn, render and fight (`boss_smoke.py`). With energy forced to zero, six fall (Tatooine and Core Maul award their points); the Theed tank ignores the write and the Coruscant thug stops at 10. Whether each defeat then ends the level as in retail needs a real playthrough of those fights.
 - [ ] Xbox two mod characters together: 36 ms per frame in versus (Shaak Ti + Temple Guard) against 16 ms for a stock pair.
 - [ ] Xbox memory: about 60 KB of free memory is lost per level-to-menu round trip.
 - [ ] Xbox Palace performance: 54 ms per frame at the start (other levels 16–33 ms).
