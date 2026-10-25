@@ -24,6 +24,7 @@ Maintain both PC and Xbox builds with shared gameplay and Xbox-only code under `
 - [x] PC mod characters on Xbox (2026-10-24): shared loader through a per-platform file layer, `stage_mods.py` conversion with a format stamp, 14 packages selectable and playable in XEMU.
 - [ ] Xbox saves across a console reset: XEMU's `-snapshot` test setup loses them with old and new builds alike; verify on hardware.
 - [x] Xbox texture garbage bands/lines (FED floor, Core floor, Gungan arena): texture format border source; also black colour key on models/effects (power-up glows). See [Xbox port](../xbox/README.md).
+- [ ] Xbox 2P: character select overlaps player 2's "Lightsaber Color" prompt with "Select"; compare with retail before moving it. Versus mode not yet checked.
 - [ ] Xbox boss smoke: drive each boss to defeat (approach steering for vehicles, Maul energy), and confirm each defeat sequence and level end.
 - [ ] Xbox Palace performance: 54 ms per frame at the start (other levels 16–33 ms).
 - [ ] Xbox Corus2: a flat grey surface is visible; compare with PC.

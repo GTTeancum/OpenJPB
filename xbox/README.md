@@ -13,6 +13,18 @@ are historical; the later sections record current evidence. Physical-pad feel,
 later-level progression, final visual fidelity, remaining effects and steady
 30 fps in heavy combat are still unverified or unfinished.
 
+## Two-player co-op check (2026-10-24)
+
+Through both remote pads in XEMU: 2 Player > Jedi Mode, separate character
+carousels, level select, FED with both players moving and scoring
+independently (both score/item HUDs, 27-33 ms per frame, 7.6 MB free), the
+per-player results pages (each player confirms their own) and the hand-off
+into Swamps of Naboo. A dead player stays down until the survivor reaches a
+checkpoint pickup (`pwrup_resurrect_after_life`), as the shipped game does.
+Open: on character select, player 2's "Lightsaber Color" prompt shares the
+bottom-right line with "Select" and overlaps it; the coordinates are the
+recovered ones, so this needs a retail comparison before changing.
+
 ## Texture addressing, colour key and bosses (2026-10-24)
 
 - **Texture border source.** Every texture format word left
