@@ -29,6 +29,7 @@ Maintain both PC and Xbox builds with shared gameplay and Xbox-only code under `
 - [ ] Xbox two mod characters together: 36 ms per frame in versus (Shaak Ti + Temple Guard) against 16 ms for a stock pair.
 - [ ] Xbox memory: about 60 KB of free memory is lost per level-to-menu round trip.
 - [ ] Xbox Palace performance: 54 ms per frame at the start (other levels 16–33 ms).
+- [ ] Training levels: enemies do not work (reported in live review). Check PC and Xbox and compare with retail.
 - [ ] Xbox level play-throughs: all 15 levels load and play, but each has only been spot-checked, not played start to finish.
 - [ ] Xbox Corus2: a flat grey surface is visible; compare with PC.
 - [ ] Live review on hardware or XEMU with a physical pad: menu flow, two-player co-op, saves after power-off, movie audio.
