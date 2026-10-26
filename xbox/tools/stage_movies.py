@@ -90,6 +90,11 @@ for relative_name in selected:
         "1",
         "-pix_fmt",
         "yuv420p",
+        # Encoder packet timing otherwise steps backwards (ffmpeg reports
+        # non-monotonic audio DTS); the Xbox decoder stopped the intro film at
+        # the first one, 1.5 s in. Resample against the timestamps instead.
+        "-af",
+        "aresample=async=1:first_pts=0",
         "-c:a",
         "libvorbis",
         "-q:a",
@@ -108,11 +113,13 @@ for relative_name in selected:
         # Probe only checks headers. Decode the complete video and audio before
         # replacing the last known good staged asset.
         for stream in ("0:v:0", "0:a:0"):
-            subprocess.run(
-                [ffmpeg, "-hide_banner", "-loglevel", "error", "-xerror",
+            check = subprocess.run(
+                [ffmpeg, "-hide_banner", "-loglevel", "warning", "-xerror",
                  "-i", str(pending), "-map", stream, "-f", "null", "-"],
-                check=True,
+                check=True, capture_output=True, text=True,
             )
+            if "non monotonically" in check.stderr:
+                raise SystemExit(f"Staged movie timestamps step backwards: {relative_name}")
         pending.replace(target)
     finally:
         pending.unlink(missing_ok=True)

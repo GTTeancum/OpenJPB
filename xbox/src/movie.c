@@ -45,6 +45,40 @@ static const char *movie_name(unsigned movie)
     return movie<sizeof(names)/sizeof(names[0])?names[movie]:NULL;
 }
 
+/* IYUV (theoraplay planar: Y, then U and V at half size) to ARGB with the
+   colour formula of theoraplay's RGBA converter, in 16.16 fixed point. Like
+   that converter, rows come out bottom-up: staged movies are stored
+   vertically flipped. */
+static uint8_t movie_clamp(int value)
+{
+    value=(value+32768)>>16;
+    return (uint8_t)(value<0?0:value>255?255:value);
+}
+
+static void convert_iyuv(const THEORAPLAY_VideoFrame *video,uint32_t *out,
+    int stride_pixels)
+{
+    const unsigned width=video->width,height=video->height;
+    const uint8_t *luma=video->pixels;
+    const uint8_t *cb_plane=luma+(size_t)width*height;
+    const uint8_t *cr_plane=cb_plane+(size_t)(width/2u)*(height/2u);
+    for(unsigned row=0;row<height;++row){
+        const uint8_t *y_row=luma+(size_t)row*width;
+        const uint8_t *cb_row=cb_plane+(size_t)(row>>1)*(width/2u);
+        const uint8_t *cr_row=cr_plane+(size_t)(row>>1)*(width/2u);
+        uint32_t *destination=out+(size_t)(height-1u-row)*stride_pixels;
+        for(unsigned column=0;column<width;++column){
+            int y=((int)y_row[column]-16)*76309;
+            int cb=(int)cb_row[column>>1]-128;
+            int cr=(int)cr_row[column>>1]-128;
+            destination[column]=0xff000000u|
+                ((uint32_t)movie_clamp(y+cr*104597)<<16)|
+                ((uint32_t)movie_clamp(y-cb*25674-cr*53279)<<8)|
+                movie_clamp(y+cb*132201);
+        }
+    }
+}
+
 static void blit_video(
     JPBSoftwareFramebuffer *framebuffer,
     const THEORAPLAY_VideoFrame *video)
@@ -60,16 +94,23 @@ static void blit_video(
     }
     int left=(framebuffer->width-width)/2;
     int top=(framebuffer->height-height)/2;
+    const unsigned w=video->width,h=video->height;
+    const uint8_t *cb_plane=video->pixels+(size_t)w*h;
+    const uint8_t *cr_plane=cb_plane+(size_t)(w/2u)*(h/2u);
     for(int y=0;y<height;++y){
-        unsigned sy=(unsigned)((int64_t)y*video->height/height);
-        const uint8_t *source=video->pixels+(size_t)sy*video->width*4u;
+        /* Flipped source, as in convert_iyuv. */
+        unsigned sy=h-1u-(unsigned)((int64_t)y*h/height);
         uint32_t *destination=framebuffer->pixels+
             (size_t)(top+y)*framebuffer->stridePixels+left;
         for(int x=0;x<width;++x){
-            unsigned sx=(unsigned)((int64_t)x*video->width/width);
-            const uint8_t *pixel=source+(size_t)sx*4u;
+            unsigned sx=(unsigned)((int64_t)x*w/width);
+            int luma=((int)video->pixels[(size_t)sy*w+sx]-16)*76309;
+            int cb=(int)cb_plane[(size_t)(sy>>1)*(w/2u)+(sx>>1)]-128;
+            int cr=(int)cr_plane[(size_t)(sy>>1)*(w/2u)+(sx>>1)]-128;
             destination[x]=UINT32_C(0xff000000)|
-                ((uint32_t)pixel[0]<<16)|((uint32_t)pixel[1]<<8)|pixel[2];
+                ((uint32_t)movie_clamp(luma+cr*104597)<<16)|
+                ((uint32_t)movie_clamp(luma-cb*25674-cr*53279)<<8)|
+                movie_clamp(luma+cb*132201);
         }
     }
 }
@@ -166,7 +207,12 @@ int jpb_XboxMoviePlay(
     jpb_XboxMovieState=1;
     if(!name || !framebuffer || !framebuffer->pixels)goto done;
     snprintf(path,sizeof(path),"D:\\res\\movies\\%s",name);
-    decoder=THEORAPLAY_startDecodeFile(path,8,THEORAPLAY_VIDFMT_RGBA);
+    /* Frames are decoded as planar IYUV and converted while uploading. An
+       RGBA frame at 512x288 is a 590 KB allocation; with the menus resident
+       only 2-4 MB stay free at boot, and queueing eight ran the intro film
+       out of memory 1-12 s in. Fewer queued frames deadlock instead: the
+       first audio sits behind them and the audio clock never starts. */
+    decoder=THEORAPLAY_startDecodeFile(path,8,THEORAPLAY_VIDFMT_IYUV);
     if(!decoder)goto done;
     jpb_XboxMovieState=2;
     wait_started=GetTickCount();
@@ -227,11 +273,7 @@ int jpb_XboxMoviePlay(
                    Reusing the menu buffer avoids another allocation. */
                 JPBSoftwareFramebuffer native={framebuffer->pixels,
                     (int)current->width,(int)current->height,(int)current->width};
-                for(unsigned i=0;i<current->width*current->height;++i){
-                    const unsigned char *p=current->pixels+i*4u;
-                    native.pixels[i]=0xff000000u|((uint32_t)p[0]<<16)|
-                        ((uint32_t)p[1]<<8)|p[2];
-                }
+                convert_iyuv(current,native.pixels,(int)current->width);
                 present_frame(&native,1);
             }else{
                 blit_video(framebuffer,current);
