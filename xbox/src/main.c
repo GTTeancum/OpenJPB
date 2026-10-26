@@ -893,6 +893,10 @@ static void run_gameplay(int marsh_smoke)
                 }
             }
             if(jpb_XboxBossSetEnergy>=0){
+                /* bapenemy_postFrame republishes the enemy's hitPoints as its
+                   energy every frame; vehicles such as the Theed tank never
+                   read the energy back, so set both. */
+                if(runtime.enemy)runtime.enemy->hitPoints=(int16_t)jpb_XboxBossSetEnergy;
                 (void)game_gSetEnergy(jpb_XboxBossTest[4],jpb_XboxBossSetEnergy);
                 jpb_XboxBossSetEnergy=-1;
             }
