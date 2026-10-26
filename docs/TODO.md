@@ -27,7 +27,7 @@ Maintain both PC and Xbox builds with shared gameplay and Xbox-only code under `
 
 - [ ] Hardware phase: verify the in-game reset (LT+RT+Back+Black, `xbox/src/controller.c`) reaches the dashboard. In XEMU the combo stops the game and enters the kernel's quick reboot; the test disk has no dashboard to land on.
 - [ ] Hardware phase: verify the black band guard at 480i. Both halves are in: `guard_shown_buffer` and the local pbkit core (`xbox/src/pbkit_core.c`) that retires a frame only once scanout shows it. `E:\OpenJPB-flicker.txt` logs held frames and pbkit deferrals.
-- [ ] PC direct level start with enemies (`OpenJPB.exe mini2.jpx ... --enemy-cad`, windowed): the Kaadu rider's camera follows a point near the map origin, so the frame is black. Menu play and the headless Mini2 camera tests are unaffected. That path skips the canonical constructor the menu handoff runs; adding it there crashed on frame 0 (access violation at RVA 0xa538b), so the direct path needs more of the menu handoff's setup.
+- [ ] PC direct level start with enemies (`OpenJPB.exe mini2.jpx ... --enemy-cad`, windowed): the Kaadu rider's camera follows a point near the map origin, so the frame is black. Menu play and the headless Mini2 camera tests are unaffected. That path skips the canonical constructor the menu handoff runs; adding it there crashes because game_initPerLevel opens the objective menu, whose controller icons (newDrawControllerIcon) are never loaded on that path. Without it the rider's camera uses type 5, whose target is the rider's mount-relative physics position (cube.c/camera.c); the menu path ends up on type 6 (gJarJarPos).
 
 Current boot, diagnostics, and unresolved visual evidence: [Xbox port](../xbox/README.md).
 
