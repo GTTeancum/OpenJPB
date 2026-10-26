@@ -7766,6 +7766,16 @@ int jpb_GameRuntimeFrame(
             (void *)runtime, (void *)framebuffer);
         return JPB_GAME_RUNTIME_INVALID_ARGUMENT;
     }
+    /* loader_LoadJedi's texture_Flush(14) frees TT_LEVEL materials and
+     * retail reloads them in the following loader_LevelLoad. Host paths
+     * that reset the players without that reload (PC direct starts with
+     * enemies) would leave plotsomecubes without textures. */
+    if ((int)(int8_t)LevelSelect == 12 && runtime->cubeWorldReloads < 4 &&
+        (leveltexture[0] == NULL || leveltexture[0]->type != TT_LEVEL ||
+         leveltexture[0]->texture == NULL)) {
+        ++runtime->cubeWorldReloads;
+        (void)game_runtime_load_cube_world(runtime, 12);
+    }
     /* The retail active-mode owner consumes the authored level-complete signal
      * before the final gameplay frame. The outer mode owner handles mode 5. */
     jpb_GameRunActiveModePrelude();
