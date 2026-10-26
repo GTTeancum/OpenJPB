@@ -114,6 +114,9 @@ def colour_keyed(rel):
     texels; the Xbox reproduces that with a black colour key."""
     parts = [part.lower() for part in PurePosixPath(rel).parts]
     name = parts[-1]
+    if parts[:2] == ['level', '3ds']:
+        # PlayStation-era cube-world pages (Mini2): black is transparent.
+        return True
     return (parts[0] in ('model', 'effects', 'default') and
             not name.startswith('a_') and not name.startswith('p_'))
 

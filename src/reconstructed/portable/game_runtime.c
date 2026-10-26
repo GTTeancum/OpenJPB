@@ -3074,6 +3074,29 @@ static int game_runtime_load_cube_world(
         leveltexture[index] = path != NULL
             ? _LoadTexture((char *)path, TT_LEVEL, 0)
             : NULL;
+        /* The cube-world pages are PlayStation-era RGB art: black texels
+         * are the transparent key (fern and leaf cards). They load opaque,
+         * and the immediate shader discards only all-zero texels, so clear
+         * black texels' alpha in this runtime-owned copy. */
+        if (leveltexture[index] != NULL &&
+            leveltexture[index]->texture != NULL) {
+            const JPBSoftwareTexture *page =
+                (const JPBSoftwareTexture *)leveltexture[index]->texture;
+            uint32_t *texel = (uint32_t *)(uintptr_t)page->pixels;
+            size_t row;
+            size_t column;
+
+            for (row = 0; texel != NULL && row < page->height; ++row) {
+                for (column = 0; column < page->width; ++column) {
+                    uint32_t *value =
+                        &texel[row * page->stridePixels + column];
+
+                    if ((*value & UINT32_C(0x00ffffff)) == 0) {
+                        *value = 0;
+                    }
+                }
+            }
+        }
     }
     jpb_TextureSetPlatformHooks(
         game_runtime_load_material_texture,

@@ -15013,6 +15013,17 @@ int main(int argc, char **argv)
             GameStruct.aCharacterData[1].Items = 1;
         }
     } else if ((int)(uint8_t)GameStruct.CurrentLevel == 12) {
+        /* Mini2 runs the canonical constructor below, whose
+         * game_initPerLevel opens the objective menu; publish the
+         * front-end bank first, as the menu handoff does after runtime
+         * construction. */
+        if (!pc_ensure_return_menu_resources(
+                &menu_texture_cache, &title_pixels, &framebuffer)) {
+            fputs("Mini2 front-end resources failed\n", stderr);
+            jpb_GameRuntimeShutdown(&runtime);
+            free(pixels);
+            return 4;
+        }
         result = pc_activate_solo_kadu_rider(
             &runtime,
             cad_path,
@@ -15069,6 +15080,26 @@ int main(int argc, char **argv)
             jpb_GameRuntimeShutdown(&runtime);
             free(pixels);
             return 4;
+        }
+        /* The menu handoff runs the canonical constructor after the rider
+         * and enemy classes. Without it, Mini2's mounted riders keep camera
+         * type 5, which targets the rider's mount-relative physics position
+         * (near the world origin), instead of type 6 on gJarJarPos. Mini2
+         * has no FBX, so no level import precedes it. */
+        if ((int)(uint8_t)GameStruct.CurrentLevel == 12) {
+            result = jpb_GameRuntimeRunCanonicalConstructor(&runtime);
+            if (result != JPB_GAME_RUNTIME_OK) {
+                fprintf(
+                    stderr,
+                    "Mini2 canonical constructor failed: status=%d stage=%s\n",
+                    result,
+                    jpb_GameRuntimeLastFailureStage());
+                jpb_GameRuntimeShutdown(&runtime);
+                free(pixels);
+                return 4;
+            }
+            /* game_gPlayTheGame's active mode, as after the menu handoff. */
+            GameStruct.gameMode = 6;
         }
     }
     if (input.validateMultiEnemy &&

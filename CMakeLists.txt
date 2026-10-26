@@ -1289,13 +1289,21 @@ if(BUILD_TESTING)
                             --cmb "${JPB_PC_GAME_CMB}"
                             --enemy-cad "${JPB_PC_GAME_ENEMY_CAD}"
                             --enemy-bmd "${JPB_PC_GAME_ENEMY_BMD}"
-                            --headless --control-harness --mute --frames 120)
+                            --headless --control-harness --mute --frames 120
+                            # game_initPerLevel opens the objective panel;
+                            # confirm it as a player would.
+                            --headless-phase none 10
+                            --headless-phase attack-south 3
+                            --headless-phase none 107)
+                    # loader_LoadJedi flags the solo CPU rider's player
+                    # object (0x20) exactly as retail, so it reports
+                    # ready=0; it must still ride and render.
                     set_tests_properties(
                         jpb_pc_mini2_solo_kadu_riders
                         PROPERTIES
                             LABELS "real_assets;pc_game;mini2;enemy_ai"
                             PASS_REGULAR_EXPRESSION
-                                "second_player=\\(ready=1,triangles=[1-9][0-9]*,pixels=[1-9][0-9]*\\)"
+                                "second_player=\\(ready=[01],triangles=[1-9][0-9]*,pixels=[1-9][0-9]*\\)"
                             TIMEOUT 120)
                 endif()
                 if(EXISTS "${JPB_PC_PALACE_MESH}")
