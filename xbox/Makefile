@@ -50,6 +50,7 @@ $(VIDEO_CODEC_OBJS): NXDK_CFLAGS += -Dalloca=__builtin_alloca
 $(PROJECT_OBJS): NXDK_CFLAGS += -nostdlibinc -I../include -U_WIN32 -DJPB_XBOX=1 -O2 -fcommon -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=return-mismatch -ffunction-sections -fdata-sections
 $(VIDEO_CODEC_OBJS): NXDK_CFLAGS += -fno-strict-aliasing -fwrapv
 src/sdl_xboxaudio.obj: NXDK_CFLAGS += -I$(NXDK_DIR)/lib/sdl/SDL2/src -I$(NXDK_DIR)/lib/sdl/SDL2/src/audio -I$(NXDK_DIR)/lib/sdl/SDL2/src/audio/xbox
+src/pbkit_core.obj: NXDK_CFLAGS += -I$(NXDK_DIR)/lib/pbkit -Wno-everything
 $(PROJECT_OBJS): NXDK_CXXFLAGS += -nostdlibinc -I../include -DJPB_XBOX=1 -O2 -fcommon -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=return-mismatch -ffunction-sections -fdata-sections -std=c++17
 NXDK_LDFLAGS += /opt:ref /map:build/OpenJPB.map
 include $(NXDK_DIR)/Makefile
