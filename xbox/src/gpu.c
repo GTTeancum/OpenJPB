@@ -578,6 +578,7 @@ volatile unsigned jpb_XboxShownBufferHazards,jpb_XboxShownBufferForced;
 volatile unsigned jpb_XboxShownBufferWaitVbls;
 volatile unsigned jpb_XboxShownBufferLog[16][2];
 static uint32_t last_finished_buffer;
+extern volatile unsigned jpb_XboxPbkitDeferredSwaps;
 static void guard_shown_buffer(void)
 {
     uint32_t target=(uint32_t)(uintptr_t)pb_back_buffer()&0x03ffffff;
@@ -614,9 +615,10 @@ static void write_flicker_log(void)
     written_events=jpb_XboxFlashEvents;
     written_hazards=jpb_XboxShownBufferHazards;
     fprintf(log,"presents %u probed %u\r\n",presents,jpb_XboxFlashFrames);
-    fprintf(log,"shown-buffer hazards %u waited-vbls %u forced %u guard %u\r\n",
+    fprintf(log,"shown-buffer hazards %u waited-vbls %u forced %u guard %u pbkit-deferred %u\r\n",
         jpb_XboxShownBufferHazards,jpb_XboxShownBufferWaitVbls,
-        jpb_XboxShownBufferForced,jpb_XboxShownBufferGuard);
+        jpb_XboxShownBufferForced,jpb_XboxShownBufferGuard,
+        jpb_XboxPbkitDeferredSwaps);
     fprintf(log,"flash events %u cells %u resolve-failures %u\r\n",
         jpb_XboxFlashEvents,jpb_XboxFlashCellsTotal,jpb_XboxResolveFailures);
     unsigned rows=jpb_XboxFlashEvents<64?jpb_XboxFlashEvents:64;
