@@ -23,7 +23,8 @@ from scipy.signal import resample_poly
 
 from bc1 import encode as encode_bc1
 
-XBOX_FORMAT = 2  # 2: model BC1 marks black texels transparent; premultiplied alpha shrink
+XBOX_FORMAT = 3  # 2: model BC1 marks black texels transparent; premultiplied alpha shrink
+# 3: colour-keyed model/effect/default copies keep their black key after shrink
 IMAGE_SUFFIXES = ('.tga', '.png', '.bmp', '.jpg', '.jpeg')
 # World and model textures use normalized UVs; only 2D screen art is cut in
 # authored pixel coordinates and needs its authored size recorded.
@@ -107,6 +108,28 @@ def bleed(rgba, threshold=0):
     return Image.fromarray(array, 'RGBA')
 
 
+def colour_keyed(rel):
+    """Model, effect and default textures that are not a_/p_ (transparency
+    classes) draw opaque on PC, where PixelShader.hlsl discards black
+    texels; the Xbox reproduces that with a black colour key."""
+    parts = [part.lower() for part in PurePosixPath(rel).parts]
+    name = parts[-1]
+    return (parts[0] in ('model', 'effects', 'default') and
+            not name.startswith('a_') and not name.startswith('p_'))
+
+
+def keep_black(small, full):
+    """Restore the black key that shrink()'s colour bleed overwrote: texels
+    that were mostly black at full size stay pure black."""
+    small = small.convert('RGBA') if 'A' in small.getbands() else small.convert('RGB')
+    array = np.asarray(small).copy()
+    mask = black_mask(full, small.size)
+    if not mask.any():
+        return small
+    array[mask, :3] = 0
+    return Image.fromarray(array, small.mode)
+
+
 def black_mask(image, size):
     """Texels the PC model shader discards (black RGB), at the BC1 size.
 
@@ -143,7 +166,10 @@ def convert(source, target, rel, limits):
             default_limit = (limits.front_texture if parts[0] == 'front'
                              else limits.max_texture)
             limit = limits.ui_quality.get(rel.as_posix().lower(), default_limit)
+            full = im.copy()
             im = shrink(im, limit)
+            if colour_keyed(rel):
+                im = keep_black(im, full)
             record['stagedSize'] = list(im.size)
             # Uncompressed TGA remains compatible with the native reader.
             if suffix == '.tga':
@@ -221,7 +247,10 @@ def shrink_cpu_copy(image_path, size):
             return None
         before = image_path.stat().st_size
         mode = 'RGBA' if 'A' in im.getbands() else 'RGB'
-        small = shrink(im.convert(mode), size)
+        full = im.convert(mode)
+        small = shrink(full.copy(), size)
+        if colour_keyed(image_path.relative_to(image_path.parents[2]).as_posix()):
+            small = keep_black(small, full)
     if image_path.suffix.lower() == '.tga':
         small.save(image_path, compression=None)
     else:
