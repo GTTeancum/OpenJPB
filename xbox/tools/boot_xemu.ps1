@@ -9,7 +9,11 @@ param(
     [int]$MonitorPort = 9247,
     [int]$GdbPort = 0,
     [ValidateRange(1,10)][int]$RenderScale = 2,
-    [ValidateSet(64,128)][int]$MemoryMb = 64
+    [ValidateSet(64,128)][int]$MemoryMb = 64,
+    # Test only: boot a writable copy of the XEMU hard disk kept in
+    # xbox/test-artifacts (made once from the shared image) instead of
+    # discarding writes with -snapshot, so saves survive a restart.
+    [switch]$PersistentHdd
 )
 $ErrorActionPreference = 'Stop'
 $xboxRoot = Split-Path $PSScriptRoot -Parent
@@ -86,6 +90,14 @@ $config = $config.TrimEnd() + "`n[display.ui]`nfit='scale'`naspect_ratio='$displ
 $config = [regex]::Replace($config, '(?ms)^\[sys\]\s*.*?(?=^\[|\z)', '')
 $config = $config.TrimEnd() + "`n[sys]`nmem_limit='$MemoryMb'`n"
 $config = [regex]::Replace($config, "(?m)^dvd_path\s*=.*$", "dvd_path='$isoPath'")
+$hddPath = Join-Path $XemuRoot 'HDD\xbox_hdd.qcow2'
+if ($PersistentHdd) {
+    $persistentPath = Join-Path $isoRootPath 'persistent-hdd.qcow2'
+    if (!(Test-Path -LiteralPath $persistentPath)) { Copy-Item -LiteralPath $hddPath -Destination $persistentPath }
+    $hddPath = $persistentPath
+}
+$hddConfig = $hddPath.Replace('\','/')
+$config = [regex]::Replace($config, "(?m)^hdd_path\s*=.*$", "hdd_path='$hddConfig'")
 Set-Content -LiteralPath $configPath -Value $config
 $previousTemp = $env:TEMP
 $previousTmp = $env:TMP
@@ -94,8 +106,9 @@ try {
     $env:TMP = $isoRootPath
     $launchArgs = @(
         '-config_path', ('"' + $configPath + '"'), '-monitor',
-        "tcp:127.0.0.1:$MonitorPort,server,nowait", '-snapshot'
+        "tcp:127.0.0.1:$MonitorPort,server,nowait"
     )
+    if (!$PersistentHdd) { $launchArgs += '-snapshot' }
     # Test-only GDB stub used by tools/xemu_pad.py to write the remote pad.
     if ($GdbPort -gt 0) { $launchArgs += @('-gdb', "tcp:127.0.0.1:$GdbPort") }
     if ($AudioWavPath) {
