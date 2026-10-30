@@ -21,7 +21,6 @@ Maintain both PC and Xbox builds with shared gameplay and Xbox-only code under `
 - [ ] Bosses (PC and Xbox, shared logic): all eight spawn, fight and fall when their hit points are forced to zero (`xbox/tools/boss_smoke.py --finish`). No forced defeat sets the level-finish flag (`abGlobalBits[0]` bit 1, set by level scripts) within 1,200 frames. Whether a real kill, or walking on to an exit afterwards, ends each level needs a playthrough.
 - [ ] Xbox level play-throughs: all 15 levels load and play, but each has only been spot-checked, not played start to finish.
 - [ ] Live review on hardware or XEMU with a physical pad: menu flow, two-player co-op, saves after power-off, movie audio.
-- [ ] Verify longer-run stability through real play. Forced completion chains all 14 story levels in one XEMU session without a crash (`xbox/tools/chain_levels.py`); free memory stays at 4 MB or more (Palace lowest). Long continuous play within a level remains open.
 - [ ] Verify specific sound effects and remaining audio behavior through native capture and gameplay review. Level-one music and a named Obi-Wan saber swing match native AC97 output; level-two Marsh ambient music also matches. The 9,599-frame soak recorded 765 SFX plays with zero allocation failures. Remaining effect identities and listening quality remain open.
 
 - [ ] Hardware phase: verify the in-game reset (LT+RT+Back+Black, `xbox/src/controller.c`) reaches the dashboard. In XEMU the combo stops the game and enters the kernel's quick reboot; the test disk has no dashboard to land on.
