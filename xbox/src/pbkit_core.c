@@ -1512,6 +1512,11 @@ static void pb_start(void)
 
 
 
+/* Test telemetry: resets that waited past TICKSTIMEOUT for Gpu Get, and the
+   longest wait in ticks (ms). */
+volatile unsigned jpb_XboxPbResetSlowWaits;
+volatile unsigned jpb_XboxPbResetMaxWaitTicks;
+
 static void pb_jump_to_head(void)
 {
     //Have Dma engine pointer point at push buffer head again.
@@ -1525,6 +1530,7 @@ static void pb_jump_to_head(void)
     uint32_t        *pGetAddr;
 
     DWORD           TimeStampTicks;
+    int             slow=0;
 
 #ifdef DBG
     if (pb_BeginEndPair)
@@ -1554,15 +1560,23 @@ static void pb_jump_to_head(void)
         }
 
 
-        if (KeTickCount-TimeStampTicks>TICKSTIMEOUT)
+        //OpenJPB: never stop waiting. Writing at the head while Gpu Get is
+        //still in the tail lets the CPU overwrite commands the Gpu has not
+        //fetched yet; XEMU then decodes a stale word and aborts the pusher
+        //("Dma value is out of range" / "Reserved pb command"). A slow Gpu
+        //(XEMU on a loaded host) is counted instead.
+        if (KeTickCount-TimeStampTicks>TICKSTIMEOUT && !slow)
         {
-            debugPrint("pb_reset: too long\n");
-            break;
+            slow=1;
+            ++jpb_XboxPbResetSlowWaits;
         }
 
         //converts physical address into virtual address
         pGetAddr=(uint32_t *)((*(pb_DmaUserAddr+0x44/4))|0x80000000);
     }while (pGetAddr!=pb_Head);
+
+    if (KeTickCount-TimeStampTicks>jpb_XboxPbResetMaxWaitTicks)
+        jpb_XboxPbResetMaxWaitTicks=KeTickCount-TimeStampTicks;
 
 }
 
