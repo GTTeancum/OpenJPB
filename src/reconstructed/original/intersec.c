@@ -836,7 +836,7 @@ int intersec_FindWalkHeight(
                 if (physics != NULL &&
                     pos->vy - height < 0x80) {
                     physics->mapinfo = *heightstuff;
-                    physics->solidgrabbed = NULL;
+                    physics->standee = NULL;
                 }
                 if (normal != NULL) {
                     uint32_t packed = (uint32_t)tag[1];
@@ -853,7 +853,7 @@ int intersec_FindWalkHeight(
             }
         }
     } else if (standingon == 3 && physics != NULL) {
-        physics->solidgrabbed = whichsolid->physics;
+        physics->standee = whichsolid->physics;
     }
     return height;
 }

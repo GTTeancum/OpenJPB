@@ -140,15 +140,15 @@ int ai_JarJar(int32_t *cpad, playerObject *player)
 
     (void)cpad;
     if (GameStruct.CurrentLevel == UINT8_C(13)) {
-        if (player->fStun != 0 && player->target != NULL) {
+        if (player->fLife != 0 && player->whohitme != NULL) {
             int target_id;
 
             abGlobalBits[6] &= UINT8_C(0xf3);
-            if (player->target->playernum > 1) {
+            if (player->whohitme->playernum > 1) {
                 abGlobalBits[6] |= UINT8_C(8);
                 return -1;
             }
-            target_id = player->target->playerRoot.objectID;
+            target_id = player->whohitme->playerRoot.objectID;
             abGlobalBits[(target_id + 50) >> 3] |= (uint8_t)(
                 UINT8_C(1) << ((target_id + 2) & 7));
         }
@@ -616,14 +616,16 @@ int ai_Maul(int32_t *cpad, playerObject *player)
             timer = (int32_t)gGlobalTimer;
             start = gGlobalTimer;
         } else if (start + UINT32_C(0x000e1000) < gGlobalTimer) {
-            pEnemy->range = 10;
+            /* Retail writes enemy +0x70: counter[0], which the Tatooine
+             * script reads as "send Maul to his ship". */
+            pEnemy->counter[0] = 10;
         }
         isTatoMaul = 1;
         (void)debug_printf(
             "\n\n\n%d\n", (gGlobalTimer - start) / UINT32_C(0x3c00));
     }
-    if (pEnemy->aRange == -1) {
-        pEnemy->aRange = 0;
+    if (pEnemy->counter[2] == UINT32_MAX) {
+        pEnemy->counter[2] = 0;
         engaged = 0;
     }
 
@@ -642,7 +644,7 @@ int ai_Maul(int32_t *cpad, playerObject *player)
 
     if ((*player->pMotion)->Damage == 0 &&
         (uint16_t)(player->currentMotion - 16) > UINT16_C(2) &&
-        player->fStun == 0 &&
+        player->fLife == 0 &&
         (uint16_t)(player->currentMotion - 33) > UINT16_C(10)) {
         next_engaged = engaged - 1;
     } else {
@@ -653,7 +655,7 @@ int ai_Maul(int32_t *cpad, playerObject *player)
     } else if (next_engaged > 0x200) {
         next_engaged = 0x200;
     }
-    pEnemy->aRange = next_engaged;
+    pEnemy->counter[2] = (uint32_t)next_engaged;
     engaged = next_engaged;
 
     if ((abGlobalBits[5] & UINT8_C(4)) == 0 ||
@@ -1068,7 +1070,7 @@ int ai_TurretDroid(int32_t *cpad, playerObject *player)
         uint32_t events = model->eventMask;
 
         if (player->currentMotion == 14 &&
-            player->locked == NULL) {
+            player->target == NULL) {
             return -1;
         }
         while (events != 0) {
@@ -1182,7 +1184,7 @@ int ai_TurretDroid(int32_t *cpad, playerObject *player)
         effectPosition.vy = hitpoint.vy;
         effectPosition.vz = hitpoint.vz;
         effectPosition.pad = 0;
-        effect = paEffects[73];
+        effect = paEffects[9];
         (void)sprite_AddSpriteEffect(
             effect->aEffects,
             (int)effect->num,
@@ -1262,7 +1264,7 @@ int ai_TurretDroid(int32_t *cpad, playerObject *player)
             player->playernum, 0);
         int facing = physics_gFaceTarget(
             &player->playerRoot,
-            &player->locked->playerRoot);
+            &player->target->playerRoot);
 
         head->flags |= UINT32_C(0x00800000);
         head->v3RotationAbs.vy = (int16_t)(
@@ -1592,7 +1594,7 @@ int maul_ZapCallBack(int32_t *cpad, playerObject *player)
             eff.vz = (int32_t)hitpoint.vz;
             eff.pad = 0;
             if (hit != 0) {
-                EffectHeader *effect = paEffects[67];
+                EffectHeader *effect = paEffects[3];
 
                 (void)sprite_AddSpriteEffect(
                     effect->aEffects,
@@ -1619,12 +1621,12 @@ int maul_ZapCallBack(int32_t *cpad, playerObject *player)
                 }
                 line_distance = vec_DistPoint2Line(
                     body, pos0, &eff);
-                if (line_distance < p->height && line_distance > 0) {
+                if (line_distance < p->radius && line_distance > 0) {
                     sceneObject *scene =
                         (sceneObject *)p->physicsRoot.pParent;
                     playerObject *target =
                         (playerObject *)scene->pPlayer;
-                    EffectHeader *effect = paEffects[73];
+                    EffectHeader *effect = paEffects[9];
 
                     (void)sprite_AddSpriteEffect(
                         effect->aEffects,

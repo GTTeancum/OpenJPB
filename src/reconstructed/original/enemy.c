@@ -1375,9 +1375,9 @@ int bapenemy_preFrame(wsl_ENEMY *enemy)
             enemy->active = 7;
             return 0;
         }
-        enemy->aiLevel =
+        enemy->sinceLast =
             (int32_t)(
-                (uint32_t)enemy->aiLevel +
+                (uint32_t)enemy->sinceLast +
                 gGlobalTimer);
         player_id = (uint16_t)player->playerID;
         if (player_id < 44 &&
@@ -2300,11 +2300,12 @@ jpb_enemy_handle_player_placement(
             &new_enemy->node);
         player->paMotions[2].Lock =
             player->paMotions[1].Lock;
-        player->pFlags |= UINT32_C(0x10);
+        /* Retail sets and clears bit 0x10 at +0x144 (forceFlags). */
+        player->forceFlags |= UINT32_C(0x10);
     } else {
         player->pEnemy->exit_flag = 1;
         player->paMotions[2].Lock = 0x19;
-        player->pFlags &=
+        player->forceFlags &=
             ~UINT32_C(0x10);
         player->pEnemy = NULL;
     }
@@ -2570,7 +2571,9 @@ jpb_enemy_execute_authored_opcode(
             variables[0].si <= 5) {
             toggle_mask =
                 UINT32_C(8) << variables[0].si;
-        } else if (variables[0].si == 6) {
+        } else if (variables[0].si == -1) {
+            /* Retail: index value + 1 into a 7-entry table; -1 toggles
+             * all four clamp-release bits, 6 and above do nothing. */
             toggle_mask = UINT32_C(0x1e0);
         }
         dolly = &gpWorld->aDolly[gpWorld->currentDolly];
@@ -2618,7 +2621,7 @@ jpb_enemy_execute_authored_opcode(
         }
         motion_index = variables[0].si;
         if (motion_index == 84 &&
-            enemy->pPlayer->currentMotion <= 1 &&
+            enemy->pPlayer->playernum < 2 &&
             IsExtraCharacter(
                 (model_id)enemy->pPlayer->playerID) !=
                 0) {
@@ -3011,10 +3014,10 @@ jpb_enemy_execute_authored_opcode(
                 return
                     JPB_ENEMY_OPCODE_PARSE_INVALID_DATA;
             }
-            if (variables[1].si != 0) {
+            if (variables[1].si == 1) {
                 enemy->pPlayer->forceFlags |=
                     UINT32_C(0x10);
-            } else {
+            } else if (variables[1].si == 0) {
                 enemy->pPlayer->forceFlags &=
                     ~UINT32_C(0x10);
             }
@@ -3126,7 +3129,10 @@ jpb_enemy_execute_authored_opcode(
             return JPB_ENEMY_OPCODE_PARSE_COMPLETE;
 
         case 11:
-            level_SparkRoom();
+            if (variables[1].f != 0.0f &&
+                GameStruct.CurrentLevel == 1) {
+                level_SparkRoom();
+            }
             return JPB_ENEMY_OPCODE_PARSE_COMPLETE;
 
         case 12: {
@@ -3214,17 +3220,15 @@ jpb_enemy_execute_authored_opcode(
             if ((((unsigned)track - 44U) &
                  UINT32_C(0xfffffff7)) == 0) {
                 track +=
-                    gpWorld->player0->currentMotion %
-                    5;
+                    gpWorld->player0->playerID % 5;
             } else if (
                 (((unsigned)track - 60U) &
                  UINT32_C(0xffffffef)) == 0) {
-                if (GameStruct.gameMode == 2) {
+                if (GameStruct.NumPlayers == 2) {
                     track += 8;
                 }
                 track +=
-                    gpWorld->player0->currentMotion %
-                    5;
+                    gpWorld->player0->playerID % 5;
             }
             if ((loop == 0 || loop == 1) &&
                 OptionStruct.Music == 1) {
@@ -3376,12 +3380,14 @@ jpb_enemy_execute_authored_opcode(
                 source_physics->pos;
             target_physics->angle =
                 source_physics->angle;
-            physics_ResetJedi(object_id);
-            anim_ResetJedi(object_id);
-            player_ResetJedi(object_id);
-            target->pFlags |= UINT32_C(2);
-            GameStruct.GameState &=
-                ~UINT32_C(0x1000);
+            if ((target->pFlags & UINT32_C(0x200)) == 0) {
+                physics_ResetJedi(object_id);
+                anim_ResetJedi(object_id);
+                player_ResetJedi(object_id);
+                target->pFlags |= UINT32_C(2);
+            }
+            /* Retail clears bit 0x1000 of gCamera (0x1410DE6A0). */
+            gCamera.viewType &= ~0x1000;
             return JPB_ENEMY_OPCODE_PARSE_COMPLETE;
         }
 
@@ -3813,6 +3819,12 @@ jpb_enemy_parse_opcodes_internal(
             jpb_enemy_profile_seconds() - opcode_started;
         jpb_enemy_profile_record_opcode(
             enemy, node, opcode, opcode_seconds);
+        /* Retail, after every opcode: once the Coruscant taxi signal is
+         * raised (0x40c on enemy 0x49), enemy 0x12 takes mode 13. */
+        if (moveTaxi == 1 && enemy->enemyID == 0x12) {
+            moveTaxi = 0;
+            bapenemy_changeAIMode(enemy, 13);
+        }
         if (result !=
             JPB_ENEMY_OPCODE_PARSE_COMPLETE) {
             return result;

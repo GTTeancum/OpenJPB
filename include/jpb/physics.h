@@ -482,6 +482,14 @@ JPB_PHYSICS_STATIC_ASSERT(
 JPB_PHYSICS_STATIC_ASSERT(
     offsetof(physicsObject, flags) == 424,
     "physicsObject.flags x64 offset changed");
+/* Retail CalcMovement/MovePlayer read the ledge solid at +0xE8 and the
+ * solid being stood on at +0x1C8 (written by intersec_FindWalkHeight). */
+JPB_PHYSICS_STATIC_ASSERT(
+    offsetof(physicsObject, solidgrabbed) == 0xe8,
+    "physicsObject.solidgrabbed x64 offset changed");
+JPB_PHYSICS_STATIC_ASSERT(
+    offsetof(physicsObject, standee) == 0x1c8,
+    "physicsObject.standee x64 offset changed");
 JPB_PHYSICS_STATIC_ASSERT(
     offsetof(physicsObject, userdata) == 476,
     "physicsObject.userdata x64 offset changed");

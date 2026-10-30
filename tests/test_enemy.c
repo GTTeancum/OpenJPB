@@ -244,12 +244,15 @@ static int test_ai_defend_and_preframe(void)
     defender->currentMotion = 3;
     enemy.active = 0;
     enemy.exit_flag = 0;
-    enemy.aiLevel = 7;
+    enemy.aiLevel = 2;
+    enemy.sinceLast = 7;
     GameStruct.aCharacterData[2].Energy = 50;
     gGlobalTimer = 100;
     CHECK(bapenemy_preFrame(&enemy) == 1);
     CHECK(enemy.hitPoints == 50);
-    CHECK(enemy.aiLevel == 107);
+    /* Retail adds the timer at +0xd0 (sinceLast); aiLevel is untouched. */
+    CHECK(enemy.sinceLast == 107);
+    CHECK(enemy.aiLevel == 2);
     GameStruct.aCharacterData[2].Energy = 0;
     CHECK(bapenemy_preFrame(&enemy) == 0);
     CHECK(enemy.active == 7);
@@ -1267,7 +1270,14 @@ static void test_authored_opcode_traversal_boundary(void)
           JPB_ENEMY_OPCODE_PARSE_COMPLETE);
     CHECK(world.aDolly[3].flags == 0);
 
+    /* Retail indexes value + 1: -1 toggles 0x1e0, 6 does nothing. */
     variables[0].si = 6;
+    enemy.currAIMode = 0;
+    CHECK(jpb_enemy_ParseOpcodes(
+              &enemy, &unsupported) ==
+          JPB_ENEMY_OPCODE_PARSE_COMPLETE);
+    CHECK(world.aDolly[3].flags == 0);
+    variables[0].si = -1;
     enemy.currAIMode = 0;
     CHECK(jpb_enemy_ParseOpcodes(
               &enemy, &unsupported) ==
@@ -1478,9 +1488,9 @@ static void test_authored_opcode_traversal_boundary(void)
     variables[1].si = 44;
     variables[2].si = 1;
     enemy.currAIMode = 0;
-    player.currentMotion = 3;
+    player.playerID = 3;
     world.player0 = &player;
-    GameStruct.gameMode = 0;
+    GameStruct.NumPlayers = 1;
     OptionStruct.Music = 1;
     OptionStruct.musicVolume = 7;
     jpb_AudioStreamSetPlayHook(
@@ -1499,7 +1509,7 @@ static void test_authored_opcode_traversal_boundary(void)
     variables[1].si = 60;
     variables[2].si = 0;
     enemy.currAIMode = 0;
-    GameStruct.gameMode = 2;
+    GameStruct.NumPlayers = 2;
     CHECK(jpb_enemy_ParseOpcodes(
               &enemy, &unsupported) ==
           JPB_ENEMY_OPCODE_PARSE_COMPLETE);
@@ -1516,6 +1526,7 @@ static void test_authored_opcode_traversal_boundary(void)
               &enemy, &unsupported) ==
           JPB_ENEMY_OPCODE_PARSE_COMPLETE);
     CHECK(audio_probe.calls == 2);
+    GameStruct.NumPlayers = 1;
     jpb_AudioStreamSetPlayHook(NULL, NULL);
     OptionStruct.musicVolume = 0;
     GameStruct.gameMode = 0;
@@ -1572,7 +1583,7 @@ static void test_authored_opcode_traversal_boundary(void)
     physics.angle.vz = 6.0f;
     world.player0 = &gaPlayerData[0];
     GameStruct.aCharacterData[0].Energy = 100;
-    GameStruct.GameState |= UINT32_C(0x1000);
+    gCamera.viewType |= 0x1000;
     afterLife = NULL;
     leveldata = reset_map_storage + 4;
     leveldata[-2] = 0;
@@ -1591,9 +1602,7 @@ static void test_authored_opcode_traversal_boundary(void)
     CHECK(maPhysicsData[0].angle.vy == 5.0f);
     CHECK(maPhysicsData[0].angle.vz == 6.0f);
     CHECK((gaPlayerData[0].pFlags & 2U) != 0);
-    CHECK(
-        (GameStruct.GameState &
-         UINT32_C(0x1000)) == 0);
+    CHECK((gCamera.viewType & 0x1000) == 0);
 
     meminit();
     sprite_gInitSprites();
@@ -1646,7 +1655,7 @@ static void test_authored_opcode_traversal_boundary(void)
     CHECK(status_enemy.pPlayer == &gaPlayerData[0]);
     CHECK(status_enemy.pAI == ai);
     CHECK(status_enemy.enemyID == 0);
-    CHECK((gaPlayerData[0].pFlags & 0x10U) != 0);
+    CHECK((gaPlayerData[0].forceFlags & 0x10U) != 0);
     CHECK(target_motions[2].Lock == 7);
     CHECK(enemyList[0].head == &status_enemy.node);
     CHECK(GameStruct.aCharacterData[0].Force == 55);
@@ -1659,7 +1668,7 @@ static void test_authored_opcode_traversal_boundary(void)
           JPB_ENEMY_OPCODE_PARSE_COMPLETE);
     CHECK(gaPlayerData[0].pEnemy == NULL);
     CHECK(status_enemy.exit_flag == 1);
-    CHECK((gaPlayerData[0].pFlags & 0x10U) == 0);
+    CHECK((gaPlayerData[0].forceFlags & 0x10U) == 0);
     CHECK(target_motions[2].Lock == 0x19);
 
     placement.aiDf.enemyExt[0] = 209;
@@ -1791,7 +1800,10 @@ static void test_authored_opcode_traversal_boundary(void)
     world.player0 = &player;
     world.player1 = &player;
 
+    /* Retail sparks the room only on level 1 with a non-zero argument. */
     variables[0].si = 11;
+    variables[1].f = 1.0f;
+    GameStruct.CurrentLevel = 1;
     enemy.currAIMode = 0;
     nodes[3].opcode = 0x606;
     nodes[3].iChild = -1;
@@ -1820,6 +1832,7 @@ static void test_authored_opcode_traversal_boundary(void)
         glow_probe.colors[3] ==
         UINT32_C(0xc0ff4020));
     jpb_FxSetScreenGlowHook(NULL, NULL);
+    GameStruct.CurrentLevel = 0;
 
     gpWorld = NULL;
     GameStruct.CurrentLevel = 0;

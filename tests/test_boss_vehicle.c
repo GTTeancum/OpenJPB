@@ -143,8 +143,9 @@ static int test_jar_jar_callback(void)
 
     memset(abGlobalBits, 0, sizeof(abGlobalBits));
     GameStruct.CurrentLevel = 13;
-    jar_jar.fStun = 1;
-    jar_jar.target = &target;
+    /* Retail reads fLife (+0xec) and whohitme (+0x118). */
+    jar_jar.fLife = 1;
+    jar_jar.whohitme = &target;
     target.playernum = 3;
     CHECK(ai_JarJar(NULL, &jar_jar) == -1);
     CHECK((abGlobalBits[6] & UINT8_C(8)) != 0);
@@ -439,7 +440,7 @@ static int test_maul_callback(void)
     player.paMotions = motions;
     player.pMotion = &current_ptr;
     current.Damage = 1;
-    enemy.aRange = -1;
+    enemy.counter[2] = UINT32_MAX;
     abGlobalBits[5] = UINT8_C(4);
     GameStruct.CurrentLevel = 5;
     gGlobalTimer = UINT32_C(0x1000);
@@ -449,7 +450,14 @@ static int test_maul_callback(void)
 
     CHECK(ai_Maul(NULL, &player) == -1);
     CHECK(isTatoMaul == 1);
-    CHECK(enemy.aRange == 1);
+    CHECK(enemy.counter[2] == 1);
+    CHECK(enemy.counter[0] == 0);
+    /* Sixty seconds on (0xe1000 timer units) retail sets +0x70, the
+     * counter the Tatooine script reads to send Maul to his ship. */
+    gGlobalTimer += UINT32_C(0x000e1001);
+    zerobss_levelReset = 91;
+    CHECK(ai_Maul(NULL, &player) == -1);
+    CHECK(enemy.counter[0] == 10);
     CHECK(motions[81].FunctPtr == 27);
     CHECK(motions[82].FunctPtr == 28);
     CHECK(motions[86].FunctPtr == 29);
