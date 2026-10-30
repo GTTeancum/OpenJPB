@@ -1350,6 +1350,24 @@ static int pc_restore_menu_materials(PcMenuTextureCache *cache)
     return 1;
 }
 
+/* Test only (--invincible): refill both players' health before each frame. */
+static void pc_keep_players_at_full_health(void)
+{
+    static int logged;
+    int p;
+
+    for (p = 0; p < 2; ++p) {
+        int max_energy = game_gGetMaxEnergy(p);
+        if (game_gGetEnergy(p) > 0 && game_gGetEnergy(p) < max_energy) {
+            (void)game_gSetEnergy(p, max_energy);
+            if (!logged) {
+                jpb_PCLog("invincible: refilled player %d to %d", p + 1, max_energy);
+                logged = 1;
+            }
+        }
+    }
+}
+
 /* Direct quickload has no front-end bank until gameplay returns to a menu.
  * Publish that bank without reinitializing the menu or saved game state. */
 static int pc_ensure_return_menu_resources(
@@ -11376,6 +11394,7 @@ static void pc_print_usage(const char *program)
         "[--frames N] [--output frame.ppm]\n"
         "with no world path, the installed front end is shown and its "
         "FED/player/enemy assets are resolved relative to the executable\n"
+        "--invincible keeps the players at full health (testing).\n"
         "--quickload level skips the front end and loads a named installed "
         "level for development\n"
         "keys: arrows/WASD move, J/K/L attacks, Shift block, "
@@ -13651,6 +13670,11 @@ int main(int argc, char **argv)
     FVECTOR spawn_position = {0};
     int force_enemy_placement = -1;
     int force_enemy_energy = -1;
+    int invincible = 0;
+    int game_counter = -1;
+    int force_enemy_mode = -1;
+    int force_enemy_counter_index = -1;
+    int force_enemy_counter_value = 0;
     int validate_enemy_class_placement = -1;
     int validate_enemy_death_placement = -1;
     int validate_fed_hover_boss_intro = 0;
@@ -14246,6 +14270,18 @@ int main(int argc, char **argv)
                 pc_print_usage(argv[0]);
                 return 2;
             }
+        } else if (strcmp(argv[index], "--invincible") == 0) {
+            invincible = 1;
+        } else if (strcmp(argv[index], "--game-counter") == 0 &&
+                   index + 1 < argc) {
+            game_counter = atoi(argv[++index]);
+        } else if (strcmp(argv[index], "--force-enemy-mode") == 0 &&
+                   index + 1 < argc) {
+            force_enemy_mode = atoi(argv[++index]);
+        } else if (strcmp(argv[index], "--force-enemy-counter") == 0 &&
+                   index + 2 < argc) {
+            force_enemy_counter_index = atoi(argv[++index]);
+            force_enemy_counter_value = atoi(argv[++index]);
         } else if (strcmp(argv[index], "--force-enemy-energy") == 0 &&
                    index + 1 < argc) {
             synthetic_input_requested = 1;
@@ -15040,6 +15076,16 @@ int main(int argc, char **argv)
             return 4;
         }
     }
+    /* Level cutscenes draw controller icons from the front-end bank
+     * (newDrawControllerIcon), which a menu-started level always has. */
+    if (quickload_level != NULL && !title_active && !review_level_complete &&
+        !pc_ensure_return_menu_resources(
+            &menu_texture_cache, &title_pixels, &framebuffer)) {
+        fputs("quickload front-end resources failed\n", stderr);
+        jpb_GameRuntimeShutdown(&runtime);
+        free(pixels);
+        return 4;
+    }
     if ((enemy_cad_path == NULL) != (enemy_bmd_path == NULL)) {
         fputs(
             "enemy CAD and BMD must be provided together\n",
@@ -15480,6 +15526,11 @@ int main(int argc, char **argv)
     if (validate_fed_hover_boss_intro) {
         pc_isolate_fed_hover_boss_intro(&runtime);
     }
+    if (game_counter >= 0) {
+        /* Test only: the level's own counter (Theed's rescues), for direct
+         * boss starts that skip the part of the level that fills it. */
+        GameStruct.Counter = game_counter;
+    }
     if (force_enemy_placement >= 0 &&
         !pc_force_enemy_placement(
             &runtime,
@@ -15491,6 +15542,32 @@ int main(int argc, char **argv)
         jpb_GameRuntimeShutdown(&runtime);
         free(pixels);
         return 4;
+    }
+    if (force_enemy_placement >= 0 &&
+        (force_enemy_mode >= 0 ||
+         (force_enemy_counter_index >= 0 &&
+          force_enemy_counter_index < 5))) {
+        /* Test only: jump the forced placement's script to a later mode,
+         * so the end of a long boss phase can be captured unattended. */
+        wsl_ENEMY *forced = pc_enemy_for_placement(
+            &runtime, force_enemy_placement);
+
+        if (forced != NULL) {
+            if (force_enemy_counter_index >= 0 &&
+                force_enemy_counter_index < 5) {
+                forced->counter[force_enemy_counter_index] =
+                    (uint32_t)force_enemy_counter_value;
+            }
+            if (force_enemy_mode >= 0) {
+                bapenemy_changeAIMode(forced, force_enemy_mode);
+            }
+            jpb_PCLog(
+                "force-enemy-mode id=%d mode=%d counter[%d]=%d",
+                force_enemy_placement,
+                force_enemy_mode,
+                force_enemy_counter_index,
+                force_enemy_counter_value);
+        }
     }
     if (force_enemy_energy >= 0) {
         if (runtime.enemy == NULL || runtime.enemy->pPlayer == NULL ||
@@ -15944,6 +16021,7 @@ int main(int argc, char **argv)
                         &input, totalframes + 1)) {
                     result = JPB_GAME_RUNTIME_LOAD_FAILED;
                 } else {
+                    if (invincible) pc_keep_players_at_full_health();
                     result = jpb_GameRuntimeFrame(
                         &runtime, 1.0f / 60.0f, &framebuffer, &stats);
                 }
@@ -16668,6 +16746,7 @@ int main(int argc, char **argv)
                             &runtime, GameStruct.NumPlayers)) {
                         front_end_playable_handoff = 0;
                     }
+                    if (invincible) pc_keep_players_at_full_health();
                     if (!pc_retail_replay_prepare_frame(
                             &input, totalframes + 1)) {
                         result = JPB_GAME_RUNTIME_LOAD_FAILED;

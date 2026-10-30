@@ -336,6 +336,15 @@ int main(int argc, char **argv)
                     (unsigned)placement->aiDf
                         .enemyExt[extension]);
             }
+            fputs(") links=(", stdout);
+            for (extension = 0;
+                 extension < placement->nLink && extension < 8;
+                 ++extension) {
+                printf(
+                    "%s%u",
+                    extension == 0 ? "" : ",",
+                    (unsigned)placement->links[extension]);
+            }
             fputs(") path=(", stdout);
             for (extension = 0;
                  extension < placement->nWaypnt;

@@ -37,6 +37,16 @@ p.add_argument('--out', type=Path, default=REPO / 'xbox/test-artifacts/pad/bosse
 p.add_argument('--rounds', type=int, default=60)
 p.add_argument('--finish', action='store_true',
                help='after the fight rounds, set the boss to 1 energy and finish it')
+p.add_argument('--hit', action='store_true',
+               help='with --finish: kill through one real hit at 1 energy (death reaction and level scripts)')
+p.add_argument('--counter', nargs=2, type=int, metavar=('INDEX', 'VALUE'),
+               help='after the fight rounds, set one boss script counter and watch the scripted ending '
+                    '(tato-maul: 0 9 skips to his last round)')
+p.add_argument('--drain', type=int, default=0, metavar='STEP',
+               help='each fight round, lower the boss energy by STEP (never below 1) so its own '
+                    'health-threshold scripts run; --finish --hit then lands the last hit')
+p.add_argument('--watch', type=int, default=0, metavar='STEPS',
+               help='after the ending, trace the boss script and level flags for STEPS x 50 frames')
 p.add_argument('--attack', default='Y,Y,B', help='attack button(s), comma separated (Y and B attack; X uses an item)')
 a = p.parse_args()
 
@@ -121,11 +131,13 @@ for name, level, spawn, placement in chosen:
             if round_index % 10 == 0:
                 steps.append(f'shot fight{round_index:03d}')
             pad(out, *steps)
+            if a.drain and state[2] > 1:
+                pad(out, f'poke jpb_XboxBossSetEnergy {max(1, state[2] - a.drain)}')
         state = words(out, 'jpb_XboxBossTest', 8, signed=True)
         if a.finish and state[2] > 0:
             # Defeat path: set the boss's energy to zero (the scripted
             # attacks seldom land the last hit) and record what follows.
-            pad(out, 'poke jpb_XboxBossSetEnergy 0', 'wait 2')
+            pad(out, 'poke jpb_XboxBossHit 1' if a.hit else 'poke jpb_XboxBossSetEnergy 0', 'wait 2')
             state = words(out, 'jpb_XboxBossTest', 8, signed=True)
             record['defeated'] = state[2] <= 0
             for index in range(12):
@@ -135,6 +147,25 @@ for name, level, spawn, placement in chosen:
             # Level scripts end a story level by setting global flag 1
             # (abGlobalBits[0] bit 1, "flags set 1"); game_checkNextLevel then advances.
             record['globalBitsAfterDefeat'] = [f'{v:08x}' for v in words(out, 'abGlobalBits', 4)]
+        if a.counter:
+            # Scripted ending: skip the boss's own round counter ahead and
+            # let its script play out (no forced damage).
+            pad(out, f'poke jpb_XboxBossSetCounter+4 {a.counter[1]}',
+                f'poke jpb_XboxBossSetCounter {a.counter[0]}', 'wait 2')
+        if a.counter or a.watch:
+            trace = []
+            for index in range(a.watch or 24):
+                attacks = [f'press {b} 4' for b in a.attack.split(',')]
+                pad(out, 'wait 50', *attacks, f'shot script{index:02d}')
+                ai = words(out, 'jpb_XboxBossAi', 7, signed=True)
+                bits = words(out, 'abGlobalBits', 4)
+                game = words(out, 'jpb_XboxGameDebug', 8, signed=True)
+                energy = words(out, 'jpb_XboxBossTest', 8, signed=True)[2]
+                trace.append({'script': ai[0], 'step': ai[1], 'counters': ai[2:], 'energy': energy,
+                              'bits': f'{bits[0]:08x}', 'gameMode': game[0], 'levelExit': game[6]})
+            record['scriptTrace'] = trace
+            record['finishFlagSet'] = any(int(t['bits'], 16) & 2 for t in trace)
+            record['leftPlay'] = any(t['gameMode'] != 6 for t in trace)
         pad(out, 'wait 60', 'shot end')
         record['bossEnergyEnd'] = state[2]
         record['bossEnergyMin'] = min(e for e in energies if e >= 0) if any(e >= 0 for e in energies) else None

@@ -142,6 +142,16 @@ volatile int jpb_XboxGameDebug[8];
 /* Test only: a debugger writing a value >= 0 sets the boss's energy once
    (to reach its defeat sequence without a long fight). */
 volatile int jpb_XboxBossSetEnergy=-1;
+/* Test only: a debugger writing 1 lands one hit from player one on the boss
+   at 1 energy, so it dies through braindmg_DamageControl's death reaction
+   (setting energy alone retires the enemy without it). */
+volatile int jpb_XboxBossHit;
+/* Test only: [0] boss AI script [1] its current step [2..6] its five
+   counters, refreshed every frame. A debugger writing
+   jpb_XboxBossSetCounter={index,value} sets one counter once, to skip a
+   scripted fight ahead (Tatooine Maul leaves after ten rounds). */
+volatile int jpb_XboxBossAi[7];
+volatile int jpb_XboxBossSetCounter[2]={-1,0};
 static int boss_test_pending;
 static FVECTOR boss_test_spawn;
 static int boss_test_placement=-1;
@@ -899,6 +909,26 @@ static void run_gameplay(int marsh_smoke)
                 if(runtime.enemy)runtime.enemy->hitPoints=(int16_t)jpb_XboxBossSetEnergy;
                 (void)game_gSetEnergy(jpb_XboxBossTest[4],jpb_XboxBossSetEnergy);
                 jpb_XboxBossSetEnergy=-1;
+            }
+            if(jpb_XboxBossHit && runtime.enemy && runtime.enemy->pPlayer){
+                playerObject *boss=runtime.enemy->pPlayer;
+                jpb_XboxBossHit=0;
+                runtime.enemy->hitPoints=1;
+                (void)game_gSetEnergy(jpb_XboxBossTest[4],1);
+                boss->whohitme=&gaPlayerData[0];
+                boss->hitMotion=NULL;
+                boss->projectile=NULL;
+                boss->hitNumber=1;
+            }
+            if(runtime.enemy){
+                int c;
+                if(jpb_XboxBossSetCounter[0]>=0 && jpb_XboxBossSetCounter[0]<5){
+                    runtime.enemy->counter[jpb_XboxBossSetCounter[0]]=(uint32_t)jpb_XboxBossSetCounter[1];
+                    jpb_XboxBossSetCounter[0]=-1;
+                }
+                jpb_XboxBossAi[0]=runtime.enemy->aiNum;
+                jpb_XboxBossAi[1]=runtime.enemy->currAIMode;
+                for(c=0;c<5;++c)jpb_XboxBossAi[2+c]=(int)runtime.enemy->counter[c];
             }
             if(jpb_XboxBossKeepAlive && jpb_XboxBossTest[3]<60)
                 (void)game_gSetEnergy(0,100);
