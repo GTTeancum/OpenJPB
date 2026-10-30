@@ -693,7 +693,9 @@ static float scene_collision_frustum_percent(void)
     case 2:
         return 300.0f;
     case 5:
-        return isTatoMaul == 0 ? 85.0f : 120.0f;
+        /* Retail: 85.0 (0x140394878) only while ai_Maul flags the Tatooine
+         * duel, otherwise 120.0 (0x14039489c). */
+        return isTatoMaul != 0 ? 85.0f : 120.0f;
     case 15:
         return 120.0f;
     default:
